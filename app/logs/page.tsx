@@ -3,132 +3,132 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 
-export default function LogFeed() {
+export default function LogsList() {
   const [logs, setLogs] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [errorMsg, setErrorMsg] = useState('')
 
   const fetchLogs = async () => {
-    const { data } = await supabase
+    setLoading(true)
+    const { data, error } = await supabase
       .from('daily_logs')
-      .select('*')
+      .select('*, projects:project_id(name), site_incidents:linked_incident_id(description, classification)')
       .order('created_at', { ascending: false })
-    if (data) setLogs(data)
+    
+    if (error) {
+      setErrorMsg("Connection issue. Showing cached records.")
+      const { data: fallback } = await supabase.from('daily_logs').select('*').order('created_at', { ascending: false })
+      if (fallback) setLogs(fallback)
+    } else if (data) {
+      setLogs(data)
+    }
     setLoading(false)
   }
 
-  useEffect(() => {
-    fetchLogs()
-  }, [])
+  useEffect(() => { fetchLogs() }, [])
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Permanently delete this site record?")) return
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
+    e.preventDefault() 
+    e.stopPropagation() 
+    
+    if (!confirm("Are you sure? This will permanently delete this daily log.")) return
+
     const { error } = await supabase.from('daily_logs').delete().eq('id', id)
-    if (!error) setLogs(prev => prev.filter(log => log.id !== id))
+    
+    if (error) {
+      alert("Error deleting log: " + error.message)
+    } else {
+      fetchLogs() 
+    }
   }
 
-  if (loading) return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-slate-100">
-      <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-      <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Accessing Barrie Site Records...</p>
-    </div>
-  )
-
   return (
-    <div className="max-w-2xl mx-auto p-4 bg-slate-100 min-h-screen font-sans pb-20">
+    <div className="max-w-md mx-auto p-4 bg-slate-950 min-h-screen pb-24 font-sans text-slate-100">
       
-      {/* HEADER SECTION */}
-      <div className="flex justify-between items-end mb-8 pt-6">
-        <div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tighter">SITE FEED</h1>
-          <p className="text-xs font-bold text-blue-600 uppercase tracking-widest">Active Projects | Barrie, ON</p>
-        </div>
-        <Link 
-          href="/logs/new" 
-          className="bg-slate-900 text-white px-6 py-4 rounded-3xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all"
-        >
-          + Create Log
-        </Link>
+      {/* HEADER - RESTORED TO DAILY LOGS */}
+      <div className="mb-6 pt-4 border-b border-slate-800 pb-4">
+        <h1 className="text-2xl font-black tracking-tight text-white uppercase italic">
+          Daily <span className="text-blue-500 underline decoration-blue-500 decoration-4 underline-offset-4">Logs</span>
+        </h1>
+        <p className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em] mt-2 font-mono">
+          Project Archive // Field Records
+        </p>
       </div>
 
-      <div className="space-y-6">
-        {logs.map((log) => (
-          <div key={log.id} className="bg-white rounded-[40px] shadow-sm border border-slate-200 overflow-hidden relative group transition-all hover:shadow-md">
-            
-            {/* DELETE BUTTON (Floating) */}
-            <button 
-              onClick={() => handleDelete(log.id)}
-              className="absolute top-6 right-6 w-8 h-8 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white transition-all z-10"
+      {/* CREATE BUTTON */}
+      <Link href="/logs/new" className="block w-full bg-blue-600 text-white text-center font-black py-5 rounded-[32px] shadow-[0_0_20px_rgba(37,99,235,0.2)] active:scale-95 transition-all uppercase tracking-[0.2em] text-[10px] mb-8 border border-blue-400/30">
+        + Start New Daily Log
+      </Link>
+
+      {errorMsg && (
+        <div className="bg-amber-900/20 border border-amber-500/30 text-amber-500 p-3 rounded-2xl mb-6 text-[9px] font-black uppercase text-center">
+          ⚠️ {errorMsg}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="py-20 text-center flex flex-col items-center">
+          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <p className="uppercase font-black text-slate-500 text-[10px] animate-pulse font-mono">Scanning Archive...</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {logs.map((log) => (
+            <Link 
+              href={`/logs/${log.id}`} 
+              key={log.id} 
+              className="group block bg-slate-900 p-5 rounded-[24px] border border-slate-800 hover:border-blue-500 transition-all active:scale-[0.98] relative shadow-xl"
             >
-              <span className="text-xl font-light">×</span>
-            </button>
-
-            <div className="p-8">
-              {/* TOP ROW: Date & Conditions */}
-              <div className="flex justify-between items-start mb-6">
+              <div className="flex justify-between items-start mb-3">
                 <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Entry Date</p>
-                  <p className="text-xl font-black text-slate-900 leading-none">
-                    {new Date(log.created_at).toLocaleDateString('en-CA', { month: 'long', day: 'numeric', year: 'numeric' })}
+                  <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1 font-mono">
+                    {new Date(log.created_at).toLocaleDateString()}
                   </p>
+                  <h2 className="text-sm font-black uppercase text-white leading-tight pr-10">
+                    {log.projects?.name || 'Active Project'}
+                  </h2>
                 </div>
-                <div className="text-right">
-                  <span className="inline-block bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-[10px] font-black uppercase border border-blue-100">
-                    {log.weather}
-                  </span>
-                </div>
+                
+                <button 
+                  onClick={(e) => handleDelete(e, log.id)}
+                  className="absolute top-5 right-5 p-2 text-slate-700 hover:text-red-500 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+                    <path fillRule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+                  </svg>
+                </button>
               </div>
+              
+              <p className="text-xs font-medium text-slate-400 line-clamp-2 italic mb-4 leading-relaxed">
+                "{log.work_performed}"
+              </p>
 
-              {/* CREW BADGES */}
-              <div className="flex flex-wrap gap-2 mb-6">
-                {log.trades_detailed && Object.entries(log.trades_detailed).map(([trade, count]) => (
-                  <div key={trade} className="flex items-center gap-2 bg-slate-50 border border-slate-100 px-3 py-2 rounded-2xl">
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-tight">{trade}</span>
-                    <span className="bg-slate-900 text-white text-[10px] font-black px-2 py-0.5 rounded-lg">{count as any}</span>
-                  </div>
-                ))}
+              <div className="flex gap-2 mb-4">
+                {log.linked_incident_id && (
+                  <span className="bg-red-900/30 text-red-400 text-[7px] font-black px-2 py-1 rounded border border-red-500/30 uppercase tracking-tighter">🚨 Incident Linked</span>
+                )}
+                {log.signature_url && (
+                  <span className="bg-emerald-900/30 text-emerald-400 text-[7px] font-black px-2 py-1 rounded border border-emerald-500/30 uppercase tracking-tighter font-mono">Signed // Verified</span>
+                )}
               </div>
-
-              {/* WORK SUMMARY */}
-              <div className="mb-6">
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Work Progress</h3>
-                <p className="text-slate-700 text-sm font-medium leading-relaxed line-clamp-3">
-                  {log.work_performed}
-                </p>
-              </div>
-
-              {/* PHOTO THUMBNAILS */}
+              
               {log.photo_urls && log.photo_urls.length > 0 && (
-                <div className="grid grid-cols-4 gap-2 mb-6">
-                  {log.photo_urls.slice(0, 4).map((url: string, index: number) => (
-                    <div key={index} className="aspect-square rounded-xl overflow-hidden border border-slate-100 bg-slate-50 relative">
-                      <img src={url} alt="Site" className="w-full h-full object-cover" />
-                      {index === 3 && log.photo_urls.length > 4 && (
-                        <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white font-black text-xs">
-                          +{log.photo_urls.length - 4}
-                        </div>
-                      )}
-                    </div>
+                <div className="flex gap-2">
+                  {log.photo_urls.slice(0, 4).map((url: string, i: number) => (
+                    <img 
+                      key={i} 
+                      src={url} 
+                      className="w-10 h-10 rounded-lg object-cover border border-slate-800 bg-slate-950" 
+                      alt="Site capture"
+                    />
                   ))}
                 </div>
               )}
-
-              {/* ACTION: VIEW FULL PDF */}
-              <Link 
-                href={`/logs/${log.id}`} 
-                className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all"
-              >
-                📄 View & Generate PDF Report
-              </Link>
-            </div>
-          </div>
-        ))}
-
-        {logs.length === 0 && (
-          <div className="text-center py-20 bg-white rounded-[40px] border-2 border-dashed border-slate-200">
-            <p className="text-slate-400 font-black uppercase text-xs tracking-widest italic">Site database is empty</p>
-          </div>
-        )}
-      </div>
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
