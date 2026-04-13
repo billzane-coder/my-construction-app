@@ -31,8 +31,8 @@ export default function ProjectWarRoom() {
 
   // Modal States
   const [showContactModal, setShowContactModal] = useState(false);
-const [showDocModal, setShowDocModal] = useState(false); // For Contracts/Compliance
-const [showPlanModal, setShowPlanModal] = useState(false);
+  const [showDocModal, setShowDocModal] = useState(false); 
+  const [showPlanModal, setShowPlanModal] = useState(false);
   const [showSubmittalModal, setShowSubmittalModal] = useState<{show: boolean, contactId: string | null}>({show: false, contactId: null})
   const [tempFile, setTempFile] = useState<File | null>(null)
 
@@ -120,7 +120,6 @@ const [showPlanModal, setShowPlanModal] = useState(false);
         </div>
         
         <div className="flex flex-wrap gap-4 items-center">
-          {/* ACTION CENTER LINKS */}
           <Link href={`/projects/${id}/logs`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-blue-500 transition-all shadow-xl group">
             <FileText size={18} className="text-blue-500 group-hover:scale-110 transition-transform" />
             <div className="text-left">
@@ -215,7 +214,33 @@ const [showPlanModal, setShowPlanModal] = useState(false);
         </div>
       )}
 
-      {/* 3. TRADE DIRECTORY */}
+      {/* 3. COMPLIANCE / CONTRACTS */}
+      {activeTab === 'compliance' && (
+        <div className="space-y-10 animate-in fade-in duration-500">
+          <div className="flex justify-between items-center bg-slate-900/50 p-8 rounded-[40px] border border-slate-800 shadow-xl">
+            <h3 className="text-2xl font-black uppercase italic tracking-tighter">Compliance <span className="text-blue-500">Vault</span></h3>
+            <button onClick={() => setShowDocModal(true)} className="bg-blue-600 text-white text-[10px] font-black px-10 py-5 rounded-3xl uppercase shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-all">+ Add Trade Doc</button>
+          </div>
+          {Object.entries(docs.filter(d => d.doc_type === 'Contract').reduce((acc: any, d) => {
+            const t = d.trade || 'General'; if (!acc[t]) acc[t] = []; acc[t].push(d); return acc;
+          }, {})).map(([trade, files]: [string, any]) => (
+            <div key={trade} className="ml-2">
+              <h4 className="text-[12px] font-black text-blue-500 uppercase tracking-widest mb-4 border-l-4 border-blue-600 pl-4 italic">{trade}</h4>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                {files.map((f: any) => (
+                  <div key={f.id} className="bg-slate-900 p-6 rounded-[24px] border border-slate-800 shadow-md group hover:border-blue-500 transition-all">
+                    <span className="text-[9px] font-black text-slate-500 uppercase block mb-1">{f.category}</span>
+                    <h5 className="text-[11px] font-black text-white uppercase truncate mb-6">{f.title}</h5>
+                    <a href={f.file_url} target="_blank" className="block text-center bg-slate-800 hover:bg-blue-600 py-4 rounded-xl text-[10px] font-black uppercase text-white transition-all">View File</a>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 4. TRADE DIRECTORY */}
       {activeTab === 'contacts' && (
         <div className="space-y-10 animate-in fade-in duration-500">
           <div className="flex justify-between items-center bg-slate-900/50 p-8 rounded-[40px] border border-slate-800 shadow-xl">
@@ -256,25 +281,13 @@ const [showPlanModal, setShowPlanModal] = useState(false);
                    <a href={`tel:${c.foreman_phone || c.phone}`} className="bg-slate-800 hover:bg-blue-600 text-white text-center py-5 rounded-[24px] text-[10px] font-black uppercase transition-all flex items-center justify-center gap-3"><Phone size={16}/> Site Line</a>
                    <a href={`mailto:${c.email}`} className="bg-slate-800 hover:bg-blue-600 text-white text-center py-5 rounded-[24px] text-[10px] font-black uppercase transition-all flex items-center justify-center gap-3"><Mail size={16}/> Email PM</a>
                 </div>
-
-                {submittals.filter(s => s.contact_id === c.id).length > 0 && (
-                  <div className="mt-8 space-y-3">
-                    <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest ml-2 italic">Active Project Submittals</p>
-                    {submittals.filter(s => s.contact_id === c.id).map(s => (
-                      <a key={s.id} href={s.url} target="_blank" className="flex justify-between items-center bg-blue-950/20 p-4 rounded-2xl border border-blue-900/30 hover:bg-blue-600 transition-all group/sub">
-                        <span className="text-[11px] font-black uppercase text-blue-400 group-hover/sub:text-white flex items-center gap-3"><FileCheck size={16}/> {s.title}</span>
-                        <span className="text-[9px] font-black uppercase px-3 py-1 bg-blue-600 text-white rounded-lg shadow-lg">{s.status}</span>
-                      </a>
-                    ))}
-                  </div>
-                )}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* --- ALL MODALS (Contact, Submittal, Plan) --- */}
+      {/* --- MODALS --- */}
       {showContactModal && (
         <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <form onSubmit={async (e) => {
@@ -286,33 +299,88 @@ const [showPlanModal, setShowPlanModal] = useState(false);
             }]);
             setShowContactModal(false); fetchData();
           }} className="bg-slate-900 border-2 border-emerald-600 p-10 rounded-[56px] max-w-2xl w-full space-y-6 shadow-2xl">
-            <h2 className="text-2xl font-black text-white uppercase italic text-center">New Site Trade Registration</h2>
+            <h2 className="text-2xl font-black text-white uppercase italic text-center">New Trade Registration</h2>
             <div className="grid grid-cols-2 gap-4">
-              <input name="company" required placeholder="Company Name" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold" />
-              <input name="trade_role" required placeholder="Trade (e.g. Interior Systems)" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-blue-500" />
+              <input name="company" required placeholder="Company Name" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white" />
+              <input name="trade_role" required placeholder="Trade (e.g. Drywall)" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-blue-500" />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 bg-black/30 p-8 rounded-[40px] border border-slate-800 shadow-inner">
+            <div className="grid grid-cols-2 gap-6 bg-black/30 p-8 rounded-[40px] border border-slate-800 shadow-inner">
               <div className="space-y-3">
-                <p className="text-[10px] font-black text-emerald-500 uppercase ml-2 tracking-widest italic">Foreman Info</p>
+                <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest italic">Foreman Info</p>
                 <input name="foreman_name" placeholder="Name" className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 text-xs font-bold" />
                 <input name="foreman_phone" placeholder="Phone" className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 text-xs font-bold" />
               </div>
               <div className="space-y-3">
-                <p className="text-[10px] font-black text-blue-500 uppercase ml-2 tracking-widest italic">Office Info</p>
+                <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest italic">Office / PM</p>
                 <input name="office_name" placeholder="Name" className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 text-xs font-bold" />
                 <input name="office_phone" placeholder="Phone" className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 text-xs font-bold" />
               </div>
             </div>
-            <input name="email" placeholder="Primary Email for Correspondence" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold" />
+            <input name="email" placeholder="Primary Email" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold" />
             <div className="flex gap-4 pt-6">
               <button type="button" onClick={() => setShowContactModal(false)} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black uppercase text-xs">Discard</button>
-              <button type="submit" className="flex-1 bg-emerald-600 text-white py-5 rounded-3xl font-black uppercase text-xs shadow-xl shadow-emerald-900/30 hover:bg-emerald-500 transition-all">Register Trade</button>
+              <button type="submit" className="flex-1 bg-emerald-600 text-white py-5 rounded-3xl font-black uppercase text-xs shadow-xl shadow-emerald-900/30">Register Trade</button>
             </div>
           </form>
         </div>
       )}
 
-      {/* Submittal Modal */}
+      {showDocModal && (
+        <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
+          <form onSubmit={async (e) => {
+            e.preventDefault(); const fd = new FormData(e.currentTarget);
+            const file = (e.currentTarget.elements.namedItem('file') as HTMLInputElement).files?.[0];
+            if(!file) return alert("Select a file");
+            const path = `${id}/compliance/${Date.now()}-${file.name}`;
+            await handleUpload(file, path, 'project_documents', { 
+              project_id: id, title: fd.get('title'), trade: fd.get('trade'), doc_type: 'Contract', category: fd.get('category') 
+            });
+            setShowDocModal(false);
+          }} className="bg-slate-900 border-2 border-blue-600 p-8 rounded-[40px] max-w-lg w-full space-y-6 shadow-2xl">
+            <h2 className="text-2xl font-black text-white uppercase italic text-center">Upload Trade Document</h2>
+            <input name="title" required placeholder="Document Title (e.g. WSIB Clearance)" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white" />
+            <select name="trade" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-black uppercase text-xs text-blue-500">
+              <option value="">Select Trade...</option>
+              {contacts.map(c => <option key={c.id} value={c.company}>{c.company}</option>)}
+            </select>
+            <select name="category" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-black uppercase text-xs text-white">
+              <option value="Contract">Contract</option>
+              <option value="Insurance">Insurance/WSIB</option>
+              <option value="Safety">Safety Manual</option>
+            </select>
+            <input name="file" type="file" required className="w-full text-xs text-slate-500 file:py-4 file:px-6 file:rounded-xl file:bg-slate-800 file:text-white" />
+            <div className="flex gap-4">
+              <button type="button" onClick={() => setShowDocModal(false)} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black uppercase text-xs">Cancel</button>
+              <button type="submit" className="flex-1 bg-blue-600 text-white py-5 rounded-3xl font-black uppercase text-xs shadow-xl">{uploading ? 'Uploading...' : 'Upload'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showPlanModal && (
+        <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
+          <form onSubmit={async (e) => {
+            e.preventDefault(); const fd = new FormData(e.currentTarget);
+            const file = (e.currentTarget.elements.namedItem('file') as HTMLInputElement).files?.[0];
+            if(!file) return alert("Select a PDF");
+            const path = `${id}/plans/${Date.now()}-${file.name}`;
+            await handleUpload(file, path, 'project_documents', { 
+              project_id: id, title: fd.get('title'), doc_type: 'Plan', revision_number: fd.get('revision') || 'IFC' 
+            });
+            setShowPlanModal(false);
+          }} className="bg-slate-900 border-2 border-blue-600 p-8 rounded-[40px] max-w-lg w-full space-y-6 shadow-2xl">
+            <h2 className="text-2xl font-black text-white uppercase italic text-center">New Blueprint Entry</h2>
+            <input name="file" type="file" required accept=".pdf" className="w-full text-xs text-slate-500 file:py-4 file:px-6 file:rounded-xl file:bg-slate-800 file:text-white" />
+            <input name="title" required placeholder="Plan Title (e.g. Architectural L1)" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white" />
+            <input name="revision" placeholder="Revision (e.g. Rev 3)" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-blue-500 uppercase" />
+            <div className="flex gap-4">
+              <button type="button" onClick={() => setShowPlanModal(false)} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black uppercase text-xs">Cancel</button>
+              <button type="submit" className="flex-1 bg-blue-600 text-white py-5 rounded-3xl font-black uppercase text-xs shadow-xl">{uploading ? 'Processing...' : 'Upload Plan'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {showSubmittalModal.show && (
         <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <form onSubmit={async (e) => {
@@ -336,121 +404,6 @@ const [showPlanModal, setShowPlanModal] = useState(false);
         </div>
       )}
 
-      {/* Plan Modal */}
-      {showPlanModal && (
-        <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
-          <form onSubmit={async (e) => {
-            e.preventDefault(); if(!tempFile) return;
-            const fd = new FormData(e.currentTarget); const path = `${id}/plans/${Date.now()}-${tempFile.name}`;
-            await handleUpload(tempFile, path, 'project_documents', { project_id: id, title: fd.get('title') || tempFile.name, doc_type: 'Plan', revision_number: fd.get('revision') || 'IFC' });
-            setShowPlanModal(false); setTempFile(null);
-          }} className="bg-slate-900 border-2 border-blue-600 p-10 rounded-[56px] max-w-lg w-full space-y-8 shadow-2xl">
-            <h2 className="text-2xl font-black text-white uppercase italic text-center">New Blueprint Entry</h2>
-            <input type="file" required onChange={(e) => setTempFile(e.target.files?.[0] || null)} className="w-full text-xs text-slate-500 file:py-5 file:px-8 file:rounded-3xl file:bg-slate-800 file:text-white" />
-            <input name="title" placeholder="Drawing Title (e.g. Level 1 Reflected Ceiling)" className="w-full p-6 bg-slate-950 rounded-3xl border border-slate-800 font-bold" />
-            <input name="revision" placeholder="Revision / Status (e.g. Rev 2)" className="w-full p-6 bg-slate-950 rounded-3xl border border-slate-800 font-bold text-blue-500" />
-            <div className="flex gap-4">
-              <button type="button" onClick={() => setShowPlanModal(false)} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black text-xs uppercase">Discard</button>
-              <button type="submit" className="flex-1 bg-blue-600 text-white py-5 rounded-3xl font-black text-xs uppercase shadow-xl hover:bg-blue-500 transition-all">Vault Drawing</button>
-            </div>
-          </form>
-        </div>
-      )}
-{/* --- MODAL 1: TRADE CONTACTS --- */}
-      {showContactModal && (
-        <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
-          <form onSubmit={async (e) => {
-            e.preventDefault(); const fd = new FormData(e.currentTarget);
-            await supabase.from('project_contacts').insert([{ 
-              project_id: id, company: fd.get('company'), trade_role: fd.get('trade_role'), 
-              foreman_name: fd.get('foreman_name'), foreman_phone: fd.get('foreman_phone'),
-              office_name: fd.get('office_name'), office_phone: fd.get('office_phone'), email: fd.get('email')
-            }]);
-            setShowContactModal(false); fetchData();
-          }} className="bg-slate-900 border-2 border-emerald-600 p-8 rounded-[40px] max-w-2xl w-full space-y-6 shadow-2xl">
-            <h2 className="text-2xl font-black text-white uppercase italic text-center">New Trade Registration</h2>
-            <div className="grid grid-cols-2 gap-4">
-              <input name="company" required placeholder="Company Name" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white" />
-              <input name="trade_role" required placeholder="Trade (e.g. Drywall)" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-blue-500" />
-            </div>
-            <div className="grid grid-cols-2 gap-6 bg-black/30 p-6 rounded-3xl border border-slate-800">
-              <div className="space-y-3">
-                <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Site Foreman</p>
-                <input name="foreman_name" placeholder="Name" className="w-full p-4 bg-slate-950 rounded-xl border border-slate-800 text-sm font-bold text-white" />
-                <input name="foreman_phone" placeholder="Phone" className="w-full p-4 bg-slate-950 rounded-xl border border-slate-800 text-sm font-bold text-white" />
-              </div>
-              <div className="space-y-3">
-                <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Office / PM</p>
-                <input name="office_name" placeholder="Name" className="w-full p-4 bg-slate-950 rounded-xl border border-slate-800 text-sm font-bold text-white" />
-                <input name="office_phone" placeholder="Phone" className="w-full p-4 bg-slate-950 rounded-xl border border-slate-800 text-sm font-bold text-white" />
-              </div>
-            </div>
-            <input name="email" placeholder="Email Address" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white" />
-            <div className="flex gap-4">
-              <button type="button" onClick={() => setShowContactModal(false)} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black uppercase text-xs">Cancel</button>
-              <button type="submit" className="flex-1 bg-emerald-600 text-white py-5 rounded-3xl font-black uppercase text-xs shadow-xl">Save Contact</button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* --- MODAL 2: COMPLIANCE / CONTRACTS --- */}
-      {showDocModal && (
-        <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
-          <form onSubmit={async (e) => {
-            e.preventDefault(); const fd = new FormData(e.currentTarget);
-            const file = (e.currentTarget.elements.namedItem('file') as HTMLInputElement).files?.[0];
-            if(!file) return alert("Select a file");
-            const path = `${id}/compliance/${Date.now()}-${file.name}`;
-            await handleUpload(file, path, 'project_documents', { 
-              project_id: id, title: fd.get('title'), trade: fd.get('trade'), doc_type: 'Contract', category: fd.get('category') 
-            });
-            setShowDocModal(false);
-          }} className="bg-slate-900 border-2 border-blue-600 p-8 rounded-[40px] max-w-lg w-full space-y-6">
-            <h2 className="text-2xl font-black text-white uppercase italic text-center">Upload Trade Document</h2>
-            <input name="title" required placeholder="Document Title (e.g. WSIB Clearance)" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white" />
-            <select name="trade" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-black uppercase text-xs text-blue-500">
-              <option value="">Select Trade...</option>
-              {contacts.map(c => <option key={c.id} value={c.company}>{c.company}</option>)}
-            </select>
-            <select name="category" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-black uppercase text-xs text-white">
-              <option value="Contract">Contract</option>
-              <option value="Insurance">Insurance/WSIB</option>
-              <option value="Safety">Safety Manual</option>
-            </select>
-            <input name="file" type="file" required className="w-full text-xs text-slate-500 file:py-4 file:px-6 file:rounded-xl file:bg-slate-800 file:text-white" />
-            <div className="flex gap-4">
-              <button type="button" onClick={() => setShowDocModal(false)} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black uppercase text-xs">Cancel</button>
-              <button type="submit" className="flex-1 bg-blue-600 text-white py-5 rounded-3xl font-black uppercase text-xs shadow-xl">{uploading ? 'Uploading...' : 'Upload'}</button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* --- MODAL 3: PLANS / BLUEPRINTS --- */}
-      {showPlanModal && (
-        <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
-          <form onSubmit={async (e) => {
-            e.preventDefault(); const fd = new FormData(e.currentTarget);
-            const file = (e.currentTarget.elements.namedItem('file') as HTMLInputElement).files?.[0];
-            if(!file) return alert("Select a PDF");
-            const path = `${id}/plans/${Date.now()}-${file.name}`;
-            await handleUpload(file, path, 'project_documents', { 
-              project_id: id, title: fd.get('title'), doc_type: 'Plan', revision_number: fd.get('revision') || 'IFC' 
-            });
-            setShowPlanModal(false);
-          }} className="bg-slate-900 border-2 border-blue-600 p-8 rounded-[40px] max-w-lg w-full space-y-6">
-            <h2 className="text-2xl font-black text-white uppercase italic text-center">Vault New Drawing</h2>
-            <input name="file" type="file" required accept=".pdf" className="w-full text-xs text-slate-500 file:py-4 file:px-6 file:rounded-xl file:bg-slate-800 file:text-white" />
-            <input name="title" required placeholder="Plan Title (e.g. Architectural L1)" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white" />
-            <input name="revision" placeholder="Revision (e.g. Rev 3)" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-blue-500 uppercase" />
-            <div className="flex gap-4">
-              <button type="button" onClick={() => setShowPlanModal(false)} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black uppercase text-xs">Cancel</button>
-              <button type="submit" className="flex-1 bg-blue-600 text-white py-5 rounded-3xl font-black uppercase text-xs shadow-xl">{uploading ? 'Processing...' : 'Upload Plan'}</button>
-            </div>
-          </form>
-        </div>
-      )}
     </div>
   )
 }
