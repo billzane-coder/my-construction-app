@@ -1,7 +1,9 @@
 'use client'
+export const dynamic = 'force-dynamic' // Prevents Vercel Prerender Errors
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
+import { Plus, Search, MapPin, Activity, ShieldAlert, ChevronRight, Loader2 } from 'lucide-react'
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<any[]>([])
@@ -11,12 +13,11 @@ export default function ProjectsPage() {
   const [isAdding, setIsAdding] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  // 1. FETCH LOGIC WITH AUTOMATIC FALLBACK
+  // 1. IMPROVED FETCH LOGIC
   const fetchProjects = async () => {
     setLoading(true)
-    console.log("📡 Initiating Project Sync...")
-
-    // FIXED: Fetching the created_at column to calculate BOTH count and activity date
+    
+    // We fetch the core project data plus counts for our dashboard badges
     const { data, error } = await supabase
       .from('projects')
       .select(`
@@ -28,22 +29,10 @@ export default function ProjectsPage() {
 
     if (error) {
       console.warn("⚠️ Smart Fetch blocked. Falling back to Simple Fetch.")
-      
-      const { data: simpleData, error: simpleError } = await supabase
-        .from('projects')
-        .select('*')
-        .order('name', { ascending: true })
-
-      if (simpleError) {
-        console.error("❌ Simple Fetch Failed:", simpleError)
-        alert(`DATABASE ERROR: ${simpleError.message}`)
-      } else {
-        setProjects(simpleData || [])
-      }
+      const { data: simpleData } = await supabase.from('projects').select('*').order('name', { ascending: true })
+      setProjects(simpleData || [])
     } else {
-      // Process the Smart Data for the UI
       const processed = data.map(p => {
-        // Calculate Last Activity Date
         const allDates = [
           p.created_at,
           ...(p.punch_list?.map((pl: any) => pl.created_at) || []),
@@ -57,7 +46,6 @@ export default function ProjectsPage() {
         return { 
           ...p, 
           lastActive,
-          // FIXED: Using the length of the returned arrays for accurate counts
           ticketCount: p.punch_list?.length || 0,
           auditCount: p.site_inspections?.length || 0
         }
@@ -69,7 +57,7 @@ export default function ProjectsPage() {
 
   useEffect(() => { fetchProjects() }, [])
 
-  // 2. SAVE NEW PROJECT LOGIC
+  // 2. SAVE LOGIC (Now includes Full Address for Reports)
   const handleAddProject = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setSaving(true)
@@ -77,7 +65,8 @@ export default function ProjectsPage() {
     
     const newProject = {
       name: formData.get('name') as string,
-      location: formData.get('location') as string,
+      location: formData.get('location') as string, // City
+      address: formData.get('address') as string,   // Full Street Address
       status: formData.get('status') as string,
       description: formData.get('description') as string
     }
@@ -88,12 +77,11 @@ export default function ProjectsPage() {
       setIsAdding(false)
       fetchProjects() 
     } else {
-      alert(`SAVE ERROR: ${error.message}`)
+      alert(`DATABASE REJECTED: ${error.message}\nCheck your RLS Policies.`)
     }
     setSaving(false)
   }
 
-  // 3. FILTERING LOGIC
   const filteredProjects = projects.filter(p => {
     const matchesSearch = (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
                           (p.location || '').toLowerCase().includes(search.toLowerCase())
@@ -102,75 +90,95 @@ export default function ProjectsPage() {
   })
 
   return (
-    <div className="max-w-7xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans pb-20 text-slate-100">
+    <div className="max-w-7xl mx-auto p-4 md:p-12 bg-slate-950 min-h-screen font-sans pb-32 text-slate-100">
       
       {/* HEADER SECTION */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-10 pt-4 border-b-4 border-blue-600 pb-8 gap-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-12 border-b-4 border-blue-600 pb-10 gap-8">
         <div>
-          <h1 className="text-4xl font-black text-white tracking-tighter uppercase italic leading-none">
-            Project <span className="text-blue-500 underline decoration-4 underline-offset-8">Directory</span>
+          <h1 className="text-6xl font-black text-white tracking-tighter uppercase italic leading-none">
+            Build <span className="text-blue-500 underline decoration-8 underline-offset-8">Portfolio</span>
           </h1>
-          <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] mt-4">
-            SiteMaster Intelligence • Ontario Portfolio
+          <p className="text-[11px] font-black text-slate-500 uppercase tracking-[0.4em] mt-6 flex items-center gap-2">
+            <Activity size={14} className="text-blue-500" /> SiteMaster HQ • Barrie Operations
           </p>
         </div>
         
         <button 
           onClick={() => setIsAdding(!isAdding)}
-          className={`text-[10px] font-black px-8 py-4 rounded-2xl uppercase tracking-widest transition-all shadow-xl active:scale-95 ${
-            isAdding ? 'bg-slate-800 text-slate-400 border border-slate-700' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(59,130,246,0.3)]'
+          className={`group flex items-center gap-3 text-[10px] font-black px-10 py-5 rounded-3xl uppercase tracking-[0.2em] transition-all shadow-2xl active:scale-95 ${
+            isAdding ? 'bg-slate-900 text-slate-500 border border-slate-800' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40'
           }`}
         >
-          {isAdding ? 'Cancel Initialization' : '+ New Job Site'}
+          {isAdding ? <Plus className="rotate-45 transition-transform" /> : <Plus />}
+          {isAdding ? 'Cancel Entry' : 'Register New Site'}
         </button>
       </div>
 
       {/* SEARCH & FILTER BAR */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <div className="md:col-span-2 relative group">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-12">
+        <div className="md:col-span-3 relative">
+          <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-600" size={18} />
           <input 
             type="text"
-            placeholder="Search by project name or city..."
+            placeholder="Search by project name, city, or foreman..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-800 p-5 rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none transition-all pl-12 group-hover:border-slate-700"
+            className="w-full bg-slate-900/50 border border-slate-800 p-6 pl-16 rounded-[28px] text-sm font-bold focus:border-blue-500 outline-none transition-all placeholder:text-slate-700 backdrop-blur-sm"
           />
-          <span className="absolute left-5 top-1/2 -translate-y-1/2 opacity-50">🔍</span>
         </div>
         <select 
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
-          className="bg-slate-900 border border-slate-800 p-5 rounded-2xl text-sm font-bold text-blue-400 outline-none uppercase tracking-widest cursor-pointer hover:border-slate-700 transition-all"
+          className="bg-slate-900/50 border border-slate-800 p-6 rounded-[28px] text-[10px] font-black text-blue-400 outline-none uppercase tracking-widest cursor-pointer hover:border-blue-500 transition-all appearance-none text-center"
         >
-          <option value="All">All Statuses</option>
+          <option value="All">All Projects</option>
           <option value="Active">Active Build</option>
-          <option value="Pre-Con">Pre-Construction</option>
-          <option value="Occupancy">Occupancy / PDI</option>
-          <option value="Closed">Closed Out</option>
+          <option value="Pre-Con">Pre-Con</option>
+          <option value="Occupancy">Occupancy</option>
+          <option value="Closed">Archive</option>
         </select>
       </div>
 
       {/* ADD FORM */}
       {isAdding && (
-        <div className="bg-slate-900 p-8 rounded-[40px] border-2 border-blue-600/30 shadow-2xl mb-12 animate-in fade-in zoom-in duration-200">
-          <h2 className="text-[12px] font-black text-blue-400 uppercase tracking-widest mb-6 border-b border-slate-800 pb-2">Site Registration</h2>
-          <form onSubmit={handleAddProject} className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-4">
-              <input name="name" required className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl font-bold focus:border-blue-500 outline-none" placeholder="Project Name" />
-              <input name="location" required className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl font-bold focus:border-blue-500 outline-none" placeholder="City" />
+        <div className="bg-slate-900/80 p-10 rounded-[56px] border-2 border-blue-600/30 shadow-2xl mb-16 backdrop-blur-md animate-in slide-in-from-top duration-300">
+          <form onSubmit={handleAddProject} className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <label className="text-[9px] font-black text-slate-500 uppercase ml-4 tracking-widest">Project / Contract Name</label>
+                <input name="name" required className="w-full p-5 bg-slate-950 border border-slate-800 rounded-3xl font-black uppercase text-white outline-none focus:border-blue-500" placeholder="e.g. The Wellington Phase II" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[9px] font-black text-slate-500 uppercase ml-4 tracking-widest">Job Status</label>
+                <select name="status" className="w-full p-5 bg-slate-950 border border-slate-800 rounded-3xl font-black text-blue-500 uppercase outline-none h-[66px]">
+                  <option value="Active">Active Build</option>
+                  <option value="Pre-Con">Pre-Construction</option>
+                  <option value="Occupancy">Occupancy / PDI</option>
+                  <option value="Closed">Closed Out</option>
+                </select>
+              </div>
             </div>
-            <div className="space-y-4">
-              <select name="status" className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl font-bold text-blue-400 outline-none">
-                <option value="Active">Active Build</option>
-                <option value="Pre-Con">Pre-Construction</option>
-                <option value="Occupancy">Occupancy / PDI</option>
-                <option value="Closed">Closed Out</option>
-              </select>
-              <input name="description" className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl font-bold focus:border-blue-500 outline-none" placeholder="Brief Description" />
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="md:col-span-1 space-y-2">
+                <label className="text-[9px] font-black text-slate-500 uppercase ml-4 tracking-widest">City</label>
+                <input name="location" required className="w-full p-5 bg-slate-950 border border-slate-800 rounded-3xl font-bold" placeholder="Barrie" />
+              </div>
+              <div className="md:col-span-2 space-y-2">
+                <label className="text-[9px] font-black text-slate-500 uppercase ml-4 tracking-widest">Full Site Address (For Reports)</label>
+                <input name="address" required className="w-full p-5 bg-slate-950 border border-slate-800 rounded-3xl font-bold" placeholder="123 Construction Way, L4M..." />
+              </div>
             </div>
-            <div className="md:col-span-2 flex justify-end pt-4">
-               <button type="submit" disabled={saving} className="bg-emerald-600 hover:bg-emerald-500 text-white font-black py-4 px-12 rounded-2xl uppercase tracking-widest text-xs shadow-lg transition-all disabled:opacity-50">
-                 {saving ? 'Initializing...' : 'Confirm Registration'}
+
+            <div className="space-y-2">
+              <label className="text-[9px] font-black text-slate-500 uppercase ml-4 tracking-widest">Scope / Description</label>
+              <input name="description" className="w-full p-5 bg-slate-950 border border-slate-800 rounded-3xl font-bold" placeholder="Brief scope of interior systems..." />
+            </div>
+
+            <div className="flex justify-end pt-4">
+               <button type="submit" disabled={saving} className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-black py-6 px-16 rounded-3xl uppercase tracking-widest text-[10px] shadow-2xl transition-all flex items-center justify-center gap-3">
+                 {saving ? <Loader2 className="animate-spin" size={18} /> : null}
+                 {saving ? 'Initializing Cloud Data...' : 'Confirm Registration'}
                </button>
             </div>
           </form>
@@ -179,17 +187,18 @@ export default function ProjectsPage() {
 
       {/* PROJECT GRID */}
       {loading ? (
-        <div className="flex flex-col items-center justify-center p-20 gap-4">
-          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-500 font-black uppercase tracking-widest text-[10px]">Syncing Portfolio...</p>
+        <div className="flex flex-col items-center justify-center p-32 gap-6">
+          <Loader2 className="w-16 h-16 text-blue-600 animate-spin" />
+          <p className="text-slate-600 font-black uppercase tracking-[0.5em] text-[9px] italic">Syncing Portfolio Assets...</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
           {filteredProjects.map((p) => (
-            <div key={p.id} className="bg-slate-900 rounded-[40px] border border-slate-800 hover:border-blue-500/50 transition-all p-8 flex flex-col group relative shadow-2xl hover:shadow-blue-900/10">
+            <div key={p.id} className="bg-slate-900/40 rounded-[48px] border border-slate-800/50 hover:border-blue-500 transition-all p-10 flex flex-col group relative shadow-2xl backdrop-blur-sm overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-blue-600/5 rounded-full blur-3xl group-hover:bg-blue-600/10 transition-all" />
               
-              <div className="flex justify-between items-start mb-6">
-                <span className={`text-[9px] font-black px-4 py-2 rounded-full uppercase tracking-[0.2em] border ${
+              <div className="flex justify-between items-start mb-10">
+                <span className={`text-[8px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest border ${
                   p.status === 'Active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
                   p.status === 'Closed' ? 'bg-slate-800 text-slate-500 border-slate-700' : 
                   'bg-amber-500/10 text-amber-400 border-amber-500/20'
@@ -197,43 +206,44 @@ export default function ProjectsPage() {
                   {p.status}
                 </span>
                 <div className="text-right">
-                  <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Last Activity</p>
-                  <p className="text-[10px] font-bold text-blue-400">
-                    {p.lastActive ? new Date(p.lastActive).toLocaleDateString() : 'No Records'}
+                  <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-1">Last Update</p>
+                  <p className="text-[10px] font-black text-blue-500">
+                    {p.lastActive ? new Date(p.lastActive).toLocaleDateString() : 'New Job'}
                   </p>
                 </div>
               </div>
 
-              <h3 className="text-2xl font-black text-white uppercase italic tracking-tighter mb-1 leading-none group-hover:text-blue-400 transition-colors">
+              <h3 className="text-3xl font-black text-white uppercase italic tracking-tighter mb-2 leading-[0.9] group-hover:text-blue-500 transition-colors">
                 {p.name}
               </h3>
-              <p className="text-xs font-bold text-slate-400 mb-8 uppercase tracking-widest flex items-center gap-2">
-                <span className="opacity-50">📍</span> {p.location}
+              <p className="text-[10px] font-black text-slate-500 mb-10 uppercase tracking-widest flex items-center gap-2">
+                <MapPin size={12} className="text-blue-500" /> {p.location}
               </p>
 
-              <div className="grid grid-cols-2 gap-3 mb-8">
-                <div className="bg-slate-950 p-4 rounded-[24px] border border-slate-800 text-center">
-                  <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Punch Items</p>
-                  <p className="text-xl font-black text-white">{p.ticketCount || 0}</p>
+              <div className="grid grid-cols-2 gap-4 mb-10">
+                <div className="bg-slate-950/50 p-5 rounded-[28px] border border-slate-800/50 text-center">
+                  <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-1">Tickets</p>
+                  <p className="text-2xl font-black text-white">{p.ticketCount || 0}</p>
                 </div>
-                <div className="bg-slate-950 p-4 rounded-[24px] border border-slate-800 text-center">
-                  <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Inspections</p>
-                  <p className="text-xl font-black text-white">{p.auditCount || 0}</p>
+                <div className="bg-slate-950/50 p-5 rounded-[28px] border border-slate-800/50 text-center">
+                  <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-1">Logs</p>
+                  <p className="text-2xl font-black text-white">{p.auditCount || 0}</p>
                 </div>
               </div>
 
               <Link 
                 href={`/projects/${p.id}`}
-                className="mt-auto bg-slate-800 hover:bg-blue-600 text-white font-black py-5 rounded-[24px] text-[10px] uppercase tracking-[0.3em] text-center transition-all shadow-xl group-hover:shadow-blue-500/40"
+                className="mt-auto bg-slate-800 hover:bg-blue-600 text-white font-black py-6 rounded-[28px] text-[10px] uppercase tracking-[0.3em] text-center transition-all shadow-xl flex items-center justify-center gap-2 group-hover:gap-4"
               >
-                Enter War Room →
+                Enter War Room <ChevronRight size={14} />
               </Link>
             </div>
           ))}
           
           {filteredProjects.length === 0 && (
-            <div className="col-span-full py-20 text-center border-2 border-dashed border-slate-800 rounded-[40px]">
-              <p className="text-slate-500 font-black uppercase tracking-[0.4em]">No Sites Located</p>
+            <div className="col-span-full py-32 text-center border-4 border-dashed border-slate-900 rounded-[64px]">
+              <ShieldAlert size={48} className="mx-auto text-slate-800 mb-4" />
+              <p className="text-slate-600 font-black uppercase tracking-[0.4em] italic text-xs">No Matching Sites in Inventory</p>
             </div>
           )}
         </div>
