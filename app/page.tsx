@@ -1,16 +1,20 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, FileText, BarChart3, ClipboardCheck, Clock } from 'lucide-react';
+import { LayoutDashboard, FileText, BarChart3, ClipboardCheck, Clock, Lock } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 export default function Home() {
+  // --- BETA AUTH STATE ---
+  const [isAuthorized, setIsAuthorized] = useState(false);
+  const [betaKey, setBetaKey] = useState('');
+
+  // --- EXISTING APP STATE ---
   const [activeTab, setActiveTab] = useState('dashboard');
   const [logText, setLogText] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [allLogs, setAllLogs] = useState<any[]>([]); // This holds your data from the cloud
+  const [allLogs, setAllLogs] = useState<any[]>([]);
 
-  // 1. THE "READ" FUNCTION (Fetch data from Supabase)
   const fetchLogs = async () => {
     const { data, error } = await supabase
       .from('daily_logs')
@@ -24,12 +28,12 @@ export default function Home() {
     }
   };
 
-  // 2. THE "WATCHER" (Runs the fetch when the page first loads)
   useEffect(() => {
-    fetchLogs();
-  }, []);
+    if (isAuthorized) {
+      fetchLogs();
+    }
+  }, [isAuthorized]);
 
-  // 3. THE "WRITE" FUNCTION (Saves to cloud and then refreshes the list)
   const handleSaveLog = async () => {
     if (!logText) return alert("Please type something first!");
     setIsSaving(true);
@@ -45,10 +49,19 @@ export default function Home() {
     if (error) {
       alert("Error: " + error.message);
     } else {
-      setLogText(''); // Clear the box
-      fetchLogs();    // Refresh the list immediately
+      setLogText('');
+      fetchLogs();
     }
     setIsSaving(false);
+  };
+
+  const handleBetaEntry = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (betaKey.toLowerCase() === 'ontario2026') {
+      setIsAuthorized(true);
+    } else {
+      alert("Invalid Beta Access Key");
+    }
   };
 
   const tabs = [
@@ -58,14 +71,63 @@ export default function Home() {
     { id: 'financials', label: 'Financials', icon: <ClipboardCheck size={18} /> },
   ];
 
+  // --- RENDER BETA GATE ---
+  if (!isAuthorized) {
+    return (
+      <main className="h-screen bg-slate-950 flex items-center justify-center p-6 text-center">
+        <form onSubmit={handleBetaEntry} className="max-w-sm w-full space-y-8 animate-in fade-in zoom-in duration-500">
+          <div className="space-y-3">
+            <div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-3xl font-black italic shadow-2xl shadow-blue-900/40 text-white">
+              S
+            </div>
+            <h1 className="text-2xl font-black uppercase italic text-white tracking-tighter">
+              SiteMaster <span className="text-blue-500">QA</span>
+            </h1>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center justify-center gap-2">
+              <Lock size={10} /> Early Access Protocol
+            </p>
+          </div>
+          
+          <div className="space-y-4">
+            <input 
+              type="password" 
+              placeholder="Enter Beta Key" 
+              autoFocus
+              className="w-full p-4 bg-slate-900 border border-slate-800 rounded-xl text-center font-black uppercase tracking-widest text-blue-500 outline-none focus:border-blue-500 transition-all shadow-inner"
+              value={betaKey}
+              onChange={(e) => setBetaKey(e.target.value)}
+            />
+            <button 
+              type="submit"
+              className="w-full bg-blue-600 py-4 rounded-xl font-black uppercase text-xs text-white shadow-xl hover:bg-blue-500 transition-all active:scale-95"
+            >
+              Initialize Deployment
+            </button>
+          </div>
+          
+          <p className="text-[9px] font-bold text-slate-700 uppercase">
+            &copy; 2026 SiteMaster Systems | Ontario, CA
+          </p>
+        </form>
+      </main>
+    );
+  }
+
+  // --- RENDER MAIN APP ---
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
+    <main className="min-h-screen bg-slate-50 text-slate-900 animate-in fade-in duration-700">
       <header className="bg-white border-b border-slate-200 px-8 py-4">
         <div className="max-w-5xl mx-auto flex justify-between items-center">
           <div>
             <h1 className="text-xl font-bold text-slate-900">PM Portal</h1>
             <p className="text-xs text-slate-500 font-medium">Barrie, ON | Interior Systems</p>
           </div>
+          <button 
+            onClick={() => setIsAuthorized(false)}
+            className="text-[10px] font-black text-slate-400 uppercase hover:text-red-500 transition-colors"
+          >
+            Lock Terminal
+          </button>
         </div>
       </header>
 
@@ -96,7 +158,6 @@ export default function Home() {
 
         {activeTab === 'logs' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* INPUT COLUMN */}
             <div className="lg:col-span-1 bg-white p-6 rounded-2xl border shadow-sm h-fit">
               <h2 className="text-lg font-bold mb-4">New Site Entry</h2>
               <textarea 
@@ -114,7 +175,6 @@ export default function Home() {
               </button>
             </div>
 
-            {/* HISTORY COLUMN */}
             <div className="lg:col-span-2 space-y-4">
               <h2 className="text-lg font-bold flex items-center gap-2">
                 <Clock size={20} className="text-slate-400" />

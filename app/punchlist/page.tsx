@@ -21,7 +21,7 @@ export default function AdvancedPunchlist() {
     if (projData) setProjects(projData)
     
     if (selectedProjectId) {
-      const { data: itemData } = await supabase.from('site_punchlist')
+      const { data: itemData } = await supabase.from('punch_list')
         .select('*')
         .eq('project_id', selectedProjectId)
       
@@ -43,7 +43,7 @@ export default function AdvancedPunchlist() {
       { header: 'Location', key: 'location', width: 20 },
       { header: 'Trade', key: 'trade', width: 15 },
       { header: 'Description', key: 'desc', width: 65 },
-      { header: 'Assigned To', key: 'assigned', width: 20 },
+      { header: 'Lead/Worker', key: 'assigned', width: 20 },
       { header: 'Priority', key: 'priority', width: 15 },
       { header: 'Status', key: 'status', width: 15 },
     ]
@@ -52,18 +52,33 @@ export default function AdvancedPunchlist() {
     headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '000000' } }
 
     items.forEach(item => {
+      // Clean up the auto-generated notes
+      let cleanNotes = item.notes;
+      if (cleanNotes === 'Auto-generated from Phase Audit.') {
+        cleanNotes = 'System Audit'; 
+      }
+
+      // Clean up the location to just show the Unit Number
+      let cleanLocation = item.location;
+      if (cleanLocation && cleanLocation.includes(' - ')) {
+        // Splits "Unit 204 - Framing Audit" and keeps only "Unit 204"
+        cleanLocation = cleanLocation.split(' - ')[0]; 
+      }
+
       const row = worksheet.addRow({
         date: new Date(item.created_at).toLocaleDateString(),
-        location: item.location,
-        trade: item.trade_type,
-        desc: item.task_description,
-        assigned: item.assigned_to || 'Unassigned',
+        location: cleanLocation,
+        trade: item.assigned_to || 'General', 
+        desc: item.description,               
+        assigned: cleanNotes || 'Unassigned', 
         priority: item.priority || 'Medium',
         status: item.status || 'Open'
       })
+      
       const pCell = row.getCell(6); if (item.priority === 'Urgent') { pCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0000' } }; pCell.font = { color: { argb: 'FFFFFF' }, bold: true } }
       const sCell = row.getCell(7); if (item.status === 'Verified') { sCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '22C55E' } }; sCell.font = { color: { argb: 'FFFFFF' }, bold: true } }
     })
+    
     const buffer = await workbook.xlsx.writeBuffer()
     saveAs(new Blob([buffer]), `PunchList_Dark_${new Date().toLocaleDateString()}.xlsx`)
   }
@@ -74,19 +89,21 @@ export default function AdvancedPunchlist() {
     const formData = new FormData(e.target)
     const photoFile = formData.get('photo') as File
     let photoUrl = ''
+    
     if (photoFile && photoFile.size > 0) {
       setUploading(true)
-      const fileName = `punch/${Date.now()}-${photoFile.name}`
+      const fileName = `punch/${Date.now()}-${photoFile.name.replace(/\s/g, '_')}`
       const { data } = await supabase.storage.from('site-photos').upload(fileName, photoFile)
       if (data) photoUrl = supabase.storage.from('site-photos').getPublicUrl(fileName).data.publicUrl
       setUploading(false)
     }
-    await supabase.from('site_punchlist').insert([{
+    
+    await supabase.from('punch_list').insert([{
       project_id: selectedProjectId,
-      trade_type: formData.get('trade_type'),
-      task_description: formData.get('description'),
+      assigned_to: formData.get('assigned_to'), 
+      notes: formData.get('notes'),             
+      description: formData.get('description'), 
       location: formData.get('location'),
-      assigned_to: formData.get('assigned_to'),
       priority: formData.get('priority'),
       status: 'Open',
       photo_url: photoUrl
@@ -96,17 +113,17 @@ export default function AdvancedPunchlist() {
 
   const updateStatus = async (id: string, currentStatus: string) => {
     const nextStatus = currentStatus === 'Open' ? 'Fixed' : currentStatus === 'Fixed' ? 'Verified' : 'Open'
-    await supabase.from('site_punchlist').update({ status: nextStatus }).eq('id', id)
+    await supabase.from('punch_list').update({ status: nextStatus }).eq('id', id)
     fetchData()
   }
 
   const filteredItems = items.filter(i => {
-    const matchesTrade = tradeFilter === 'All Trades' || i.trade_type === tradeFilter
+    const matchesTrade = tradeFilter === 'All Trades' || (i.assigned_to || 'General') === tradeFilter
     const matchesView = viewFilter === 'Active' ? i.status !== 'Verified' : i.status === 'Verified'
     return matchesTrade && matchesView
   })
 
-  const tradesList = ['All Trades', ...new Set(items.map(i => i.trade_type).filter(Boolean))]
+  const tradesList = ['All Trades', ...new Set(items.map(i => i.assigned_to || 'General').filter(Boolean))]
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans pb-20 text-slate-100">
@@ -124,17 +141,17 @@ export default function AdvancedPunchlist() {
         <div className="flex flex-wrap gap-2">
           {selectedProjectId && (
             <>
-              <button onClick={exportToExcel} className="bg-emerald-600 text-white text-[9px] font-black px-4 py-3 rounded-xl uppercase tracking-widest shadow-[0_0_15px_rgba(16,185,129,0.2)]">Excel Export</button>
-              <button onClick={() => router.push(`/punchlist/report?project=${selectedProjectId}`)} className="bg-blue-600 text-white text-[9px] font-black px-4 py-3 rounded-xl uppercase tracking-widest shadow-[0_0_15px_rgba(59,130,246,0.2)]">PDF Report</button>
+              <button onClick={exportToExcel} className="bg-emerald-600 hover:bg-emerald-500 transition-all text-white text-[9px] font-black px-4 py-3 rounded-xl uppercase tracking-widest shadow-[0_0_15px_rgba(16,185,129,0.2)]">Excel Export</button>
+              <button onClick={() => router.push(`/punchlist/report?project=${selectedProjectId}`)} className="bg-blue-600 hover:bg-blue-500 transition-all text-white text-[9px] font-black px-4 py-3 rounded-xl uppercase tracking-widest shadow-[0_0_15px_rgba(59,130,246,0.2)]">PDF Report</button>
             </>
           )}
-          <Link href="/dashboard" className="bg-slate-800 text-white border border-slate-700 text-[9px] font-black px-4 py-3 rounded-xl uppercase shadow-sm">← Back</Link>
+          <Link href="/dashboard" className="bg-slate-800 hover:bg-slate-700 transition-all text-white border border-slate-700 text-[9px] font-black px-4 py-3 rounded-xl uppercase shadow-sm">← Back</Link>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         
-        {/* SIDEBAR FORM (HIGH CONTRAST) */}
+        {/* SIDEBAR FORM */}
         <div className="lg:col-span-1">
           <form onSubmit={handleSubmit} className="bg-slate-900 p-6 rounded-[32px] border border-slate-800 shadow-2xl space-y-4 sticky top-6">
             <h2 className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-2">Create New Entry</h2>
@@ -143,55 +160,72 @@ export default function AdvancedPunchlist() {
               {projects.map(p => <option key={p.id} value={p.id} className="text-white">{p.name}</option>)}
             </select>
             <div className="grid grid-cols-2 gap-2">
-              <input name="trade_type" required placeholder="Trade" className="w-full p-4 bg-slate-800 text-white border border-slate-700 rounded-2xl text-[11px] font-bold outline-none" />
-              <input name="location" required placeholder="Location" className="w-full p-4 bg-slate-800 text-white border border-slate-700 rounded-2xl text-[11px] font-bold outline-none" />
+              <input name="assigned_to" required placeholder="Trade" className="w-full p-4 bg-slate-800 text-white border border-slate-700 rounded-2xl text-[11px] font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+              <input name="location" required placeholder="Location" className="w-full p-4 bg-slate-800 text-white border border-slate-700 rounded-2xl text-[11px] font-bold outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
-            <input name="assigned_to" placeholder="Assigned To" className="w-full p-4 bg-slate-800 text-white border border-slate-700 rounded-2xl text-sm font-bold outline-none" />
-            <select name="priority" className="w-full p-4 bg-slate-800 text-white border border-slate-700 rounded-2xl text-sm font-bold outline-none">
+            <input name="notes" placeholder="Assigned To (Lead/Worker)" className="w-full p-4 bg-slate-800 text-white border border-slate-700 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+            <select name="priority" className="w-full p-4 bg-slate-800 text-white border border-slate-700 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500">
               <option value="Urgent">Urgent</option>
               <option value="High">High</option>
               <option value="Medium">Medium</option>
               <option value="Low">Low</option>
             </select>
-            <textarea name="description" required placeholder="Description..." className="w-full p-4 bg-slate-800 text-white border border-slate-700 rounded-2xl text-sm font-bold outline-none h-24" />
-            <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700 text-center"><input name="photo" type="file" accept="image/*" capture="environment" className="text-[10px] text-slate-400 w-full" /></div>
-            <button type="submit" disabled={loading || uploading || !selectedProjectId} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-[11px] shadow-[0_0_20px_rgba(59,130,246,0.3)] transition-all">Submit Entry</button>
+            <textarea name="description" required placeholder="Description..." className="w-full p-4 bg-slate-800 text-white border border-slate-700 rounded-2xl text-sm font-bold outline-none h-24 focus:ring-2 focus:ring-blue-500" />
+            <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700 text-center">
+              <input name="photo" type="file" accept="image/*" capture="environment" className="text-[10px] text-slate-400 w-full" />
+            </div>
+            <button type="submit" disabled={loading || uploading || !selectedProjectId} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-[11px] shadow-[0_0_20px_rgba(59,130,246,0.3)] transition-all disabled:opacity-50">
+              {uploading ? 'UPLOADING...' : 'SUBMIT ENTRY'}
+            </button>
           </form>
         </div>
 
-        {/* LIST SECTION (DARK CARDS) */}
+        {/* LIST SECTION */}
         <div className="lg:col-span-3 space-y-6">
           <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
             {tradesList.map(t => (
-              <button key={t} onClick={() => setTradeFilter(t)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${tradeFilter === t ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>{t}</button>
+              <button key={t} onClick={() => setTradeFilter(t)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${tradeFilter === t ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800'}`}>{t}</button>
             ))}
           </div>
 
           <div className="space-y-4">
+            {filteredItems.length === 0 && (
+               <div className="text-center p-12 border-2 border-dashed border-slate-800 rounded-[32px] text-slate-500 font-bold uppercase text-xs tracking-widest">
+                 No items found for this view.
+               </div>
+            )}
+            
             {filteredItems.map(item => (
               <div key={item.id} className={`bg-slate-900 p-6 rounded-[32px] border-2 shadow-xl flex flex-col md:flex-row gap-6 transition-all ${item.priority === 'Urgent' ? 'border-red-500/50 bg-red-950/10' : 'border-slate-800'}`}>
-                {item.photo_url && <img src={item.photo_url} className="w-full md:w-44 h-44 rounded-2xl object-cover border border-slate-800" />}
+                {item.photo_url && <img src={item.photo_url} className="w-full md:w-44 h-44 rounded-2xl object-cover border border-slate-800 shadow-lg" alt="Deficiency photo" />}
+                
                 <div className="flex-1 flex flex-col justify-between">
                   <div>
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex gap-2">
-                        <span className={`text-[9px] font-black px-2 py-1 rounded uppercase ${item.priority === 'Urgent' ? 'bg-red-600 text-white animate-pulse' : 'bg-slate-800 text-slate-300'}`}>{item.priority || 'Medium'}</span>
-                        <span className="text-[10px] font-black text-blue-400 uppercase tracking-tighter">{item.location}</span>
+                        <span className={`text-[9px] font-black px-2 py-1 rounded uppercase tracking-widest ${item.priority === 'Urgent' ? 'bg-red-600 text-white animate-pulse shadow-[0_0_10px_rgba(220,38,38,0.5)]' : 'bg-slate-800 text-slate-300'}`}>{item.priority || 'Medium'}</span>
+                        <span className="text-[10px] font-black text-blue-400 uppercase tracking-tighter bg-blue-950/30 px-2 py-1 rounded">{item.location}</span>
                       </div>
-                      <p className="text-[9px] font-black text-slate-500 uppercase">{new Date(item.created_at).toLocaleDateString()}</p>
+                      <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">{new Date(item.created_at).toLocaleDateString()}</p>
                     </div>
-                    <h4 className="text-xl font-black text-white leading-tight mb-2 uppercase italic">{item.trade_type}: {item.task_description}</h4>
-                    <p className="text-[10px] font-black text-slate-400 uppercase">Lead: <span className="text-blue-400">{item.assigned_to || 'Pending'}</span></p>
+                    <h4 className="text-xl font-black text-white leading-tight mb-2 uppercase italic">{item.assigned_to || 'General'}: {item.description}</h4>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Lead: <span className="text-blue-400">{item.notes || 'Pending'}</span></p>
                   </div>
                   
                   <div className="flex justify-between items-center pt-6 mt-4 border-t border-slate-800">
                     <button onClick={() => updateStatus(item.id, item.status)} className={`text-[10px] font-black px-6 py-3 rounded-full uppercase tracking-widest transition-all shadow-lg ${
-                      item.status === 'Verified' ? 'bg-emerald-600 text-white' : 
-                      item.status === 'Fixed' ? 'bg-blue-600 text-white' : 'bg-amber-600 text-white'
+                      item.status === 'Verified' ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 
+                      item.status === 'Fixed' ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-amber-600 text-white hover:bg-amber-500'
                     }`}>
                       Status: {item.status}
                     </button>
-                    <p className="text-[9px] font-mono text-slate-600 uppercase tracking-tighter">REF#{item.id.slice(0,8)}</p>
+                    
+                    <div className="flex items-center gap-4">
+                      <p className="text-[9px] font-mono text-slate-600 uppercase tracking-tighter">REF#{item.id.slice(0,8)}</p>
+                      <Link href={`/punchlist/${item.id}`} className="text-[10px] font-black text-blue-500 hover:text-white uppercase tracking-widest transition-all bg-slate-950 px-4 py-2 rounded-full border border-slate-800 hover:border-blue-500">
+                        Open Ticket →
+                      </Link>
+                    </div>
                   </div>
                 </div>
               </div>
