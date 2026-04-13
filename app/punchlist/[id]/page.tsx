@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
-import { Share2, Printer, CheckCircle2, Circle, Plus, Trash2, MapPin } from 'lucide-react'
+import { Share2, Printer, CheckCircle2, Circle, Plus, Trash2, MapPin, HardHat } from 'lucide-react'
 
 export default function PunchManager() {
   const { id } = useParams()
