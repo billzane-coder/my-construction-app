@@ -1,255 +1,253 @@
 'use client'
 
-// 1. VERCEL BUILD FIX
-export const dynamic = 'force-dynamic'
+export const dynamic = 'force-dynamic' 
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
-import { 
-  ChevronLeft, FileQuestion, Calendar, HardHat, 
-  Clock, DollarSign, CalendarDays, Upload, 
-  MessageSquare, CheckCircle2, Circle, Loader2, Save
-} from 'lucide-react'
+import { ChevronLeft, FileQuestion, Save, Loader2, Calendar, User, FileText, CheckCircle2, MessageSquare, Printer, Trash2 } from 'lucide-react'
 
-export default function RfiDetails() {
+export default function RfiDetail() {
   const { id, rfiid } = useParams()
   const router = useRouter()
   
-  const [rfi, setRfi] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   
-  // Resolution State
+  // Lookups
+  const [contacts, setContacts] = useState<any[]>([])
+  const [plans, setPlans] = useState<any[]>([])
+  
+  // RFI State
+  const [title, setTitle] = useState('')
+  const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState('')
-  const [status, setStatus] = useState<'Open' | 'Closed'>('Open')
+  const [status, setStatus] = useState('Open')
+  const [assignedTo, setAssignedTo] = useState('')
+  const [dueDate, setDueDate] = useState('')
+  const [planId, setPlanId] = useState('')
+  const [createdAt, setCreatedAt] = useState('')
 
-  const fetchRfi = async () => {
-    if (!rfiid) return
-    setLoading(true)
-    
-    const { data, error } = await supabase
-      .from('rfis')
-      .select('*, projects(name)')
-      .eq('id', rfiid)
-      .single()
+  useEffect(() => {
+    async function fetchRfi() {
+      if (!id || !rfiid) return
+      
+      const [cts, docs, rfi] = await Promise.all([
+        supabase.from('project_contacts').select('*').eq('project_id', id),
+        supabase.from('project_documents').select('id, title, revision_number').eq('project_id', id).eq('doc_type', 'Plan'),
+        supabase.from('rfis').select('*').eq('id', rfiid).single()
+      ])
 
-    if (!error && data) {
-      setRfi(data)
-      setAnswer(data.answer || '')
-      setStatus(data.status || 'Open')
+      if (cts.data) setContacts(cts.data)
+      if (docs.data) setPlans(docs.data)
+      
+      if (rfi.data) {
+        setTitle(rfi.data.title)
+        setQuestion(rfi.data.question)
+        setAnswer(rfi.data.answer || '')
+        setStatus(rfi.data.status || 'Open')
+        setAssignedTo(rfi.data.assigned_to || '')
+        setDueDate(rfi.data.due_date || '')
+        setPlanId(rfi.data.plan_id || '')
+        setCreatedAt(rfi.data.created_at)
+      }
+      
+      setLoading(false)
     }
-    setLoading(false)
-  }
+    fetchRfi()
+  }, [id, rfiid])
 
-  useEffect(() => { fetchRfi() }, [rfiid])
-  const handleUpdateRfi = async () => {
+  const handleSave = async () => {
     setSaving(true)
-    const { error } = await supabase
-      .from('rfis')
-      .update({ answer, status })
-      .eq('id', rfiid)
+    
+    // Auto-close if an answer is provided and status was still Open/Pending
+    let finalStatus = status
+    if (answer.trim() !== '' && (status === 'Open' || status === 'Pending')) {
+      finalStatus = 'Answered'
+      setStatus('Answered')
+    }
 
+    const payload = {
+      title, question, answer, status: finalStatus,
+      assigned_to: assignedTo || null, due_date: dueDate || null, plan_id: planId || null
+    }
+
+    const { error } = await supabase.from('rfis').update(payload).eq('id', rfiid)
+    
     if (!error) {
-      alert('RFI Updated Successfully')
-      fetchRfi()
+      alert("RFI Updated Successfully")
     } else {
       alert(`Error updating RFI: ${error.message}`)
     }
     setSaving(false)
   }
 
-  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-[0.5em]">Loading RFI Details...</div>
-  if (!rfi) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-red-500 font-black uppercase tracking-[0.5em]">RFI Not Found</div>
+  const handleDelete = async () => {
+    if(confirm("Are you sure you want to permanently delete this RFI?")) {
+      await supabase.from('rfis').delete().eq('id', rfiid)
+      router.push(`/projects/${id}/rfis`)
+      router.refresh()
+    }
+  }
 
-  const isLate = status === 'Open' && new Date(rfi.due_date) < new Date()
+  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Opening Record...</div>
 
   return (
-    <div className="max-w-5xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
+    <div className="max-w-4xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-40 print:bg-white print:text-black print:pb-0" id="print-area">
       
-      {/* HEADER */}
-      <div className="mb-10 border-b-4 border-blue-600 pb-8">
-        <button onClick={() => router.push(`/projects/${id}/rfis`)} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-500 mb-6 hover:text-white transition-all">
-          <ChevronLeft size={14} /> Back to RFI Log
-        </button>
-        
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
-          <div className="flex-1">
-            <div className="flex flex-wrap items-center gap-3 mb-4">
-              <span className={`text-[10px] font-black px-4 py-1.5 rounded-md uppercase tracking-widest ${
-                status === 'Closed' ? 'bg-slate-800 text-slate-400' : 'bg-blue-600 text-white'
-              }`}>
-                {status}
-              </span>
-              {isLate && (
-                <span className="text-[10px] font-black px-4 py-1.5 rounded-md uppercase tracking-widest bg-red-950/30 text-red-500 border border-red-900/50">
-                  Overdue
-                </span>
-              )}
-              <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest ml-2">
-                RFI #{rfi.id.slice(0, 8).toUpperCase()}
-              </span>
-            </div>
-            
-            <h1 className="text-4xl md:text-5xl font-black uppercase italic tracking-tighter leading-tight mb-2">
-              {rfi.subject}
+      {/* 🖨️ PDF PRINT STYLES */}
+      <style dangerouslySetInnerHTML={{__html: `
+        @media print {
+          @page { margin: 0.75in; size: portrait; }
+          html, body { background: white !important; height: auto !important; overflow: visible !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          #__next, [data-reactroot], body > div { height: auto !important; overflow: visible !important; display: block !important; }
+          ::-webkit-scrollbar { display: none; }
+        }
+      `}} />
+
+      {/* 🖨️ FORMAL PDF HEADER */}
+      <div className="hidden print:block border-b-2 border-black pb-4 mb-8 mt-2">
+        <div className="flex justify-between items-end">
+          <div>
+            <h1 className="text-3xl font-black uppercase tracking-tighter text-black leading-none">Request for Information</h1>
+            <p className="text-xs font-bold text-slate-500 uppercase mt-2 tracking-widest">Status: {status}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">Date Submitted</p>
+            <p className="text-lg font-black text-black">
+              {createdAt ? new Date(createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'N/A'}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* 💻 APP UI HEADER */}
+      <div className="mb-8 border-b-4 border-blue-600 pb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-4 print:hidden">
+        <div>
+          <button onClick={() => router.back()} className="text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white flex items-center gap-1 transition-all">
+            <ChevronLeft size={12}/> Back to Log
+          </button>
+          <div className="flex items-center gap-4">
+            <h1 className="text-4xl font-black text-white tracking-tighter uppercase italic leading-none">
+              RFI <span className="text-blue-500">Record</span>
             </h1>
-            <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-2">
-              {rfi.projects?.name}
-            </p>
-          </div>
-          
-          <div className="flex gap-4">
-            <button 
-              onClick={() => setStatus(status === 'Open' ? 'Closed' : 'Open')}
-              className={`flex items-center justify-center gap-2 px-8 py-4 rounded-2xl text-[10px] font-black uppercase transition-all shadow-xl w-full md:w-auto ${
-                status === 'Closed' ? 'bg-slate-800 text-slate-400 hover:bg-slate-700' : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-emerald-900/20'
-              }`}
-            >
-              {status === 'Closed' ? <><Circle size={16} /> Reopen RFI</> : <><CheckCircle2 size={16} /> Mark Closed</>}
-            </button>
           </div>
         </div>
-      </div>
-
-      {/* TWO-COLUMN LAYOUT */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
-        {/* LEFT COLUMN: The Question & Answer */}
-        <div className="lg:col-span-2 space-y-8">
+        <select 
+          value={status} 
+          onChange={(e) => setStatus(e.target.value)}
+          className={`px-6 py-3 rounded-2xl font-black uppercase text-[10px] tracking-widest outline-none cursor-pointer appearance-none text-center border-2 ${
+            status === 'Closed' ? 'bg-emerald-950/30 text-emerald-500 border-emerald-900' :
+            status === 'Answered' ? 'bg-blue-950/30 text-blue-500 border-blue-900' :
+            status === 'Pending' ? 'bg-amber-950/30 text-amber-500 border-amber-900' :
+            'bg-red-950/30 text-red-500 border-red-900'
+          }`}
+        >
+          <option value="Open">🔴 Open / Action Req.</option>
+          <option value="Pending">🟡 Pending / Awaiting</option>
+          <option value="Answered">🔵 Answered</option>
+          <option value="Closed">🟢 Closed / Resolved</option>
+        </select>
+      </div>
+
+      <div className="space-y-6 print:space-y-8">
+        
+        {/* TITLE & QUESTION */}
+        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-2 print:border-slate-300 print:rounded-2xl print:p-6 print:break-inside-avoid">
+          <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">
+            <FileQuestion size={14} className="text-blue-500 print:text-black"/> Subject & Query
+          </label>
+          <input 
+            value={title} 
+            onChange={(e) => setTitle(e.target.value)} 
+            className="w-full bg-slate-950 border border-slate-800 p-4 rounded-t-2xl font-black text-white text-lg outline-none print:hidden" 
+          />
+          <div className="hidden print:block text-2xl font-black text-black mb-4 uppercase italic">{title}</div>
           
-          {/* THE QUESTION */}
-          <div className="bg-slate-900/50 p-6 md:p-8 rounded-[32px] border border-slate-800 shadow-xl">
-            <h3 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.3em] mb-6 flex items-center gap-2 border-b border-slate-800 pb-4">
-              <FileQuestion size={16} className="text-blue-500" /> Original Request
-            </h3>
-            <p className="text-lg font-medium text-slate-200 whitespace-pre-wrap leading-relaxed">
-              {rfi.question}
-            </p>
-            
-            <div className="mt-8 pt-6 border-t border-slate-800/50 text-[10px] font-black text-slate-500 uppercase tracking-widest">
-              Submitted: {new Date(rfi.created_at).toLocaleString()}
-            </div>
+          <textarea 
+            value={question} 
+            onChange={(e) => setQuestion(e.target.value)} 
+            className="w-full h-40 bg-slate-950 border border-t-0 border-slate-800 p-5 rounded-b-2xl font-bold text-slate-300 outline-none resize-none print:hidden" 
+          />
+          <div className="hidden print:block text-black font-medium text-sm whitespace-pre-wrap leading-relaxed">
+            {question || 'No question provided.'}
           </div>
-
-          {/* THE ANSWER (Interactive) */}
-          <div className={`p-6 md:p-8 rounded-[32px] border shadow-xl transition-colors ${
-            status === 'Closed' ? 'bg-emerald-950/10 border-emerald-900/30' : 'bg-slate-900 border-slate-800'
-          }`}>
-            <h3 className={`text-[11px] font-black uppercase tracking-[0.3em] mb-6 flex items-center gap-2 border-b pb-4 ${
-              status === 'Closed' ? 'text-emerald-500 border-emerald-900/30' : 'text-blue-500 border-slate-800'
-            }`}>
-              <MessageSquare size={16} /> Official Response
-            </h3>
-            
-            <textarea 
-              value={answer}
-              onChange={(e) => setAnswer(e.target.value)}
-              placeholder="Type the official answer or architectural directive here..."
-              className={`w-full h-48 bg-slate-950 border p-6 rounded-[24px] font-medium text-white outline-none resize-none transition-all ${
-                status === 'Closed' ? 'border-emerald-900/50 focus:border-emerald-500' : 'border-slate-800 focus:border-blue-500'
-              }`}
-            />
-            
-            <div className="mt-6 flex justify-end">
-              <button 
-                onClick={handleUpdateRfi}
-                disabled={saving}
-                className={`flex items-center justify-center gap-2 px-10 py-4 rounded-2xl text-[10px] font-black uppercase transition-all shadow-xl disabled:opacity-50 ${
-                  status === 'Closed' ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/20' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/20'
-                }`}
-              >
-                {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                {saving ? 'Saving...' : 'Save Response'}
-              </button>
-            </div>
-          </div>
-
         </div>
 
-        {/* RIGHT COLUMN: Meta Data & Attachments */}
-        <div className="space-y-6">
+        {/* OFFICIAL RESPONSE */}
+        <div className="bg-slate-900/50 p-6 rounded-[32px] border-2 border-blue-900/50 relative overflow-hidden print:bg-slate-50 print:border-2 print:border-slate-300 print:rounded-2xl print:p-6 print:break-inside-avoid">
+          <div className="absolute top-0 left-0 w-2 h-full bg-blue-600 print:hidden" />
+          <label className="flex items-center gap-2 text-[10px] font-black text-blue-500 uppercase tracking-widest mb-4 ml-2">
+            <MessageSquare size={14} /> Official Response
+          </label>
+          <textarea 
+            value={answer} 
+            onChange={(e) => setAnswer(e.target.value)} 
+            placeholder="Type the official answer or resolution here..."
+            className="w-full h-48 bg-slate-950 border border-slate-800 p-5 rounded-2xl font-bold text-white outline-none resize-none focus:border-blue-500 transition-all leading-relaxed print:hidden" 
+          />
+          <div className="hidden print:block text-black font-semibold text-sm whitespace-pre-wrap leading-relaxed p-4 border border-slate-300 rounded-xl bg-white">
+            {answer || 'Awaiting official response...'}
+          </div>
+        </div>
+
+        {/* METADATA GRID */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 print:grid-cols-3 print:gap-4 print:mt-8">
           
-          {/* ASSIGNMENT CARD */}
-          <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 shadow-xl">
-            <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6 border-b border-slate-800 pb-3">Routing</h3>
-            
-            <div className="space-y-6">
-              <div>
-                <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-1 flex items-center gap-1.5"><HardHat size={12}/> Assigned To</p>
-                <p className="text-sm font-black text-white uppercase truncate">{rfi.assigned_to}</p>
-              </div>
-              
-              <div>
-                <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-1 flex items-center gap-1.5"><Calendar size={12}/> Date Required</p>
-                <p className={`text-sm font-black uppercase ${isLate ? 'text-red-500' : 'text-white'}`}>
-                  {new Date(rfi.due_date).toLocaleDateString()}
-                </p>
-              </div>
+          <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:border print:border-slate-300 print:rounded-xl print:p-4">
+            <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">
+              <User size={14} className="text-amber-500 print:text-black"/> Assigned To
+            </label>
+            <select value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none print:hidden appearance-none">
+              <option value="">Unassigned</option>
+              {contacts.map(c => <option key={c.id} value={c.company}>{c.company}</option>)}
+            </select>
+            <div className="hidden print:block text-black font-bold text-sm">{assignedTo || 'Unassigned'}</div>
+          </div>
+
+          <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:border print:border-slate-300 print:rounded-xl print:p-4">
+            <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">
+              <FileText size={14} className="text-blue-500 print:text-black"/> Linked Drawing
+            </label>
+            <select value={planId} onChange={(e) => setPlanId(e.target.value)} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none print:hidden appearance-none">
+              <option value="">None / General</option>
+              {plans.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+            </select>
+            <div className="hidden print:block text-black font-bold text-sm">
+              {plans.find(p => p.id === planId)?.title || 'General Inquiry'}
             </div>
           </div>
 
-          {/* IMPACT CARD */}
-          <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 shadow-xl">
-            <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6 border-b border-slate-800 pb-3">Project Impact</h3>
-            
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-slate-950 rounded-2xl border border-slate-800/50">
-                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1.5"><DollarSign size={12}/> Cost</p>
-                <span className={`text-[10px] font-black px-3 py-1 rounded border uppercase ${
-                  rfi.cost_impact === 'Yes' ? 'bg-amber-950/30 text-amber-500 border-amber-900/50' : 'border-slate-800 text-slate-400'
-                }`}>
-                  {rfi.cost_impact}
-                </span>
-              </div>
-              
-              <div className="flex items-center justify-between p-4 bg-slate-950 rounded-2xl border border-slate-800/50">
-                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1.5"><CalendarDays size={12}/> Schedule</p>
-                <span className={`text-[10px] font-black px-3 py-1 rounded border uppercase ${
-                  rfi.schedule_impact === 'Yes' ? 'bg-amber-950/30 text-amber-500 border-amber-900/50' : 'border-slate-800 text-slate-400'
-                }`}>
-                  {rfi.schedule_impact}
-                </span>
-              </div>
+          <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:border print:border-slate-300 print:rounded-xl print:p-4">
+            <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">
+              <Calendar size={14} className="text-red-500 print:text-black"/> Due Date
+            </label>
+            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none print:hidden" />
+            <div className="hidden print:block text-black font-bold text-sm">
+              {dueDate ? new Date(dueDate).toLocaleDateString() : 'No Due Date'}
             </div>
-          </div>
-
-          {/* ATTACHMENT CARD */}
-          <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 shadow-xl">
-            <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6 border-b border-slate-800 pb-3 flex items-center gap-2">
-              <Upload size={14} className="text-blue-500" /> Reference Material
-            </h3>
-            
-            {rfi.attachment_url ? (
-              <div className="space-y-4">
-                {rfi.attachment_url.match(/\.(jpeg|jpg|gif|png)$/i) ? (
-                  <div className="aspect-video rounded-xl overflow-hidden border border-slate-800">
-                    <img src={rfi.attachment_url} alt="RFI Attachment" className="w-full h-full object-cover" />
-                  </div>
-                ) : (
-                  <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 text-center">
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Document Attached</p>
-                  </div>
-                )}
-                
-                <a 
-                  href={rfi.attachment_url} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="block w-full text-center bg-slate-800 hover:bg-blue-600 text-white font-black py-4 rounded-xl text-[10px] uppercase tracking-widest transition-all"
-                >
-                  View Full File
-                </a>
-              </div>
-            ) : (
-              <div className="text-center py-8 border-2 border-dashed border-slate-800 rounded-2xl">
-                <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest">No Attachments</p>
-              </div>
-            )}
           </div>
 
         </div>
       </div>
+
+      {/* FOOTER ACTIONS */}
+      <div className="fixed bottom-0 left-0 w-full bg-slate-950/90 border-t border-slate-800 p-4 backdrop-blur-md z-50 print:hidden">
+        <div className="max-w-4xl mx-auto flex gap-4">
+          <button onClick={handleDelete} className="bg-red-950/50 text-red-500 border border-red-900/50 w-14 rounded-2xl flex items-center justify-center hover:bg-red-600 hover:text-white transition-all"><Trash2 size={16}/></button>
+          
+          <button onClick={() => window.print()} className="flex-1 bg-slate-800 text-white font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg hover:bg-slate-700">
+            <Printer size={16}/> Export PDF
+          </button>
+          
+          <button onClick={handleSave} disabled={saving} className="flex-1 bg-blue-600 text-white font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest shadow-xl shadow-blue-900/20 transition-all hover:bg-blue-500 flex items-center justify-center gap-2">
+            {saving ? <Loader2 size={16} className="animate-spin"/> : <Save size={16}/>}
+            Save Updates
+          </button>
+        </div>
+      </div>
+
     </div>
   )
 }

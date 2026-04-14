@@ -114,14 +114,41 @@ export default function EditDailyLog() {
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-40 print:bg-white print:text-black print:pb-0" id="print-area">
       
-      {/* 🖨️ PDF PRINT STYLES - Forces white background and clean margins */}
-      <style dangerouslySetInnerHTML={{__html: `
-        @media print {
-          @page { margin: 0.75in; size: portrait; }
-          body { background: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          ::-webkit-scrollbar { display: none; }
-        }
-      `}} />
+     {/* 🖨️ PDF PRINT STYLES - Forces white background, clean margins, and disables scroll clipping */}
+<style dangerouslySetInnerHTML={{__html: `
+  @media print {
+    @page { margin: 0.75in; size: portrait; }
+    
+    /* 1. Force the body and html to expand infinitely */
+    html, body { 
+      background: white !important; 
+      height: auto !important; 
+      min-height: 100% !important;
+      overflow: visible !important; 
+      position: static !important;
+      -webkit-print-color-adjust: exact; 
+      print-color-adjust: exact; 
+    }
+    
+    /* 2. Break out of the Next.js / React root container constraints */
+    #__next, [data-reactroot], body > div {
+      height: auto !important;
+      overflow: visible !important;
+      position: static !important;
+      display: block !important;
+    }
+
+    /* 3. Hide scrollbars on the print output */
+    ::-webkit-scrollbar { display: none; }
+    
+    /* 4. Ensure the print area breaks pages naturally */
+    #print-area {
+      height: auto !important;
+      overflow: visible !important;
+      page-break-inside: auto;
+    }
+  }
+`}} />
 
       {/* 🖨️ FORMAL PDF HEADER (Hidden on Screen, Shows on Print) */}
       <div className="hidden print:block border-b-2 border-black pb-4 mb-8 mt-2">
