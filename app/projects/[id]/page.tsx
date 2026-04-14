@@ -406,21 +406,22 @@ export default function ProjectWarRoom() {
       {/* Register Trade Modal */}
       {showContactModal && (
         <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
-          <form onSubmit={async (e) => {
-            e.preventDefault(); 
-            const fd = new FormData(e.currentTarget);
-            const { error } = await supabase.from('project_contacts').insert([{ 
-              project_id: id, 
-              company: fd.get('company'), 
-              trade_role: fd.get('trade_role'), 
-              foreman_name: fd.get('foreman_name'), 
-              foreman_phone: fd.get('foreman_phone'),
-              office_name: fd.get('office_name'), 
-              office_phone: fd.get('office_phone'), 
-              email: fd.get('email')
-            }]);
-            if (!error) { setShowContactModal(false); fetchData(); } else { alert(error.message); }
-          }} className="bg-slate-900 border-2 border-emerald-600 p-10 rounded-[56px] max-w-2xl w-full space-y-6 shadow-2xl overflow-y-auto max-h-[90vh]">
+         <form onSubmit={async (e) => {
+  e.preventDefault(); 
+  const fd = new FormData(e.currentTarget);
+  const { error } = await supabase.from('project_contacts').insert([{ 
+    project_id: id, 
+    name: fd.get('company'), // <--- THIS FIXES THE CRASH
+    company: fd.get('company'), 
+    trade_role: fd.get('trade_role'), 
+    foreman_name: fd.get('foreman_name'), 
+    foreman_phone: fd.get('foreman_phone'),
+    office_name: fd.get('office_name'), 
+    office_phone: fd.get('office_phone'), 
+    email: fd.get('email')
+  }]);
+  if (!error) { setShowContactModal(false); fetchData(); } else { alert(error.message); }
+}} className="bg-slate-900 border-2 border-emerald-600 p-10 rounded-[56px] max-w-2xl w-full space-y-6 shadow-2xl overflow-y-auto max-h-[90vh]">
             <h2 className="text-2xl font-black text-white uppercase italic text-center">New Site Trade Registration</h2>
             
             <div className="grid grid-cols-2 gap-4">
