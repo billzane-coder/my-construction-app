@@ -1,283 +1,321 @@
 'use client'
+
+// 1. VERCEL BUILD FIX
+export const dynamic = 'force-dynamic' 
+
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
-// Added Images, X, and Loader icons
-import { Share2, Printer, CloudSun, HardHat, Plus, History, MapPin, Send, CheckCircle, PenLine, Images, X, Loader2 } from 'lucide-react'
+import { 
+  Save, PenTool, Share2, ChevronLeft, 
+  HardHat, CloudRain, Clock, Loader2, FileCheck, 
+  Images, Plus, Trash2
+} from 'lucide-react'
 
-export default function DailyLogManager() {
+export default function DailyLogEntry() {
   const { id } = useParams()
   const router = useRouter()
   
-  const [project, setProject] = useState<any>(null)
-  const [logs, setLogs] = useState<any[]>([])
+  // State
   const [loading, setLoading] = useState(true)
-  const [isSaving, setIsSaving] = useState(false)
-  const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [logId, setLogId] = useState<string | null>(null)
+  
+  // Form Data
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [weather, setWeather] = useState('')
+  const [workPerformed, setWorkPerformed] = useState('')
+  const [manpower, setManpower] = useState('')
+  const [status, setStatus] = useState<'Draft' | 'Final'>('Draft')
+  const [signature, setSignature] = useState('')
+  const [photos, setPhotos] = useState<string[]>([])
 
-  // --- FORM STATE (Now includes photo_urls) ---
-  const [formData, setFormData] = useState({
-    work_performed: '',
-    weather: '',
-    crew_size: '',
-    notes: '',
-    status: 'Draft',
-    photo_urls: [] as string[]
-  })
-  const [currentLogId, setCurrentLogId] = useState<string | null>(null)
+  useEffect(() => {
+    async function fetchTodayLog() {
+      if (!id) return
+      setLoading(true)
+      const { data, error } = await supabase
+        .from('daily_logs')
+        .select('*')
+        .eq('project_id', id)
+        .eq('log_date', date)
+        .single()
 
-  const fetchData = async () => {
-    if (!id) return
-    setLoading(true)
-    const [proj, logData] = await Promise.all([
-      supabase.from('projects').select('*').eq('id', id).single(),
-      supabase.from('daily_logs').select('*').eq('project_id', id).order('created_at', { ascending: false })
-    ])
-    
-    setProject(proj.data)
-    const allLogs = logData.data || []
-    setLogs(allLogs)
-
-    // Draft Loading Logic
-    const today = new Date().toLocaleDateString()
-    const latest = allLogs[0]
-    if (latest && latest.status === 'Draft' && new Date(latest.created_at).toLocaleDateString() === today) {
-      setCurrentLogId(latest.id)
-      setFormData({
-        work_performed: latest.work_performed || '',
-        weather: latest.weather || '',
-        crew_size: latest.crew_size || '',
-        notes: latest.notes || '',
-        status: 'Draft',
-        photo_urls: latest.photo_urls || []
-      })
+      if (data) {
+        setLogId(data.id)
+        setWeather(data.weather || '')
+        setWorkPerformed(data.work_performed || '')
+        setManpower(data.manpower || '')
+        setStatus(data.status || 'Draft')
+        setSignature(data.signature || '')
+        // Ensure we load photos correctly if they exist
+        setPhotos(data.photo_urls || (data.photo_url ? [data.photo_url] : []))
+      } else {
+        setLogId(null)
+        setWorkPerformed('')
+        setManpower('')
+        setStatus('Draft')
+        setSignature('')
+        setPhotos([])
+      }
+      setLoading(false)
     }
-    setLoading(false)
-  }
+    fetchTodayLog()
+  }, [id, date])
 
-  useEffect(() => { fetchData() }, [id])
-
-  // --- PHOTO UPLOAD LOGIC ---
+  // Photo Upload Logic
   const handlePhotoUpload = async (file: File) => {
-    setUploadingPhoto(true)
-    const fileExt = file.name.split('.').pop()
-    const fileName = `${Date.now()}.${fileExt}`
-    const filePath = `${id}/logs/${fileName}`
-
-    // 1. Upload to Supabase Storage
-    const { error: uploadError } = await supabase.storage.from('project-files').upload(filePath, file)
-    if (uploadError) { alert("Upload error: " + uploadError.message); setUploadingPhoto(false); return }
-
-    // 2. Get Public URL
-    const { data: urlData } = supabase.storage.from('project-files').getPublicUrl(filePath)
+    setUploading(true)
+    const path = `${id}/logs/${Date.now()}-${file.name}`
     
-    // 3. Update Form State (Add new URL to array)
-    setFormData(prev => ({...prev, photo_urls: [...prev.photo_urls, urlData.publicUrl]}))
-    setUploadingPhoto(false)
+    const { error: sErr } = await supabase.storage.from('project-files').upload(path, file)
+    if (sErr) { 
+      alert(`Upload failed: ${sErr.message}`)
+      setUploading(false)
+      return 
+    }
+    
+    const { data: u } = supabase.storage.from('project-files').getPublicUrl(path)
+    setPhotos(prev => [...prev, u.publicUrl])
+    setUploading(false)
   }
 
-  const removePhoto = (urlToRemove: string) => {
-    setFormData(prev => ({...prev, photo_urls: prev.photo_urls.filter(url => url !== urlToRemove)}))
-    // Note: In production, you'd also want to delete the file from Supabase storage here.
+  const removePhoto = (indexToRemove: number) => {
+    setPhotos(prev => prev.filter((_, i) => i !== indexToRemove))
   }
 
-  // --- SAVE DRAFT OR FINALIZE ---
-  const handleSave = async (finalize = false) => {
-    if (!formData.work_performed) { alert("Describe work performed."); return }
-    setIsSaving(true)
+  const saveLog = async (isFinal: boolean) => {
+    setSaving(true)
+    const newStatus = isFinal ? 'Final' : 'Draft'
     
     const payload = {
       project_id: id,
-      ...formData,
-      crew_size: formData.crew_size || 0,
-      status: finalize ? 'Finalized' : 'Draft',
-      signed_by: finalize ? 'Bill Z.' : null,
-      location_name: project?.address || project?.location
+      log_date: date,
+      weather,
+      work_performed: workPerformed,
+      manpower,
+      status: newStatus,
+      signature: isFinal ? signature : null,
+      photo_urls: photos // Save the array of photo URLs
     }
 
-    let error;
-    if (currentLogId) {
-      const { error: updateErr } = await supabase.from('daily_logs').update(payload).eq('id', currentLogId)
-      error = updateErr
+    if (logId) {
+      await supabase.from('daily_logs').update(payload).eq('id', logId)
+      setStatus(newStatus)
     } else {
-      const { data, error: insertErr } = await supabase.from('daily_logs').insert([payload]).select()
-      error = insertErr
-      if (data) setCurrentLogId(data[0].id)
-    }
-
-    if (!error) {
-      if (finalize) {
-        setFormData({ work_performed: '', weather: '', crew_size: '', notes: '', status: 'Draft', photo_urls: [] })
-        setCurrentLogId(null)
+      const { data } = await supabase.from('daily_logs').insert([payload]).select().single()
+      if (data) {
+        setLogId(data.id)
+        setStatus(newStatus)
       }
-      fetchData()
-    } else {
-      alert("Error saving: " + error.message)
     }
-    setIsSaving(false)
+    setSaving(false)
   }
 
-  const handleShare = async (log: any) => {
-    const shareBody = `
-🏗️ DAILY REPORT: ${project?.name}
-📅 Date: ${new Date(log.created_at).toLocaleDateString()}
-👷 Crew: ${log.crew_size} | 🌦️ Weather: ${log.weather}
-✍️ Signed by ${log.signed_by || 'Unsigned'}
-
-WORK PERFORMED:
-${log.work_performed}
-
-NOTES:
-${log.notes || 'No notes.'}
-📸 Attached: ${log.photo_urls?.length || 0} Photos
-    `.trim()
-
+  const handleShare = async () => {
+    const photoText = photos.length > 0 ? `\nPhotos Attached: ${photos.length}` : ''
+    const shareText = `Daily Log - ${date}\nWeather: ${weather}\nCrew: ${manpower}\nWork: ${workPerformed}${photoText}`
+    
     if (navigator.share) {
       try {
-        await navigator.share({ title: `Report - ${project?.name}`, text: shareBody, url: window.location.href })
-      } catch (e) { window.print() }
+        await navigator.share({
+          title: 'Daily Site Log',
+          text: shareText,
+        })
+      } catch (err) {
+        console.log('User canceled share', err)
+      }
     } else {
-      navigator.clipboard.writeText(shareBody); alert("Copied to clipboard!")
+      navigator.clipboard.writeText(shareText)
+      alert('Log copied to clipboard!')
     }
   }
 
-  if (loading) return <div className="h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Syncing Field Logs...</div>
+  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-[0.5em]">Loading Log...</div>
 
   return (
-    <div className="max-w-5xl mx-auto p-4 md:p-12 bg-slate-950 min-h-screen text-slate-100">
+    <div className="max-w-4xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
       
       {/* HEADER */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-12 border-b border-slate-800 pb-8 print:hidden">
-        <div>
-          <button onClick={() => router.back()} className="text-[10px] font-black uppercase text-slate-500 mb-2 hover:text-white transition-all">← War Room</button>
-          <h1 className="text-4xl font-black uppercase italic tracking-tighter leading-none">Daily <span className="text-blue-500">Logs</span></h1>
-          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-2 italic">Project: {project?.name}</p>
+      <div className="mb-8 border-b-4 border-blue-600 pb-6">
+        <button onClick={() => router.push(`/projects/${id}`)} className="text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white transition-all flex items-center gap-1">
+          <ChevronLeft size={12}/> Back to War Room
+        </button>
+        <div className="flex justify-between items-end">
+          <div>
+            <h1 className="text-4xl font-black text-white tracking-tighter uppercase italic leading-none">Daily <span className="text-blue-500">Log</span></h1>
+            <div className="flex items-center gap-3 mt-4">
+              <span className={`text-[9px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest ${status === 'Draft' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'}`}>
+                {status} Record
+              </span>
+            </div>
+          </div>
+          
+          <input 
+            type="date" 
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            disabled={status === 'Final'}
+            className="bg-slate-900 border border-slate-800 text-blue-400 font-black p-3 rounded-2xl outline-none disabled:opacity-50"
+          />
         </div>
-        <button onClick={() => window.print()} className="bg-slate-900 border border-slate-800 px-6 py-4 rounded-2xl text-[10px] font-black uppercase text-slate-400 hover:text-white transition-all"><Printer size={16} /> Print</button>
       </div>
 
-      {/* ACTIVE LOG FORM (THE "WORKBENCH") */}
-      <div className="bg-slate-900/50 p-8 rounded-[40px] border-2 border-blue-600/20 mb-12 shadow-2xl print:hidden relative overflow-hidden">
-        {formData.status === 'Draft' && (
-          <div className="absolute top-4 right-8 flex items-center gap-2 bg-amber-500/10 text-amber-500 px-3 py-1 rounded-full border border-amber-500/20 animate-pulse">
-            <PenLine size={12} /> <span className="text-[9px] font-black uppercase tracking-widest">Active Draft</span>
-          </div>
-        )}
-
-        <div className="space-y-6">
-          {/* WEATHER & CREW */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-             <div className="space-y-2">
-               <label className="text-[9px] font-black text-slate-500 uppercase ml-2">Weather Condition</label>
-               <input value={formData.weather} onChange={(e) => setFormData({...formData, weather: e.target.value})} placeholder="Sunny / 18°C" className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-sm" />
-             </div>
-             <div className="space-y-2">
-               <label className="text-[9px] font-black text-slate-500 uppercase ml-2">Crew Size</label>
-               <input type="number" value={formData.crew_size} onChange={(e) => setFormData({...formData, crew_size: e.target.value})} placeholder="0" className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-sm" />
-             </div>
-             <div className="space-y-2">
-               <label className="text-[9px] font-black text-slate-500 uppercase ml-2">Location Context</label>
-               <input disabled value={project?.address || project?.location} className="w-full bg-slate-900 border border-slate-800 p-4 rounded-xl font-bold text-sm opacity-50 cursor-not-allowed" />
-             </div>
+      {/* FORM AREA */}
+      <div className="space-y-6">
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800">
+            <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">
+              <CloudRain size={14} className="text-blue-500"/> Site Weather
+            </label>
+            <input 
+              value={weather}
+              onChange={(e) => setWeather(e.target.value)}
+              disabled={status === 'Final'}
+              placeholder="e.g. 15C, Sunny, Dry"
+              className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl font-bold text-white outline-none focus:border-blue-500 disabled:opacity-50"
+            />
           </div>
 
-          {/* WORK PERFORMED */}
-          <div className="space-y-2">
-            <label className="text-[9px] font-black text-slate-500 uppercase ml-2">Work Performed Today</label>
-            <textarea value={formData.work_performed} onChange={(e) => setFormData({...formData, work_performed: e.target.value})} required rows={3} placeholder="List today's installs..." className="w-full bg-slate-950 border border-slate-800 p-5 rounded-2xl font-bold text-sm" />
+          <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800">
+            <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">
+              <HardHat size={14} className="text-blue-500"/> Manpower / Trades
+            </label>
+            <input 
+              value={manpower}
+              onChange={(e) => setManpower(e.target.value)}
+              disabled={status === 'Final'}
+              placeholder="e.g. 4 Tapers, 2 Framers"
+              className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl font-bold text-white outline-none focus:border-blue-500 disabled:opacity-50"
+            />
           </div>
+        </div>
 
-          {/* NOTES */}
-          <div className="space-y-2">
-            <label className="text-[9px] font-black text-slate-500 uppercase ml-2">Site Notes / Delays</label>
-            <textarea value={formData.notes} onChange={(e) => setFormData({...formData, notes: e.target.value})} rows={2} placeholder="Any delays or issues?" className="w-full bg-slate-950 border border-slate-800 p-5 rounded-2xl font-bold text-sm" />
-          </div>
+        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800">
+          <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">
+            <Clock size={14} className="text-blue-500"/> Work Performed
+          </label>
+          <textarea 
+            value={workPerformed}
+            onChange={(e) => setWorkPerformed(e.target.value)}
+            disabled={status === 'Final'}
+            placeholder="Document daily progress, delays, or deliveries here..."
+            className="w-full h-40 bg-slate-950 border border-slate-800 p-5 rounded-[24px] font-bold text-white outline-none focus:border-blue-500 resize-none disabled:opacity-50"
+          />
+        </div>
 
-          {/* --- PHOTO UPLOAD ZONE (NEW) --- */}
-          <div className="space-y-3 pt-4 border-t border-slate-800">
-            <label className="text-[9px] font-black text-slate-500 uppercase ml-2">Progress Photos (Gallery or Camera)</label>
+        {/* PROGRESS PHOTOS BLOCK */}
+        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800">
+          <div className="flex justify-between items-center mb-4">
+            <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+              <Images size={14} className="text-blue-500"/> Progress Photos
+            </label>
             
-            {/* PHOTO PREVIEWS */}
-            <div className="grid grid-cols-4 md:grid-cols-6 gap-3">
-              {formData.photo_urls.map(url => (
-                <div key={url} className="relative aspect-square bg-slate-800 rounded-xl overflow-hidden border border-slate-700">
+            {status !== 'Final' && (
+              <label className="bg-blue-600/10 text-blue-400 border border-blue-600/30 text-[9px] font-black px-4 py-2 rounded-xl uppercase cursor-pointer hover:bg-blue-600 hover:text-white transition-all flex items-center gap-2">
+                {uploading ? <Loader2 className="animate-spin" size={12}/> : <Plus size={12}/>}
+                {uploading ? 'Uploading...' : 'Add Photo'}
+                <input 
+                  type="file" 
+                  accept="image/jpeg,image/png,image/jpg,image/heic" 
+                  className="hidden" 
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]; 
+                    if(f) handlePhotoUpload(f)
+                  }} 
+                />
+              </label>
+            )}
+          </div>
+
+          {photos.length === 0 ? (
+            <div className="text-center p-8 border-2 border-dashed border-slate-800 rounded-2xl text-[10px] font-black text-slate-600 uppercase tracking-widest">
+              No photos attached to today's log.
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {photos.map((url, i) => (
+                <div key={i} className="relative aspect-square group rounded-2xl overflow-hidden border border-slate-800">
                   <img src={url} className="w-full h-full object-cover" />
-                  <button onClick={() => removePhoto(url)} className="absolute top-1 right-1 bg-red-600/80 p-1.5 rounded-full text-white"><X size={12}/></button>
+                  {status !== 'Final' && (
+                    <button 
+                      onClick={() => removePhoto(i)}
+                      className="absolute top-2 right-2 bg-red-600/90 text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
               ))}
-              {/* UPLOAD BUTTON */}
-              <label className="relative aspect-square bg-slate-950 rounded-xl overflow-hidden border-2 border-dashed border-slate-800 hover:border-blue-500 transition-all cursor-pointer flex flex-col items-center justify-center text-slate-600 hover:text-blue-500">
-                {uploadingPhoto ? (
-                  <Loader2 className="animate-spin" size={20} />
-                ) : (
-                  <> <Images size={20}/> <span className="text-[8px] font-black uppercase mt-1">Add Photo</span> </>
-                )}
-                {/* GALLERY ACCESS ENABLED (removed capture="environment") */}
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if(f) handlePhotoUpload(f) }} />
-              </label>
             </div>
-          </div>
+          )}
+        </div>
 
-          {/* SAVE ACTIONS */}
-          <div className="flex gap-4 pt-6 border-t border-slate-800">
-            <button onClick={() => handleSave(false)} disabled={isSaving} className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-black py-5 rounded-2xl uppercase text-[10px] tracking-widest">
-              {isSaving ? 'Syncing...' : 'Save Draft'}
-            </button>
-            <button onClick={() => handleSave(true)} disabled={isSaving} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-black py-5 rounded-2xl uppercase text-[10px] tracking-widest shadow-xl shadow-blue-900/30 flex items-center justify-center gap-2">
-              <CheckCircle size={16} /> Finalize & Sign
-            </button>
-          </div>
+        {/* SIGNATURE BLOCK */}
+        <div className={`p-6 rounded-[32px] border transition-all ${status === 'Final' ? 'bg-emerald-950/10 border-emerald-900/30' : 'bg-slate-900/50 border-slate-800'}`}>
+          <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">
+            <PenTool size={14} className={status === 'Final' ? 'text-emerald-500' : 'text-blue-500'}/> Superintendent Signature
+          </label>
+          <input 
+            value={signature}
+            onChange={(e) => setSignature(e.target.value)}
+            disabled={status === 'Final'}
+            placeholder="Type name to sign..."
+            className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl font-black italic text-white outline-none focus:border-blue-500 disabled:opacity-50 disabled:text-emerald-400"
+          />
+        </div>
+
+      </div>
+
+      {/* BOTTOM ACTION BAR */}
+      <div className="fixed bottom-0 left-0 w-full bg-slate-950/90 border-t border-slate-800 p-4 backdrop-blur-md z-50">
+        <div className="max-w-4xl mx-auto flex gap-4">
+          
+          {status === 'Draft' ? (
+            <>
+              <button 
+                onClick={() => saveLog(false)}
+                disabled={saving || uploading}
+                className="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest flex justify-center items-center gap-2 transition-all disabled:opacity-50"
+              >
+                {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                Save Draft
+              </button>
+
+              <button 
+                onClick={() => {
+                  if(!signature) return alert("You must sign the log before finalizing.");
+                  saveLog(true);
+                }}
+                disabled={saving || uploading}
+                className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg shadow-emerald-900/20 transition-all disabled:opacity-50"
+              >
+                <FileCheck size={16} /> Finalize & Sign
+              </button>
+            </>
+          ) : (
+            <>
+              <button 
+                onClick={() => setStatus('Draft')}
+                className="flex-1 bg-slate-900 border border-slate-800 text-slate-400 font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest flex justify-center items-center gap-2 hover:text-white transition-all"
+              >
+                Unlock Log
+              </button>
+
+              <button 
+                onClick={handleShare}
+                className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg shadow-blue-900/20 transition-all"
+              >
+                <Share2 size={16} /> Share Log
+              </button>
+            </>
+          )}
+
         </div>
       </div>
 
-      {/* LOG HISTORY */}
-      <div className="space-y-6">
-        <h2 className="text-[10px] font-black uppercase tracking-[0.3em] opacity-40 mb-6">Verified History</h2>
-        {logs.map((log) => (
-          <div key={log.id} className={`bg-slate-900 border border-slate-800 rounded-[32px] p-8 shadow-xl relative ${log.status === 'Draft' ? 'opacity-70 grayscale' : ''}`}>
-            {log.status === 'Finalized' && (
-              <button onClick={() => handleShare(log)} className="absolute top-8 right-8 p-3 bg-blue-600/10 text-blue-500 rounded-xl border border-blue-500/20 hover:bg-blue-600 hover:text-white transition-all"><Share2 size={18} /></button>
-            )}
-            
-            {/* Header info */}
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest bg-blue-500/10 px-3 py-1 rounded-lg">
-                  {new Date(log.created_at).toLocaleDateString('en-CA', { weekday: 'long', month: 'short', day: 'numeric' })}
-                </span>
-                <p className="text-[9px] font-bold text-slate-500 uppercase mt-2">📍 {log.location_name}</p>
-              </div>
-              <div className="text-right mr-12">
-                <p className="text-[10px] font-black text-white uppercase italic">{log.weather}</p>
-                <p className="text-[9px] font-bold text-slate-500 uppercase tracking-tighter mt-1">Crew: {log.crew_size}</p>
-              </div>
-            </div>
-
-            {/* Work Performed & Notes */}
-            <div className="space-y-4">
-              <p className="text-sm font-bold text-slate-200 leading-relaxed">{log.work_performed}</p>
-              {log.notes && <p className="text-xs font-medium text-slate-500 italic border-t border-slate-800 pt-4">{log.notes}</p>}
-              
-              {/* --- PHOTO GALLERY IN HISTORY (NEW) --- */}
-              {log.photo_urls && log.photo_urls.length > 0 && (
-                <div className="grid grid-cols-4 md:grid-cols-6 gap-3 pt-6 border-t border-slate-800">
-                  {log.photo_urls.map((url: string, i: number) => (
-                    <a key={i} href={url} target="_blank" className="relative aspect-square bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-inner group">
-                      <img src={url} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                    </a>
-                  ))}
-                </div>
-              )}
-
-              {log.signed_by && (
-                <div className="flex items-center gap-2 text-[8px] font-black uppercase text-emerald-500 tracking-widest mt-6">
-                  <CheckCircle size={10} /> Digitally Signed: {log.signed_by}
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   )
 }

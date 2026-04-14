@@ -10,7 +10,7 @@ import Link from 'next/link'
 import { 
   Share2, Printer, HardHat, Building2, FileCheck, 
   Phone, Mail, FileText, ClipboardList, LayoutDashboard,
-  Images, Plus, Loader2, ChevronLeft
+  Images, Plus, Loader2, ChevronLeft, FileQuestion
 } from 'lucide-react'
 
 export default function ProjectWarRoom() {
@@ -22,59 +22,52 @@ export default function ProjectWarRoom() {
   const [activeTab, setActiveTab] = useState('photos') 
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
-  const [showOpenOnly, setShowOpenOnly] = useState(false)
   
   // Data Lists
   const [docs, setDocs] = useState<any[]>([])
   const [contacts, setContacts] = useState<any[]>([])
-  const [submittals, setSubmittals] = useState<any[]>([])
   const [allPhotos, setAllPhotos] = useState<any[]>([])
+  
+  // KPI Counts
   const [punchCount, setPunchCount] = useState(0)
   const [logCount, setLogCount] = useState(0)
+  const [rfiCount, setRfiCount] = useState(0) // Added RFI State
 
   // Modals
   const [showContactModal, setShowContactModal] = useState(false)
-  const [showDocModal, setShowDocModal] = useState(false) 
   const [showPlanModal, setShowPlanModal] = useState(false)
-  const [showSubmittalModal, setShowSubmittalModal] = useState<{show: boolean, contactId: string | null}>({show: false, contactId: null})
 
   const fetchData = async () => {
     if (!id) return
     setLoading(true)
     
-    const [p, manual, logs, punch, audits, cts, dcs, markups, subs] = await Promise.all([
+    const [p, manual, logs, punch, cts, dcs, rfis] = await Promise.all([
       supabase.from('projects').select('*').eq('id', id).single(),
       supabase.from('project_photos').select('*').eq('project_id', id),
       supabase.from('daily_logs').select('*').eq('project_id', id),
-      supabase.from('punch_list').select('*').eq('project_id', id),
-      supabase.from('site_inspections').select('*').eq('project_id', id),
+      supabase.from('punch_list').select('id, status').eq('project_id', id),
       supabase.from('project_contacts').select('*').eq('project_id', id),
       supabase.from('project_documents').select('*').eq('project_id', id),
-      supabase.from('photo_markups').select('photo_id, status').eq('project_id', id),
-      supabase.from('project_submittals').select('*').eq('project_id', id)
+      supabase.from('rfis').select('id, status').eq('project_id', id).eq('status', 'Open') // Fetch Open RFIs
     ])
 
     setProject(p.data)
-    setPunchCount(punch.data?.length || 0)
+    
+    // Set KPI Counts
+    setPunchCount(punch.data?.filter(i => i.status === 'Open').length || 0)
     setLogCount(logs.data?.length || 0)
+    setRfiCount(rfis.data?.length || 0) 
+    
     setContacts(cts.data || [])
     setDocs(dcs.data || [])
-    setSubmittals(subs.data || [])
-
-    const markupMap = (markups.data || []).reduce((acc: any, m) => {
-      if (!acc[m.photo_id]) acc[m.photo_id] = { total: 0, open: 0 }
-      acc[m.photo_id].total++; if (m.status === 'Open') acc[m.photo_id].open++
-      return acc
-    }, {})
 
     // Combine all sources into one Photo Stream
     const photoStream = [
-      ...(manual.data || []).map(i => ({ id: i.id, url: i.url || i.photo_url, label: i.caption, src: 'Manual', date: i.created_at, markupStatus: markupMap[i.id] || null })),
+      ...(manual.data || []).map(i => ({ id: i.id, url: i.url || i.photo_url, label: i.caption, src: 'Manual', date: i.created_at })),
       ...(logs.data || []).flatMap(i => {
         const urls = Array.isArray(i.photo_urls) ? i.photo_urls : (i.photo_url ? [i.photo_url] : []);
         return urls.map((url: string) => ({ url, label: i.work_performed, src: 'Log', date: i.created_at }));
       }),
-      ...(punch.data || []).filter(i => i.photo_url).map(i => ({ url: i.photo_url, label: i.task, src: 'Punch', date: i.created_at })),
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 
     setAllPhotos(photoStream)
@@ -89,7 +82,7 @@ export default function ProjectWarRoom() {
     if (sErr) { alert(sErr.message); setUploading(false); return }
     
     const { data: u } = supabase.storage.from('project-files').getPublicUrl(path)
-    const urlColumn = (table === 'project_photos' || table === 'project_submittals') ? 'url' : 'file_url'
+    const urlColumn = table === 'project_photos' ? 'url' : 'file_url'
     
     const { error: dErr } = await supabase.from(table).insert([{ ...record, [urlColumn]: u.publicUrl }])
     if (!dErr) fetchData()
@@ -101,7 +94,7 @@ export default function ProjectWarRoom() {
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-20">
       
-      {/* HEADER */}
+      {/* HEADER & ACTION BAR */}
       <div className="mb-12 border-b-4 border-blue-600 pb-8 flex flex-col xl:flex-row justify-between items-start xl:items-end gap-8">
         <div className="space-y-1">
           <button onClick={() => router.push('/projects')} className="text-[10px] font-black uppercase text-slate-500 mb-2 italic hover:text-white transition-all flex items-center gap-1">
@@ -111,7 +104,9 @@ export default function ProjectWarRoom() {
           <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest mt-3 flex items-center gap-2">📍 {project?.address || project?.location}</p>
         </div>
         
+        {/* TOP LEVEL NAVIGATION BUTTONS */}
         <div className="flex flex-wrap gap-4 items-center">
+          
           <Link href={`/projects/${id}/logs`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-blue-500 transition-all shadow-xl group">
             <FileText size={18} className="text-blue-500 group-hover:scale-110 transition-transform" />
             <div className="text-left">
@@ -124,9 +119,19 @@ export default function ProjectWarRoom() {
             <ClipboardList size={18} className="text-red-500 group-hover:scale-110 transition-transform" />
             <div className="text-left">
               <p className="text-[8px] font-black text-slate-500 uppercase">Deficiencies</p>
-              <p className="text-xs font-black uppercase text-white">{punchCount} Items</p>
+              <p className="text-xs font-black uppercase text-white">{punchCount} Open</p>
             </div>
           </Link>
+
+          {/* NEW RFI BUTTON */}
+          <Link href={`/projects/${id}/rfis`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-amber-500 transition-all shadow-xl group">
+            <FileQuestion size={18} className="text-amber-500 group-hover:scale-110 transition-transform" />
+            <div className="text-left">
+              <p className="text-[8px] font-black text-slate-500 uppercase">Active RFIs</p>
+              <p className="text-xs font-black uppercase text-white">{rfiCount} Open</p>
+            </div>
+          </Link>
+
         </div>
       </div>
 
@@ -139,7 +144,7 @@ export default function ProjectWarRoom() {
         ))}
       </div>
 
-      {/* 1. PHOTO STREAM (ANDROID OPTIMIZED) */}
+      {/* 1. PHOTO STREAM */}
       {activeTab === 'photos' && (
         <div className="space-y-8 animate-in fade-in duration-500">
           <div className="flex flex-col md:flex-row justify-between items-center bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 gap-4">
@@ -149,7 +154,6 @@ export default function ProjectWarRoom() {
               {uploading ? 'Processing...' : 'Add Visual'}
               <input 
                 type="file" 
-                // ANDROID GALLERY FIX: Explicit extensions
                 accept="image/jpeg,image/png,image/jpg,image/heic" 
                 className="hidden" 
                 onChange={(e) => {
@@ -170,6 +174,11 @@ export default function ProjectWarRoom() {
                 </div>
               </div>
             ))}
+            {allPhotos.length === 0 && (
+               <div className="col-span-full text-center py-20 border-2 border-dashed border-slate-800 rounded-[32px] text-slate-600 font-black uppercase text-[10px] tracking-widest">
+                 No visual data recorded yet.
+               </div>
+            )}
           </div>
         </div>
       )}
@@ -186,7 +195,7 @@ export default function ProjectWarRoom() {
               <div key={plan.id} className="bg-slate-900 p-8 rounded-[48px] border border-slate-800 shadow-2xl relative">
                 <span className="bg-blue-950 text-blue-400 text-[10px] font-black px-4 py-1.5 rounded-full uppercase mb-4 inline-block">{plan.revision_number}</span>
                 <h4 className="text-2xl font-black text-white uppercase italic truncate mb-8">{plan.title}</h4>
-                <a href={plan.file_url} target="_blank" className="block w-full text-center bg-slate-800 hover:bg-blue-600 py-6 rounded-3xl text-[11px] font-black uppercase text-white transition-all">View Drawing →</a>
+                <a href={plan.file_url} target="_blank" rel="noreferrer" className="block w-full text-center bg-slate-800 hover:bg-blue-600 py-6 rounded-3xl text-[11px] font-black uppercase text-white transition-all">View Drawing →</a>
               </div>
             ))}
           </div>
@@ -209,9 +218,6 @@ export default function ProjectWarRoom() {
                     <h4 className="text-3xl font-black text-white uppercase italic leading-none">{c.company}</h4>
                     <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest mt-2">{c.trade_role}</p>
                   </div>
-                  <button onClick={() => setShowSubmittalModal({show: true, contactId: c.id})} className="bg-blue-600/10 text-blue-400 border border-blue-600/20 px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-blue-600 hover:text-white transition-all flex items-center gap-2">
-                    <FileCheck size={14} /> Submittal
-                  </button>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-10">
                   <div className="bg-black/20 p-6 rounded-[32px] border border-slate-800/50">
@@ -240,46 +246,52 @@ export default function ProjectWarRoom() {
         <div className="space-y-10 animate-in fade-in duration-500">
           <div className="flex justify-between items-center bg-slate-900/50 p-8 rounded-[40px] border border-slate-800 shadow-xl">
             <h3 className="text-2xl font-black uppercase italic tracking-tighter">Compliance <span className="text-blue-500">Vault</span></h3>
-            <button onClick={() => setShowDocModal(true)} className="bg-blue-600 text-white text-[10px] font-black px-10 py-5 rounded-3xl uppercase shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-all">+ Add Trade Doc</button>
+            <button className="bg-slate-800 text-slate-500 text-[10px] font-black px-10 py-5 rounded-3xl uppercase cursor-not-allowed">Module Offline</button>
           </div>
-          {/* Grouped by Trade */}
-          {Object.entries(docs.filter(d => d.doc_type === 'Contract').reduce((acc: any, d) => {
-            const t = d.trade || 'General'; if (!acc[t]) acc[t] = []; acc[t].push(d); return acc;
-          }, {})).map(([trade, files]: [string, any]) => (
-            <div key={trade} className="ml-2">
-              <h4 className="text-[12px] font-black text-blue-500 uppercase tracking-widest mb-4 border-l-4 border-blue-600 pl-4 italic">{trade}</h4>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                {files.map((f: any) => (
-                  <div key={f.id} className="bg-slate-900 p-6 rounded-[24px] border border-slate-800 shadow-md group hover:border-blue-500 transition-all">
-                    <span className="text-[9px] font-black text-slate-500 uppercase block mb-1">{f.category}</span>
-                    <h5 className="text-[11px] font-black text-white uppercase truncate mb-6">{f.title}</h5>
-                    <a href={f.file_url} target="_blank" className="block text-center bg-slate-800 hover:bg-blue-600 py-4 rounded-xl text-[10px] font-black uppercase text-white transition-all">View File</a>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
         </div>
       )}
 
-      {/* MODALS (DEDUPLICATED) */}
+      {/* MODALS */}
       {showContactModal && (
         <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <form onSubmit={async (e) => {
-            e.preventDefault(); const fd = new FormData(e.currentTarget);
+            e.preventDefault(); 
+            const fd = new FormData(e.currentTarget);
             const { error } = await supabase.from('project_contacts').insert([{ 
-              project_id: id, company: fd.get('company'), trade_role: fd.get('trade_role'), 
-              foreman_name: fd.get('foreman_name'), foreman_phone: fd.get('foreman_phone'),
-              office_name: fd.get('office_name'), office_phone: fd.get('office_phone'), email: fd.get('email')
+              project_id: id, 
+              name: fd.get('company'), 
+              company: fd.get('company'), 
+              trade_role: fd.get('trade_role'), 
+              foreman_name: fd.get('foreman_name'), 
+              foreman_phone: fd.get('foreman_phone'),
+              office_name: fd.get('office_name'), 
+              office_phone: fd.get('office_phone'), 
+              email: fd.get('email')
             }]);
             if (!error) { setShowContactModal(false); fetchData(); } else { alert(error.message); }
           }} className="bg-slate-900 border-2 border-emerald-600 p-10 rounded-[56px] max-w-2xl w-full space-y-6 shadow-2xl">
             <h2 className="text-2xl font-black text-white uppercase italic text-center">New Site Trade Registration</h2>
+            
             <div className="grid grid-cols-2 gap-4">
-              <input name="company" required placeholder="Company Name" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold" />
-              <input name="trade_role" required placeholder="Trade (e.g. Interior Systems)" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-blue-500" />
+              <input name="company" required placeholder="Company Name" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white" />
+              <input name="trade_role" required placeholder="Trade (e.g. Drywall)" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-blue-500" />
             </div>
-            <input name="email" placeholder="Primary Email" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold" />
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Site Foreman</p>
+                <input name="foreman_name" placeholder="Name" className="w-full p-4 bg-slate-950 rounded-xl border border-slate-800 font-bold text-white text-sm" />
+                <input name="foreman_phone" placeholder="Phone" className="w-full p-4 bg-slate-950 rounded-xl border border-slate-800 font-bold text-white text-sm" />
+              </div>
+              <div className="space-y-2">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Office / PM</p>
+                <input name="office_name" placeholder="Name" className="w-full p-4 bg-slate-950 rounded-xl border border-slate-800 font-bold text-white text-sm" />
+                <input name="office_phone" placeholder="Phone" className="w-full p-4 bg-slate-950 rounded-xl border border-slate-800 font-bold text-white text-sm" />
+              </div>
+            </div>
+
+            <input name="email" placeholder="Primary Email" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white" />
+            
             <div className="flex gap-4 pt-6">
               <button type="button" onClick={() => setShowContactModal(false)} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black uppercase text-xs">Discard</button>
               <button type="submit" className="flex-1 bg-emerald-600 text-white py-5 rounded-3xl font-black uppercase text-xs shadow-xl shadow-emerald-900/30">Register Trade</button>
