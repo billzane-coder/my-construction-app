@@ -27,7 +27,7 @@ export default function ProjectWarRoom() {
   const [docs, setDocs] = useState<any[]>([])
   const [contacts, setContacts] = useState<any[]>([])
   const [allPhotos, setAllPhotos] = useState<any[]>([])
-  const [submittals, setSubmittals] = useState<any[]>([]) // Added Submittals state
+  const [submittals, setSubmittals] = useState<any[]>([]) 
   
   // KPI Counts
   const [punchCount, setPunchCount] = useState(0)
@@ -51,7 +51,7 @@ export default function ProjectWarRoom() {
       supabase.from('project_contacts').select('*').eq('project_id', id),
       supabase.from('project_documents').select('*').eq('project_id', id),
       supabase.from('rfis').select('id, status').eq('project_id', id).eq('status', 'Open'),
-      supabase.from('project_submittals').select('*').eq('project_id', id) // Fetch Submittals
+      supabase.from('project_submittals').select('*').eq('project_id', id)
     ])
 
     setProject(p.data)
@@ -93,7 +93,6 @@ export default function ProjectWarRoom() {
     setUploading(false)
   }
 
-  // Update Submittal Status Function
   const updateSubmittalStatus = async (subId: string, newStatus: string) => {
     const { error } = await supabase.from('project_submittals').update({ status: newStatus }).eq('id', subId)
     if (!error) fetchData()
@@ -114,7 +113,7 @@ export default function ProjectWarRoom() {
           <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest mt-3 flex items-center gap-2">📍 {project?.address || project?.location}</p>
         </div>
         
-        {/* TOP LEVEL NAVIGATION BUTTONS */}
+        {/* TOP LEVEL NAVIGATION BUTTONS - THESE ARE THE LINKS TO THE DEDICATED PAGES */}
         <div className="flex flex-wrap gap-4 items-center">
           
           <Link href={`/projects/${id}/logs`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-blue-500 transition-all shadow-xl group">
@@ -133,6 +132,7 @@ export default function ProjectWarRoom() {
             </div>
           </Link>
 
+          {/* THIS BUTTON TAKES YOU TO THE RFI LOG */}
           <Link href={`/projects/${id}/rfis`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-amber-500 transition-all shadow-xl group">
             <FileQuestion size={18} className="text-amber-500 group-hover:scale-110 transition-transform" />
             <div className="text-left">
@@ -144,9 +144,9 @@ export default function ProjectWarRoom() {
         </div>
       </div>
 
-      {/* TABS */}
+      {/* TABS - REMOVED COMPLIANCE */}
       <div className="flex gap-2 border-b border-slate-800 mb-10 overflow-x-auto no-scrollbar">
-        {['photos', 'plans', 'compliance', 'contacts'].map(tab => (
+        {['photos', 'plans', 'contacts'].map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)} className={`px-10 py-5 text-[11px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'text-blue-500 border-b-2 border-blue-500 bg-blue-500/5' : 'text-slate-500 hover:text-slate-300'}`}>
             {tab === 'contacts' ? 'Directory & Submittals' : tab}
           </button>
@@ -301,16 +301,6 @@ export default function ProjectWarRoom() {
                  No trades registered to this project.
                </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* 4. COMPLIANCE VAULT */}
-      {activeTab === 'compliance' && (
-        <div className="space-y-10 animate-in fade-in duration-500">
-          <div className="flex justify-between items-center bg-slate-900/50 p-8 rounded-[40px] border border-slate-800 shadow-xl">
-            <h3 className="text-2xl font-black uppercase italic tracking-tighter">Compliance <span className="text-blue-500">Vault</span></h3>
-            <button className="bg-slate-800 text-slate-500 text-[10px] font-black px-10 py-5 rounded-3xl uppercase cursor-not-allowed">Module Offline</button>
           </div>
         </div>
       )}
