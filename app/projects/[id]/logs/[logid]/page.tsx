@@ -1,5 +1,4 @@
 'use client'
-
 export const dynamic = 'force-dynamic' 
 
 import { useState, useEffect } from 'react'
@@ -14,10 +13,8 @@ export default function EditDailyLog() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
-  
-  const [project, setProject] = useState<any>(null)
   const [contacts, setContacts] = useState<any[]>([])
-  const [tradeCounts, setTradeCounts] = useState<Record<string, number>>({})
+  const [project, setProject] = useState<any>(null) // Added to pull project name for PDF header
   
   const [date, setDate] = useState('')
   const [weather, setWeather] = useState('')
@@ -25,6 +22,7 @@ export default function EditDailyLog() {
   const [signature, setSignature] = useState('')
   const [status, setStatus] = useState<'Draft'|'Final'>('Draft')
   const [photos, setPhotos] = useState<string[]>([])
+  const [tradeCounts, setTradeCounts] = useState<Record<string, number>>({})
 
   useEffect(() => {
     async function initEditor() {
@@ -33,7 +31,7 @@ export default function EditDailyLog() {
       const [cts, log, proj] = await Promise.all([
         supabase.from('project_contacts').select('id, company, trade_role').eq('project_id', id),
         supabase.from('daily_logs').select('*').eq('id', logid).single(),
-        supabase.from('projects').select('*').eq('id', id).single()
+        supabase.from('projects').select('*').eq('id', id).single() // Fetch project data
       ])
 
       if (proj.data) setProject(proj.data)
@@ -47,10 +45,11 @@ export default function EditDailyLog() {
         setStatus(log.data.status || 'Draft')
         setPhotos(log.data.photo_urls || [])
         
-        // Parse saved manpower string back into counter buttons
+        // PARSE SAVED MANPOWER STRING BACK INTO THE COUNTER BUTTONS
         const initial: Record<string, number> = {}
         const savedManpower = log.data.manpower || ''
         cts.data.forEach(c => {
+          // Look for number before the company name in the string
           const safeCompany = c.company.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
           const match = savedManpower.match(new RegExp(`(\\d+)\\s+${safeCompany}`))
           initial[c.id] = match ? parseInt(match[1], 10) : 0
@@ -105,19 +104,17 @@ export default function EditDailyLog() {
   }
 
   const handleShare = async () => {
-    const text = `Daily Log: ${date}\nProject: ${project?.name}\nWeather: ${weather}\nCrew: ${getManpowerString()}`
+    const text = `Daily Log: ${date}\nWeather: ${weather}\nCrew: ${getManpowerString()}\nWork: ${workPerformed}`
     if (navigator.share) await navigator.share({ title: 'Daily Report', text })
-    else { navigator.clipboard.writeText(text); alert('Report summary copied to clipboard.'); }
+    else { navigator.clipboard.writeText(text); alert('Copied to clipboard'); }
   }
 
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Opening Record...</div>
 
   return (
-    <div className="max-w-4xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-40 print:bg-white print:text-black print:p-0 print:min-h-0 print:pb-0">
+    <div className="max-w-4xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-40 print:bg-white print:text-black print:pb-0" id="print-area">
       
-      {/* MAGIC PRINT STYLES 
-        This tells the browser to export backgrounds, remove margins, and use A4/Letter size properly. 
-      */}
+      {/* 🖨️ PDF PRINT STYLES - Forces white background and clean margins */}
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
           @page { margin: 0.75in; size: portrait; }
@@ -126,25 +123,23 @@ export default function EditDailyLog() {
         }
       `}} />
 
-      {/* --- PROFESSIONAL PDF REPORT HEADER (Hidden on Screen, Shows on Print) --- */}
-      <div className="hidden print:block border-b-4 border-black pb-6 mb-8 mt-4">
+      {/* 🖨️ FORMAL PDF HEADER (Hidden on Screen, Shows on Print) */}
+      <div className="hidden print:block border-b-2 border-black pb-4 mb-8 mt-2">
         <div className="flex justify-between items-end">
           <div>
-            <h1 className="text-4xl font-black uppercase tracking-tighter text-black leading-none">Daily Site Report</h1>
-            <p className="text-xs font-black text-slate-500 uppercase mt-3 tracking-widest">
-              {project?.name} {project?.address ? `| ${project.address}` : ''}
-            </p>
+            <h1 className="text-3xl font-black uppercase tracking-tighter text-black leading-none">Daily Site Report</h1>
+            <p className="text-xs font-bold text-slate-500 uppercase mt-2 tracking-widest">{project?.name || 'Project Record'}</p>
           </div>
           <div className="text-right">
-            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Date of Record</p>
-            <p className="text-xl font-black text-black">
-              {new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}
+            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">Date of Record</p>
+            <p className="text-lg font-black text-black">
+              {date ? new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' }) : 'No Date'}
             </p>
           </div>
         </div>
       </div>
 
-      {/* --- APP UI HEADER (Shows on Screen, Hidden on Print) --- */}
+      {/* 💻 APP UI HEADER (Shows on Screen, Hidden on Print) */}
       <div className="mb-8 border-b-4 border-blue-600 pb-6 flex justify-between items-end print:hidden">
         <div>
           <button onClick={() => router.back()} className="text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white flex items-center gap-1"><ChevronLeft size={12}/> Back to Archive</button>
@@ -156,26 +151,19 @@ export default function EditDailyLog() {
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} disabled={status === 'Final'} className="bg-slate-900 border border-slate-800 text-blue-400 font-black p-3 rounded-2xl outline-none disabled:opacity-50" />
       </div>
 
-      <div className="space-y-6 print:space-y-8">
+      <div className="space-y-6 print:space-y-6">
         
-        {/* WEATHER BLOCK */}
-        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-transparent print:border-2 print:border-slate-200 print:rounded-2xl print:p-6 print:break-inside-avoid">
-          <label className="flex items-center justify-between text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">
-            <span className="flex items-center gap-2"><CloudRain size={14} className="text-blue-500 print:text-slate-400"/> Site Weather</span>
-            {status === 'Draft' && (
-              <a href="https://weather.com" target="_blank" rel="noreferrer" className="text-blue-500 hover:text-blue-400 flex items-center gap-1 border border-blue-500/30 px-3 py-1 rounded-lg bg-blue-500/10 print:hidden">
-                Check Forecast ↗
-              </a>
-            )}
-          </label>
+        {/* WEATHER */}
+        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-slate-300 print:rounded-2xl print:p-5 print:break-inside-avoid">
+          <label className="flex items-center text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 gap-2"><CloudRain size={14} className="text-blue-500 print:text-slate-600"/> Site Weather</label>
           <input value={weather} onChange={(e) => setWeather(e.target.value)} disabled={status === 'Final'} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl font-bold text-white outline-none disabled:opacity-50 print:hidden" />
-          {/* Print version of text (expands automatically) */}
+          {/* 🖨️ PDF Output for Weather */}
           <div className="hidden print:block text-black font-semibold text-sm">{weather || 'No weather recorded.'}</div>
         </div>
 
-        {/* MANPOWER BLOCK */}
-        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-transparent print:border-2 print:border-slate-200 print:rounded-2xl print:p-6 print:break-inside-avoid">
-          <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4"><HardHat size={14} className="text-blue-500 print:text-slate-400"/> Manpower Headcount</label>
+        {/* MANPOWER */}
+        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-slate-300 print:rounded-2xl print:p-5 print:break-inside-avoid">
+          <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4"><HardHat size={14} className="text-blue-500 print:text-slate-600"/> Manpower Headcount</label>
           
           <div className="print:hidden">
             {status === 'Draft' ? (
@@ -192,32 +180,33 @@ export default function EditDailyLog() {
                 ))}
               </div>
             ) : (
-              <div className="bg-slate-950 border border-slate-800 p-5 rounded-2xl font-bold text-white leading-relaxed">
+              <div className="bg-slate-950 border border-slate-800 p-5 rounded-2xl font-bold text-white">
                 {getManpowerString() || "No workers reported."}
               </div>
             )}
           </div>
           
-          {/* Print version of manpower */}
+          {/* 🖨️ PDF Output for Manpower (Always shows the compiled string) */}
           <div className="hidden print:block text-black font-semibold text-sm leading-relaxed">
-             {getManpowerString() || "No workers reported on site today."}
+            {getManpowerString() || "No workers reported on site today."}
           </div>
         </div>
 
-        {/* WORK PERFORMED BLOCK */}
-        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-transparent print:border-2 print:border-slate-200 print:rounded-2xl print:p-6 print:break-inside-avoid">
-          <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3"><Clock size={14} className="text-blue-500 print:text-slate-400"/> Work Performed</label>
+        {/* WORK PERFORMED */}
+        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-slate-300 print:rounded-2xl print:p-5 print:break-inside-avoid">
+          <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3"><Clock size={14} className="text-blue-500 print:text-slate-600"/> Work Performed</label>
           <textarea value={workPerformed} onChange={(e) => setWorkPerformed(e.target.value)} disabled={status === 'Final'} className="w-full h-40 bg-slate-950 border border-slate-800 p-5 rounded-2xl font-bold text-white outline-none resize-none disabled:opacity-50 print:hidden" />
-          {/* Print version of text (expands automatically, no cutoffs) */}
+          
+          {/* 🖨️ PDF Output for Work (Expands automatically to fit all text without cutting off) */}
           <div className="hidden print:block text-black font-medium text-sm whitespace-pre-wrap leading-relaxed">
             {workPerformed || 'No work recorded.'}
           </div>
         </div>
 
-        {/* SITE VISUALS BLOCK */}
-        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-transparent print:border-none print:p-0">
-          <div className="flex justify-between items-center mb-4 print:mb-6 print:mt-4 border-b border-slate-800 print:border-slate-200 pb-4">
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><Images size={14} className="text-blue-500 print:text-slate-400"/> Site Visuals</label>
+        {/* SITE VISUALS */}
+        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-none print:p-0">
+          <div className="flex justify-between items-center mb-4 print:border-b print:border-slate-300 print:pb-2 print:mb-4">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><Images size={14} className="text-blue-500 print:text-slate-600"/> Site Visuals</label>
             {status === 'Draft' && (
               <label className="bg-blue-600/10 text-blue-400 border border-blue-600/20 px-4 py-2 rounded-xl text-[9px] font-black uppercase cursor-pointer flex items-center gap-2 print:hidden">
                 {uploading ? <Loader2 className="animate-spin" size={12}/> : <Plus size={12}/>} Add Photo
@@ -229,33 +218,33 @@ export default function EditDailyLog() {
           {photos.length > 0 ? (
             <div className="grid grid-cols-2 md:grid-cols-4 print:grid-cols-3 gap-4">
               {photos.map((url, i) => (
-                <div key={i} className="aspect-square rounded-xl overflow-hidden border border-slate-800 print:border-slate-300 relative print:break-inside-avoid shadow-sm">
+                <div key={i} className="aspect-square rounded-xl overflow-hidden border border-slate-800 print:border-slate-300 relative print:break-inside-avoid">
                   <img src={url} className="w-full h-full object-cover" />
                   {status === 'Draft' && <button onClick={() => setPhotos(photos.filter((_, idx) => idx !== i))} className="absolute top-2 right-2 bg-red-600 text-white p-2 rounded-lg print:hidden"><Trash2 size={14}/></button>}
                 </div>
               ))}
             </div>
           ) : (
-             <div className="hidden print:block text-slate-400 text-xs font-bold uppercase tracking-widest italic">No photos attached to this report.</div>
+            <div className="hidden print:block text-slate-400 text-xs font-bold uppercase tracking-widest italic">No photos attached to this report.</div>
           )}
         </div>
 
-        {/* SIGNATURE BLOCK */}
-        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-transparent print:border-none print:p-0 print:mt-12 print:break-inside-avoid">
+        {/* SIGNATURE */}
+        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-none print:p-0 print:mt-12 print:break-inside-avoid">
           <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2 print:hidden"><FileCheck size={14} className="text-blue-500"/> Superintendent Signature</label>
           <input value={signature} onChange={(e) => setSignature(e.target.value)} disabled={status === 'Final'} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl font-black italic text-white outline-none disabled:opacity-50 print:hidden" />
           
-          {/* Print version of signature */}
-          <div className="hidden print:flex flex-col w-72 mt-12">
-             <div className="border-b-2 border-black pb-2 mb-2 px-2">
+          {/* 🖨️ PDF Output for Signature Line */}
+          <div className="hidden print:flex flex-col w-72 mt-8">
+             <div className="border-b border-black pb-2 px-2 min-h-[2rem]">
                <span className="font-black italic text-xl text-black">{signature}</span>
              </div>
-             <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Authorized Site Superintendent</span>
+             <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-2">Authorized Site Superintendent</span>
           </div>
         </div>
       </div>
 
-      {/* FOOTER ACTIONS (Completely hidden during print) */}
+      {/* FOOTER ACTIONS (Hidden during print) */}
       <div className="fixed bottom-0 left-0 w-full bg-slate-950/90 border-t border-slate-800 p-4 backdrop-blur-md z-50 print:hidden">
         <div className="max-w-4xl mx-auto flex gap-4">
           {status === 'Draft' ? (
@@ -266,8 +255,8 @@ export default function EditDailyLog() {
             </>
           ) : (
             <>
-              <button onClick={handleShare} className="flex-1 bg-blue-600 text-white font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg hover:bg-blue-500"><Share2 size={16}/> Share Text</button>
-              <button onClick={() => window.print()} className="flex-1 bg-slate-800 text-white font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg hover:bg-slate-700 border border-slate-700"><Printer size={16}/> Export PDF</button>
+              <button onClick={handleShare} className="flex-1 bg-blue-600 text-white font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg hover:bg-blue-500"><Share2 size={16}/> Share</button>
+              <button onClick={() => window.print()} className="flex-1 bg-slate-800 text-white font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg hover:bg-slate-700"><Printer size={16}/> Export PDF</button>
             </>
           )}
         </div>
