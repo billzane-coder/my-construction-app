@@ -1,5 +1,8 @@
 'use client'
-export const dynamic = 'force-dynamic' // Prevents Vercel Prerender Errors
+
+// 1. This MUST be here once at the top level for Vercel
+export const dynamic = 'force-dynamic' 
+
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
@@ -17,7 +20,6 @@ export default function ProjectsPage() {
   const fetchProjects = async () => {
     setLoading(true)
     
-    // We fetch the core project data plus counts for our dashboard badges
     const { data, error } = await supabase
       .from('projects')
       .select(`
@@ -57,7 +59,7 @@ export default function ProjectsPage() {
 
   useEffect(() => { fetchProjects() }, [])
 
-  // 2. SAVE LOGIC (Now includes Full Address for Reports)
+  // 2. SAVE LOGIC
   const handleAddProject = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setSaving(true)
@@ -65,8 +67,8 @@ export default function ProjectsPage() {
     
     const newProject = {
       name: formData.get('name') as string,
-      location: formData.get('location') as string, // City
-      address: formData.get('address') as string,   // Full Street Address
+      location: formData.get('location') as string,
+      address: formData.get('address') as string,
       status: formData.get('status') as string,
       description: formData.get('description') as string
     }

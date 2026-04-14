@@ -1,40 +1,42 @@
 'use client'
+
+// 1. VERCEL BUILD FIX
+export const dynamic = 'force-dynamic' 
+
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { 
   Share2, Printer, HardHat, Building2, FileCheck, 
-  Phone, Mail, FileText, ClipboardList, LayoutDashboard 
+  Phone, Mail, FileText, ClipboardList, LayoutDashboard,
+  Images, Plus, Loader2, ChevronLeft
 } from 'lucide-react'
 
 export default function ProjectWarRoom() {
   const { id } = useParams()
   const router = useRouter()
   
-  // Basic States
+  // States
   const [project, setProject] = useState<any>(null)
   const [activeTab, setActiveTab] = useState('photos') 
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [showOpenOnly, setShowOpenOnly] = useState(false)
   
-  // Data States
+  // Data Lists
   const [docs, setDocs] = useState<any[]>([])
   const [contacts, setContacts] = useState<any[]>([])
   const [submittals, setSubmittals] = useState<any[]>([])
   const [allPhotos, setAllPhotos] = useState<any[]>([])
-  
-  // Counters
   const [punchCount, setPunchCount] = useState(0)
   const [logCount, setLogCount] = useState(0)
 
-  // Modal States
-  const [showContactModal, setShowContactModal] = useState(false);
-  const [showDocModal, setShowDocModal] = useState(false); 
-  const [showPlanModal, setShowPlanModal] = useState(false);
+  // Modals
+  const [showContactModal, setShowContactModal] = useState(false)
+  const [showDocModal, setShowDocModal] = useState(false) 
+  const [showPlanModal, setShowPlanModal] = useState(false)
   const [showSubmittalModal, setShowSubmittalModal] = useState<{show: boolean, contactId: string | null}>({show: false, contactId: null})
-  const [tempFile, setTempFile] = useState<File | null>(null)
 
   const fetchData = async () => {
     if (!id) return
@@ -65,6 +67,7 @@ export default function ProjectWarRoom() {
       return acc
     }, {})
 
+    // Combine all sources into one Photo Stream
     const photoStream = [
       ...(manual.data || []).map(i => ({ id: i.id, url: i.url || i.photo_url, label: i.caption, src: 'Manual', date: i.created_at, markupStatus: markupMap[i.id] || null })),
       ...(logs.data || []).flatMap(i => {
@@ -72,7 +75,6 @@ export default function ProjectWarRoom() {
         return urls.map((url: string) => ({ url, label: i.work_performed, src: 'Log', date: i.created_at }));
       }),
       ...(punch.data || []).filter(i => i.photo_url).map(i => ({ url: i.photo_url, label: i.task, src: 'Punch', date: i.created_at })),
-      ...(audits.data || []).filter(i => i.photo_url).map(i => ({ url: i.photo_url, label: 'Audit', src: 'Audit', date: i.created_at }))
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 
     setAllPhotos(photoStream)
@@ -85,38 +87,28 @@ export default function ProjectWarRoom() {
     setUploading(true)
     const { error: sErr } = await supabase.storage.from('project-files').upload(path, file)
     if (sErr) { alert(sErr.message); setUploading(false); return }
-    const { data: u } = supabase.storage.from('project-files').getPublicUrl(path)
     
-    const urlColumn = (table === 'project_photos' || table === 'project_submittals') ? 'url' : 'file_url';
+    const { data: u } = supabase.storage.from('project-files').getPublicUrl(path)
+    const urlColumn = (table === 'project_photos' || table === 'project_submittals') ? 'url' : 'file_url'
     
     const { error: dErr } = await supabase.from(table).insert([{ ...record, [urlColumn]: u.publicUrl }])
     if (!dErr) fetchData()
     setUploading(false)
   }
 
-  const handleShare = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({ title: `${project?.name} Status`, url: window.location.href });
-      } catch (e) { window.print() }
-    } else { window.print() }
-  }
-
-  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-[0.5em]">Initializing Site...</div>
+  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-[0.5em]">Syncing War Room...</div>
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-20">
       
-      {/* HEADER & KPI ACTION BAR */}
+      {/* HEADER */}
       <div className="mb-12 border-b-4 border-blue-600 pb-8 flex flex-col xl:flex-row justify-between items-start xl:items-end gap-8">
         <div className="space-y-1">
-          <button onClick={() => router.push('/projects')} className="text-[10px] font-black uppercase text-slate-500 mb-2 italic hover:text-white transition-all">← Back to Portfolio</button>
+          <button onClick={() => router.push('/projects')} className="text-[10px] font-black uppercase text-slate-500 mb-2 italic hover:text-white transition-all flex items-center gap-1">
+            <ChevronLeft size={12}/> Portfolio
+          </button>
           <h1 className="text-5xl font-black text-white tracking-tighter uppercase italic leading-none">{project?.name}</h1>
-          <div className="flex items-center gap-4 mt-3">
-            <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-2">📍 {project?.location}</p>
-            <span className="text-slate-800">|</span>
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-tight">{project?.address || 'Restricted / Not Set'}</p>
-          </div>
+          <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest mt-3 flex items-center gap-2">📍 {project?.address || project?.location}</p>
         </div>
         
         <div className="flex flex-wrap gap-4 items-center">
@@ -135,11 +127,6 @@ export default function ProjectWarRoom() {
               <p className="text-xs font-black uppercase text-white">{punchCount} Items</p>
             </div>
           </Link>
-
-          <div className="flex gap-2 ml-4">
-            <button onClick={handleShare} className="p-4 bg-slate-900 border border-slate-800 rounded-2xl text-slate-400 hover:text-blue-500 hover:border-blue-500 transition-all"><Share2 size={20} /></button>
-            <button onClick={() => window.print()} className="p-4 bg-slate-900 border border-slate-800 rounded-2xl text-slate-400 hover:text-white transition-all"><Printer size={20} /></button>
-          </div>
         </div>
       </div>
 
@@ -152,39 +139,36 @@ export default function ProjectWarRoom() {
         ))}
       </div>
 
-      {/* 1. PHOTO STREAM */}
+      {/* 1. PHOTO STREAM (ANDROID OPTIMIZED) */}
       {activeTab === 'photos' && (
         <div className="space-y-8 animate-in fade-in duration-500">
           <div className="flex flex-col md:flex-row justify-between items-center bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 gap-4">
             <h3 className="text-xl font-black uppercase italic tracking-tighter">Site <span className="text-blue-500">Stream</span></h3>
-            <div className="flex gap-3">
-              <button 
-                onClick={() => setShowOpenOnly(!showOpenOnly)}
-                className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase border transition-all ${showOpenOnly ? 'bg-red-600 border-red-500 text-white shadow-lg shadow-red-900/20' : 'bg-slate-950 border-slate-800 text-slate-500'}`}
-              >
-                {showOpenOnly ? 'Focus: Deficiencies' : 'All Photos'}
-              </button>
-              <label className="bg-blue-600 text-white text-[10px] font-black px-10 py-4 rounded-2xl uppercase cursor-pointer hover:bg-blue-500 transition-all active:scale-95 shadow-lg shadow-blue-900/20">
-                {uploading ? 'Processing...' : '+ Add Visual'}
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => {
-                  const f = e.target.files?.[0]; if(f) handleUpload(f, `${id}/gallery/${Date.now()}-${f.name}`, 'project_photos', { project_id: id, caption: f.name, source: 'Manual' })
-                }} />
-              </label>
-            </div>
+            <label className="bg-blue-600 text-white text-[10px] font-black px-10 py-4 rounded-2xl uppercase cursor-pointer hover:bg-blue-500 transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2">
+              {uploading ? <Loader2 className="animate-spin" size={14}/> : <Plus size={14}/>}
+              {uploading ? 'Processing...' : 'Add Visual'}
+              <input 
+                type="file" 
+                // ANDROID GALLERY FIX: Explicit extensions
+                accept="image/jpeg,image/png,image/jpg,image/heic" 
+                className="hidden" 
+                onChange={(e) => {
+                  const f = e.target.files?.[0]; 
+                  if(f) handleUpload(f, `${id}/gallery/${Date.now()}-${f.name}`, 'project_photos', { project_id: id, caption: f.name, source: 'Manual' })
+                }} 
+              />
+            </label>
           </div>
           
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
-            { (showOpenOnly ? allPhotos.filter(p => p.markupStatus?.open > 0) : allPhotos).map((p, i) => (
-              <Link key={i} href={p.id ? `/projects/${id}/photos/${p.id}` : '#'} className="relative aspect-square bg-slate-900 rounded-[32px] overflow-hidden border border-slate-800 group shadow-xl hover:border-blue-500 transition-all">
+            {allPhotos.map((p, i) => (
+              <div key={i} className="relative aspect-square bg-slate-900 rounded-[32px] overflow-hidden border border-slate-800 group shadow-xl">
                 <img src={p.url} className="w-full h-full object-cover group-hover:scale-105 transition-all duration-700" />
-                {p.markupStatus && (
-                  <div className={`absolute top-4 right-4 h-4 w-4 rounded-full border-4 border-slate-900 shadow-xl ${p.markupStatus.open > 0 ? 'bg-red-500 animate-pulse' : 'bg-emerald-500'}`} />
-                )}
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950 p-6 flex flex-col justify-end opacity-0 group-hover:opacity-100 transition-all">
-                  <span className={`text-[8px] font-black px-2 py-1 rounded mb-2 self-start uppercase bg-blue-600`}>{p.src}</span>
-                  <p className="text-[11px] font-black truncate uppercase text-white tracking-tighter">{p.label || 'Site Visual'}</p>
+                  <span className="text-[8px] font-black px-2 py-1 rounded mb-2 self-start uppercase bg-blue-600">{p.src}</span>
+                  <p className="text-[11px] font-black truncate uppercase text-white">{p.label || 'Site Visual'}</p>
                 </div>
-              </Link>
+              </div>
             ))}
           </div>
         </div>
@@ -199,28 +183,66 @@ export default function ProjectWarRoom() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {docs.filter(d => d.doc_type === 'Plan').map(plan => (
-              <div key={plan.id} className="bg-slate-900 p-8 rounded-[48px] border border-slate-800 shadow-2xl group hover:border-blue-500/50 transition-all relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-600/5 rounded-full blur-3xl" />
-                <input 
-                  defaultValue={plan.revision_number} 
-                  onBlur={async (e) => await supabase.from('project_documents').update({ revision_number: e.target.value }).eq('id', plan.id)} 
-                  className="bg-blue-950 text-blue-400 text-[10px] font-black px-4 py-1.5 rounded-full uppercase w-24 outline-none mb-4 border border-blue-900/30" 
-                />
+              <div key={plan.id} className="bg-slate-900 p-8 rounded-[48px] border border-slate-800 shadow-2xl relative">
+                <span className="bg-blue-950 text-blue-400 text-[10px] font-black px-4 py-1.5 rounded-full uppercase mb-4 inline-block">{plan.revision_number}</span>
                 <h4 className="text-2xl font-black text-white uppercase italic truncate mb-8">{plan.title}</h4>
-                <Link href={`/projects/${id}/viewer/${plan.id}`} className="block w-full text-center bg-slate-800 hover:bg-blue-600 py-6 rounded-3xl text-[11px] font-black uppercase text-white transition-all shadow-lg">Enter Markup Engine →</Link>
+                <a href={plan.file_url} target="_blank" className="block w-full text-center bg-slate-800 hover:bg-blue-600 py-6 rounded-3xl text-[11px] font-black uppercase text-white transition-all">View Drawing →</a>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* 3. COMPLIANCE / CONTRACTS */}
+      {/* 3. TRADE DIRECTORY */}
+      {activeTab === 'contacts' && (
+        <div className="space-y-10 animate-in fade-in duration-500">
+          <div className="flex justify-between items-center bg-slate-900/50 p-8 rounded-[40px] border border-slate-800 shadow-xl">
+            <h3 className="text-2xl font-black uppercase italic text-white">Trade <span className="text-blue-500">Directory</span></h3>
+            <button onClick={() => setShowContactModal(true)} className="bg-emerald-600 text-white text-[10px] font-black px-10 py-5 rounded-3xl uppercase shadow-lg shadow-emerald-900/20 hover:bg-emerald-500 transition-all">+ Register Trade</button>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {contacts.map(c => (
+              <div key={c.id} className="bg-slate-900 p-10 rounded-[56px] border border-slate-800 shadow-2xl flex flex-col group hover:border-emerald-500/30 transition-all">
+                <div className="flex justify-between items-start mb-10">
+                  <div>
+                    <h4 className="text-3xl font-black text-white uppercase italic leading-none">{c.company}</h4>
+                    <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest mt-2">{c.trade_role}</p>
+                  </div>
+                  <button onClick={() => setShowSubmittalModal({show: true, contactId: c.id})} className="bg-blue-600/10 text-blue-400 border border-blue-600/20 px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-blue-600 hover:text-white transition-all flex items-center gap-2">
+                    <FileCheck size={14} /> Submittal
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-10">
+                  <div className="bg-black/20 p-6 rounded-[32px] border border-slate-800/50">
+                    <p className="text-[9px] font-black text-slate-600 uppercase mb-3 flex items-center gap-2"><HardHat size={12} className="text-emerald-500" /> Site Foreman</p>
+                    <p className="text-sm font-black uppercase text-white truncate">{c.foreman_name || 'N/A'}</p>
+                    <a href={`tel:${c.foreman_phone}`} className="text-xs font-bold text-blue-500 mt-2 block hover:underline">{c.foreman_phone || 'Add Phone'}</a>
+                  </div>
+                  <div className="bg-black/20 p-6 rounded-[32px] border border-slate-800/50">
+                    <p className="text-[9px] font-black text-slate-600 uppercase mb-3 flex items-center gap-2"><Building2 size={12} className="text-blue-500" /> Office / PM</p>
+                    <p className="text-sm font-black uppercase text-white truncate">{c.office_name || 'N/A'}</p>
+                    <a href={`tel:${c.office_phone}`} className="text-xs font-bold text-blue-500 mt-2 block hover:underline">{c.office_phone || 'Add Phone'}</a>
+                  </div>
+                </div>
+                <div className="mt-auto grid grid-cols-2 gap-4 pt-8 border-t border-slate-800">
+                   <a href={`tel:${c.foreman_phone || c.phone}`} className="bg-slate-800 hover:bg-blue-600 text-white text-center py-5 rounded-[24px] text-[10px] font-black uppercase transition-all flex items-center justify-center gap-3"><Phone size={16}/> Site Line</a>
+                   <a href={`mailto:${c.email}`} className="bg-slate-800 hover:bg-blue-600 text-white text-center py-5 rounded-[24px] text-[10px] font-black uppercase transition-all flex items-center justify-center gap-3"><Mail size={16}/> Email PM</a>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 4. COMPLIANCE VAULT */}
       {activeTab === 'compliance' && (
         <div className="space-y-10 animate-in fade-in duration-500">
           <div className="flex justify-between items-center bg-slate-900/50 p-8 rounded-[40px] border border-slate-800 shadow-xl">
             <h3 className="text-2xl font-black uppercase italic tracking-tighter">Compliance <span className="text-blue-500">Vault</span></h3>
             <button onClick={() => setShowDocModal(true)} className="bg-blue-600 text-white text-[10px] font-black px-10 py-5 rounded-3xl uppercase shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-all">+ Add Trade Doc</button>
           </div>
+          {/* Grouped by Trade */}
           {Object.entries(docs.filter(d => d.doc_type === 'Contract').reduce((acc: any, d) => {
             const t = d.trade || 'General'; if (!acc[t]) acc[t] = []; acc[t].push(d); return acc;
           }, {})).map(([trade, files]: [string, any]) => (
@@ -240,81 +262,22 @@ export default function ProjectWarRoom() {
         </div>
       )}
 
-      {/* 4. TRADE DIRECTORY */}
-      {activeTab === 'contacts' && (
-        <div className="space-y-10 animate-in fade-in duration-500">
-          <div className="flex justify-between items-center bg-slate-900/50 p-8 rounded-[40px] border border-slate-800 shadow-xl">
-            <h3 className="text-2xl font-black uppercase italic text-white">Trade <span className="text-blue-500">Directory</span></h3>
-            <button onClick={() => setShowContactModal(true)} className="bg-emerald-600 text-white text-[10px] font-black px-10 py-5 rounded-3xl uppercase shadow-lg shadow-emerald-900/20 hover:bg-emerald-500 transition-all">+ Register Trade</button>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {contacts.map(c => (
-              <div key={c.id} className="bg-slate-900 p-10 rounded-[56px] border border-slate-800 shadow-2xl flex flex-col group hover:border-emerald-500/30 transition-all">
-                <div className="flex justify-between items-start mb-10">
-                  <div>
-                    <h4 className="text-3xl font-black text-white uppercase italic leading-none">{c.company}</h4>
-                    <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest mt-2">{c.trade_role}</p>
-                  </div>
-                  <button 
-                    onClick={() => setShowSubmittalModal({show: true, contactId: c.id})}
-                    className="bg-blue-600/10 text-blue-400 border border-blue-600/20 px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-blue-600 hover:text-white transition-all flex items-center gap-2"
-                  >
-                    <FileCheck size={14} /> Submittal
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-10">
-                  <div className="bg-black/20 p-6 rounded-[32px] border border-slate-800/50">
-                    <p className="text-[9px] font-black text-slate-600 uppercase mb-3 flex items-center gap-2"><HardHat size={12} className="text-emerald-500" /> Site Foreman</p>
-                    <p className="text-sm font-black uppercase text-white truncate">{c.foreman_name || 'N/A'}</p>
-                    <a href={`tel:${c.foreman_phone}`} className="text-xs font-bold text-blue-500 mt-2 block hover:underline">{c.foreman_phone || 'Add Phone'}</a>
-                  </div>
-                  <div className="bg-black/20 p-6 rounded-[32px] border border-slate-800/50">
-                    <p className="text-[9px] font-black text-slate-600 uppercase mb-3 flex items-center gap-2"><Building2 size={12} className="text-blue-500" /> Office / PM</p>
-                    <p className="text-sm font-black uppercase text-white truncate">{c.office_name || 'N/A'}</p>
-                    <a href={`tel:${c.office_phone}`} className="text-xs font-bold text-blue-500 mt-2 block hover:underline">{c.office_phone || 'Add Phone'}</a>
-                  </div>
-                </div>
-
-                <div className="mt-auto grid grid-cols-2 gap-4 pt-8 border-t border-slate-800">
-                   <a href={`tel:${c.foreman_phone || c.phone}`} className="bg-slate-800 hover:bg-blue-600 text-white text-center py-5 rounded-[24px] text-[10px] font-black uppercase transition-all flex items-center justify-center gap-3"><Phone size={16}/> Site Line</a>
-                   <a href={`mailto:${c.email}`} className="bg-slate-800 hover:bg-blue-600 text-white text-center py-5 rounded-[24px] text-[10px] font-black uppercase transition-all flex items-center justify-center gap-3"><Mail size={16}/> Email PM</a>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* --- MODALS --- */}
+      {/* MODALS (DEDUPLICATED) */}
       {showContactModal && (
         <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <form onSubmit={async (e) => {
             e.preventDefault(); const fd = new FormData(e.currentTarget);
-            await supabase.from('project_contacts').insert([{ 
+            const { error } = await supabase.from('project_contacts').insert([{ 
               project_id: id, company: fd.get('company'), trade_role: fd.get('trade_role'), 
               foreman_name: fd.get('foreman_name'), foreman_phone: fd.get('foreman_phone'),
               office_name: fd.get('office_name'), office_phone: fd.get('office_phone'), email: fd.get('email')
             }]);
-            setShowContactModal(false); fetchData();
+            if (!error) { setShowContactModal(false); fetchData(); } else { alert(error.message); }
           }} className="bg-slate-900 border-2 border-emerald-600 p-10 rounded-[56px] max-w-2xl w-full space-y-6 shadow-2xl">
-            <h2 className="text-2xl font-black text-white uppercase italic text-center">New Trade Registration</h2>
+            <h2 className="text-2xl font-black text-white uppercase italic text-center">New Site Trade Registration</h2>
             <div className="grid grid-cols-2 gap-4">
-              <input name="company" required placeholder="Company Name" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white" />
-              <input name="trade_role" required placeholder="Trade (e.g. Drywall)" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-blue-500" />
-            </div>
-            <div className="grid grid-cols-2 gap-6 bg-black/30 p-8 rounded-[40px] border border-slate-800 shadow-inner">
-              <div className="space-y-3">
-                <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest italic">Foreman Info</p>
-                <input name="foreman_name" placeholder="Name" className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 text-xs font-bold" />
-                <input name="foreman_phone" placeholder="Phone" className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 text-xs font-bold" />
-              </div>
-              <div className="space-y-3">
-                <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest italic">Office / PM</p>
-                <input name="office_name" placeholder="Name" className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 text-xs font-bold" />
-                <input name="office_phone" placeholder="Phone" className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 text-xs font-bold" />
-              </div>
+              <input name="company" required placeholder="Company Name" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold" />
+              <input name="trade_role" required placeholder="Trade (e.g. Interior Systems)" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-blue-500" />
             </div>
             <input name="email" placeholder="Primary Email" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold" />
             <div className="flex gap-4 pt-6">
@@ -325,80 +288,25 @@ export default function ProjectWarRoom() {
         </div>
       )}
 
-      {showDocModal && (
-        <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
-          <form onSubmit={async (e) => {
-            e.preventDefault(); const fd = new FormData(e.currentTarget);
-            const file = (e.currentTarget.elements.namedItem('file') as HTMLInputElement).files?.[0];
-            if(!file) return alert("Select a file");
-            const path = `${id}/compliance/${Date.now()}-${file.name}`;
-            await handleUpload(file, path, 'project_documents', { 
-              project_id: id, title: fd.get('title'), trade: fd.get('trade'), doc_type: 'Contract', category: fd.get('category') 
-            });
-            setShowDocModal(false);
-          }} className="bg-slate-900 border-2 border-blue-600 p-8 rounded-[40px] max-w-lg w-full space-y-6 shadow-2xl">
-            <h2 className="text-2xl font-black text-white uppercase italic text-center">Upload Trade Document</h2>
-            <input name="title" required placeholder="Document Title (e.g. WSIB Clearance)" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white" />
-            <select name="trade" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-black uppercase text-xs text-blue-500">
-              <option value="">Select Trade...</option>
-              {contacts.map(c => <option key={c.id} value={c.company}>{c.company}</option>)}
-            </select>
-            <select name="category" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-black uppercase text-xs text-white">
-              <option value="Contract">Contract</option>
-              <option value="Insurance">Insurance/WSIB</option>
-              <option value="Safety">Safety Manual</option>
-            </select>
-            <input name="file" type="file" required className="w-full text-xs text-slate-500 file:py-4 file:px-6 file:rounded-xl file:bg-slate-800 file:text-white" />
-            <div className="flex gap-4">
-              <button type="button" onClick={() => setShowDocModal(false)} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black uppercase text-xs">Cancel</button>
-              <button type="submit" className="flex-1 bg-blue-600 text-white py-5 rounded-3xl font-black uppercase text-xs shadow-xl">{uploading ? 'Uploading...' : 'Upload'}</button>
-            </div>
-          </form>
-        </div>
-      )}
-
       {showPlanModal && (
         <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <form onSubmit={async (e) => {
             e.preventDefault(); const fd = new FormData(e.currentTarget);
             const file = (e.currentTarget.elements.namedItem('file') as HTMLInputElement).files?.[0];
-            if(!file) return alert("Select a PDF");
+            if(!file) return;
             const path = `${id}/plans/${Date.now()}-${file.name}`;
             await handleUpload(file, path, 'project_documents', { 
               project_id: id, title: fd.get('title'), doc_type: 'Plan', revision_number: fd.get('revision') || 'IFC' 
             });
             setShowPlanModal(false);
-          }} className="bg-slate-900 border-2 border-blue-600 p-8 rounded-[40px] max-w-lg w-full space-y-6 shadow-2xl">
-            <h2 className="text-2xl font-black text-white uppercase italic text-center">New Blueprint Entry</h2>
+          }} className="bg-slate-900 border-2 border-blue-600 p-10 rounded-[56px] max-w-lg w-full space-y-8 shadow-2xl">
+            <h2 className="text-2xl font-black text-white uppercase italic text-center">Vault New Drawing</h2>
             <input name="file" type="file" required accept=".pdf" className="w-full text-xs text-slate-500 file:py-4 file:px-6 file:rounded-xl file:bg-slate-800 file:text-white" />
-            <input name="title" required placeholder="Plan Title (e.g. Architectural L1)" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white" />
+            <input name="title" required placeholder="Drawing Title" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white" />
             <input name="revision" placeholder="Revision (e.g. Rev 3)" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-blue-500 uppercase" />
             <div className="flex gap-4">
               <button type="button" onClick={() => setShowPlanModal(false)} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black uppercase text-xs">Cancel</button>
               <button type="submit" className="flex-1 bg-blue-600 text-white py-5 rounded-3xl font-black uppercase text-xs shadow-xl">{uploading ? 'Processing...' : 'Upload Plan'}</button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {showSubmittalModal.show && (
-        <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
-          <form onSubmit={async (e) => {
-            e.preventDefault(); const fd = new FormData(e.currentTarget); const file = (e.currentTarget.elements.namedItem('file') as HTMLInputElement).files?.[0];
-            if(!file) return;
-            const path = `${id}/submittals/${Date.now()}-${file.name}`;
-            await handleUpload(file, path, 'project_submittals', { project_id: id, contact_id: showSubmittalModal.contactId, title: fd.get('title'), status: 'Pending' });
-            setShowSubmittalModal({show: false, contactId: null});
-          }} className="bg-slate-900 border-2 border-blue-600 p-10 rounded-[56px] max-w-lg w-full space-y-8 shadow-2xl">
-            <div className="text-center space-y-2">
-              <h2 className="text-2xl font-black text-white uppercase italic">Project Submittal</h2>
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em]">Initialize Shop Drawing Vault</p>
-            </div>
-            <input name="title" required placeholder="Submittal Title (e.g. Drywall Assemblies)" className="w-full p-6 bg-slate-950 rounded-3xl border border-slate-800 font-bold outline-none focus:border-blue-500 transition-all" />
-            <input name="file" type="file" required className="w-full text-xs text-slate-500 file:py-5 file:px-8 file:rounded-3xl file:bg-slate-800 file:text-white file:font-black file:uppercase file:mr-6 file:cursor-pointer" />
-            <div className="flex gap-4 pt-6">
-              <button type="button" onClick={() => setShowSubmittalModal({show: false, contactId: null})} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black text-xs uppercase">Cancel</button>
-              <button type="submit" className="flex-1 bg-blue-600 text-white py-5 rounded-3xl font-black text-xs uppercase shadow-xl shadow-blue-900/30 hover:bg-blue-500 transition-all">{uploading ? 'Vaulting...' : 'Deploy Submittal'}</button>
             </div>
           </form>
         </div>
