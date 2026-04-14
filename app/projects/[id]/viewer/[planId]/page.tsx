@@ -68,7 +68,6 @@ export default function ProPlanViewer() {
     setSelectedId(null)
   }
 
-  // --- COORDINATE MATH (Still works perfectly with TransformWrapper zooming) ---
   const getCoords = (e: React.MouseEvent | React.TouchEvent) => {
     if (!containerRef.current) return { x: 0, y: 0 }
     const rect = containerRef.current.getBoundingClientRect()
@@ -80,11 +79,10 @@ export default function ProPlanViewer() {
     }
   }
 
-  // --- INTERACTION HANDLERS ---
   const handleStageDown = (e: React.MouseEvent | React.TouchEvent) => {
     if (viewMode === 'clean' || activeTool === 'select') {
       setSelectedId(null)
-      return // TransformWrapper will automatically handle panning here
+      return
     }
     setInteraction({ type: 'draw' })
     const coords = getCoords(e)
@@ -94,7 +92,7 @@ export default function ProPlanViewer() {
 
   const handleShapeDown = (e: React.MouseEvent | React.TouchEvent, mId: string, action: 'move' | 'resize', handleType?: 'start' | 'end' | 'br') => {
     if (activeTool !== 'select' || viewMode === 'clean') return
-    e.stopPropagation() // Crucial: Prevents TransformWrapper from panning while dragging shapes
+    e.stopPropagation() 
     setSelectedId(mId)
     setInteraction({ type: action, id: mId, handle: handleType })
     setLastPos(getCoords(e))
@@ -152,8 +150,6 @@ export default function ProPlanViewer() {
     setInteraction(null)
   }
 
-  // Calculate if the user is allowed to pan the map
-  // Allowed if: View mode is clean, OR we are on the Select tool AND not currently dragging a shape
   const canPan = viewMode === 'clean' || (activeTool === 'select' && !interaction)
 
   if (loading) return <div className="h-screen bg-slate-950 flex items-center justify-center font-black text-blue-500 animate-pulse tracking-widest uppercase">Rendering Vault...</div>
@@ -161,7 +157,6 @@ export default function ProPlanViewer() {
   return (
     <div className="h-screen w-screen bg-slate-900 flex flex-col overflow-hidden print:bg-white print:h-auto print:overflow-visible">
       
-      {/* TOOLBAR */}
       <div className="bg-slate-950 border-b border-slate-800 p-4 flex flex-wrap justify-between items-center z-50 shadow-2xl print:hidden gap-4">
         <div className="flex gap-4 items-center">
           <button onClick={() => router.back()} className="px-4 py-2 text-slate-500 hover:text-white font-black text-[10px] uppercase transition-all">← Exit</button>
@@ -199,24 +194,23 @@ export default function ProPlanViewer() {
         </div>
       </div>
 
-      {/* VIEWPORT AREA */}
       <div className="flex-1 relative overflow-hidden bg-slate-800 select-none print:bg-white print:overflow-visible">
         
-        {/* TransformWrapper handles the Pan & Zoom Engine */}
-        <TransformWrapper
-          initialScale={1}
-          minScale={0.5}
-          maxScale={6}
-          panning={{ disabled: !canPan }} // Disables panning when drawing
-          wheel={{ step: 0.1 }}
-          centerOnInit={true}
-        >
+<TransformWrapper
+  initialScale={1}
+  minScale={0.5}
+  maxScale={6}
+  panning={{ disabled: !canPan }} 
+  wheel={{ step: 0.05 }} 
+  doubleClick={{ disabled: true }}
+  centerOnInit={true}
+>
           {({ zoomIn, zoomOut, resetTransform }) => (
             <>
-              {/* Floating Zoom Controls */}
               <div className="absolute bottom-6 right-6 z-50 flex flex-col gap-2 print:hidden">
-                <button onClick={() => zoomIn()} className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-slate-300 hover:text-white hover:border-blue-500 shadow-xl transition-all"><ZoomIn size={20}/></button>
-                <button onClick={() => zoomOut()} className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-slate-300 hover:text-white hover:border-blue-500 shadow-xl transition-all"><ZoomOut size={20}/></button>
+                {/* BUTTONS NOW HARD-CODED TO EXACTLY 25% JUMPS */}
+                <button onClick={() => zoomIn(0.25)} className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-slate-300 hover:text-white hover:border-blue-500 shadow-xl transition-all"><ZoomIn size={20}/></button>
+                <button onClick={() => zoomOut(0.25)} className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-slate-300 hover:text-white hover:border-blue-500 shadow-xl transition-all"><ZoomOut size={20}/></button>
                 <button onClick={() => resetTransform()} className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-slate-300 hover:text-white hover:border-blue-500 shadow-xl transition-all mt-2"><Maximize size={18}/></button>
               </div>
 
@@ -225,12 +219,10 @@ export default function ProPlanViewer() {
                   
                   {plan?.file_url && (
                     <Document file={plan.file_url} loading={<div className="p-20 text-slate-500 font-black">Rendering Document...</div>}>
-                      {/* Scale set to 2.0 to ensure sharp text when zooming in */}
                       <Page pageNumber={1} scale={2.0} renderTextLayer={false} renderAnnotationLayer={false} className="pointer-events-none print:w-full" />
                     </Document>
                   )}
 
-                  {/* SVG EDIT LAYER */}
                   {(viewMode === 'marked' || (typeof window !== 'undefined' && window.matchMedia('print').matches)) && (
                     <svg 
                       className={`absolute inset-0 w-full h-full z-10 ${canPan ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'}`}
@@ -289,7 +281,6 @@ export default function ProPlanViewer() {
         </TransformWrapper>
       </div>
 
-      {/* PRINT STYLES - Ensures TransformWrapper releases its grip during print */}
       <style jsx global>{`
         @media print {
           @page { margin: 0; size: auto; }
@@ -297,7 +288,6 @@ export default function ProPlanViewer() {
           .print\\:hidden { display: none !important; }
           .print\\:bg-white { background: white !important; }
           
-          /* Override Zoom Library during Print */
           .react-transform-wrapper, .react-transform-component {
             transform: none !important;
             width: 100% !important;
