@@ -10,7 +10,7 @@ import Link from 'next/link'
 import { 
   Plus, Users, HardHat, Building2, FileCheck, ShieldCheck, 
   FileText, Phone, Mail, ChevronLeft, Loader2, MessageSquare,
-  Settings2, Save, X, ExternalLink, ClipboardList, FileQuestion, Images
+  Settings2, Save, X, ExternalLink, ClipboardList, FileQuestion, Images, CalendarDays
 } from 'lucide-react'
 
 export default function ProjectWarRoom() {
@@ -149,6 +149,12 @@ export default function ProjectWarRoom() {
             </div>
           </div>
 
+          {/* NEW: Schedule Button */}
+          <Link href={`/projects/${id}/schedule`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-5 py-3 rounded-2xl hover:border-blue-500 transition-all shadow-xl">
+            <CalendarDays size={16} className="text-blue-500" />
+            <div className="text-left"><p className="text-[7px] font-black text-slate-500 uppercase leading-none mb-1">Timeline</p><p className="text-[11px] font-black uppercase text-white leading-none">Schedule</p></div>
+          </Link>
+
           <Link href={`/projects/${id}/logs`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-5 py-3 rounded-2xl hover:border-blue-500 transition-all shadow-xl">
             <FileText size={16} className="text-blue-500" />
             <div className="text-left"><p className="text-[7px] font-black text-slate-500 uppercase leading-none mb-1">Reports</p><p className="text-[11px] font-black uppercase text-white leading-none">{logCount} Logs</p></div>
@@ -169,6 +175,7 @@ export default function ProjectWarRoom() {
             <div className="text-left"><p className="text-[7px] font-black text-slate-500 uppercase leading-none mb-1">Directives</p><p className="text-[11px] font-black uppercase text-white leading-none">SIs</p></div>
           </Link>
 
+          {/* FIXED: Single Safety Hub Button */}
           <Link href={`/projects/${id}/safety`} className="flex items-center gap-3 bg-red-950/20 border-2 border-red-600/30 px-5 py-3 rounded-2xl hover:border-red-500 transition-all shadow-xl group">
             <ShieldCheck size={16} className="text-red-500 group-hover:animate-pulse" />
             <div className="text-left">

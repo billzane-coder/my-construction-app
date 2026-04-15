@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { 
   ChevronLeft, Camera, Send, Loader2, 
-  Building2, HardHat, MapPin, ClipboardList 
+  Building2, HardHat, MapPin, ClipboardList, X 
 } from 'lucide-react'
 
 export default function NewOddBallPunch() {
