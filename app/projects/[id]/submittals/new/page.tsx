@@ -30,23 +30,40 @@ export default function NewSubmittal() {
     fetchContacts()
   }, [id])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!file || !title) return alert("Title and PDF are required.")
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault()
+  if (!file || !title || !contactId) return alert("Trade, Title, and PDF are required.")
+  
+  setSaving(true)
+  // 📂 ROUTE TO TRADE FOLDER: project/trades/trade_id/submittals/filename
+  const path = `${id}/trades/${contactId}/submittals/${Date.now()}-${file.name}`
+  
+  const { error: sErr } = await supabase.storage.from('project-files').upload(path, file)
+  
+  if (!sErr) {
+    const { data: u } = supabase.storage.from('project-files').getPublicUrl(path)
     
-    setSaving(true)
-    const path = `${id}/submittals/${Date.now()}-${file.name}`
-    const { error: sErr } = await supabase.storage.from('project-files').upload(path, file)
-    
-    if (!sErr) {
-      const { data: u } = supabase.storage.from('project-files').getPublicUrl(path)
-      await supabase.from('project_submittals').insert([{
-        project_id: id, contact_id: contactId || null, title, category, assigned_to: assignedTo, url: u.publicUrl
-      }])
+    const { error: dbErr } = await supabase.from('project_submittals').insert([{
+      project_id: id, 
+      contact_id: contactId, 
+      title, 
+      category, 
+      assigned_to: assignedTo, 
+      url: u.publicUrl,
+      status: 'Pending Review'
+    }])
+
+    if (!dbErr) {
       router.push(`/projects/${id}/submittals`)
+      router.refresh()
+    } else {
+      alert(`Database Error: ${dbErr.message}`)
     }
-    setSaving(false)
+  } else {
+    alert(`Storage Error: ${sErr.message}`)
   }
+  setSaving(false)
+}
 
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Opening Ledger...</div>
 

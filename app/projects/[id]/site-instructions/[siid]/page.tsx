@@ -27,13 +27,20 @@ export default function SiteInstructionDetail() {
     <div className="max-w-4xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen text-slate-100 pb-40 print:bg-white print:text-black" id="print-area">
       
       {/* 🖨️ PRINT STYLES */}
-      <style dangerouslySetInnerHTML={{__html: `
-        @media print {
-          @page { margin: 0.75in; size: portrait; }
-          html, body, #__next, [data-reactroot], body > div { height: auto !important; overflow: visible !important; position: static !important; display: block !important; background: white !important; }
-          .print\\:hidden { display: none !important; }
-        }
-      `}} />
+     <style dangerouslySetInnerHTML={{__html: `
+  @media print {
+    @page { margin: 0.5in; size: portrait; }
+    html, body { 
+      background: white !important; 
+      overflow: visible !important; 
+      height: auto !important;
+    }
+    /* This hides the scrollbar and the URL/Date headers from the browser */
+    ::-webkit-scrollbar { display: none; }
+    #print-area { overflow: visible !important; position: static !important; }
+    .print\\:hidden { display: none !important; }
+  }
+`}} />
 
       {/* 🖨️ OFFICIAL HEADER (Print Only) */}
       <div className="hidden print:block border-b-4 border-black pb-6 mb-10">
