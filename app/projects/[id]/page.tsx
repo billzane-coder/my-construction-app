@@ -145,7 +145,7 @@ export default function ProjectWarRoom() {
           <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest mt-3 flex items-center gap-2">📍 {project?.address || project?.location}</p>
         </div>
         
-        {/* KPI MODULES */}
+{/* KPI MODULES */}
         <div className="flex flex-wrap gap-4 items-center">
           <div className="flex items-center gap-3 bg-blue-600/10 border border-blue-500/20 px-6 py-4 rounded-3xl">
             <Users size={18} className="text-blue-500" />
@@ -154,17 +154,25 @@ export default function ProjectWarRoom() {
               <p className="text-xs font-black uppercase text-blue-400">{manpowerTotal} Workers</p>
             </div>
           </div>
+          
           <Link href={`/projects/${id}/logs`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-blue-500 transition-all shadow-xl">
             <FileText size={18} className="text-blue-500" />
             <div className="text-left"><p className="text-[8px] font-black text-slate-500 uppercase">Logs</p><p className="text-xs font-black uppercase text-white">{logCount}</p></div>
           </Link>
-          <Link href={`/projects/${id}/punchlist`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-red-500 transition-all shadow-xl">
-            <ClipboardList size={18} className="text-red-500" />
-            <div className="text-left"><p className="text-[8px] font-black text-slate-500 uppercase">Punch</p><p className="text-xs font-black uppercase text-white">{punchCount}</p></div>
+
+          <Link href={`/projects/${id}/submittals`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-amber-500 transition-all shadow-xl">
+            <FileCheck size={18} className="text-amber-500" />
+            <div className="text-left"><p className="text-[8px] font-black text-slate-500 uppercase">Approvals</p><p className="text-xs font-black uppercase text-white">Submittals</p></div>
           </Link>
-          <Link href={`/projects/${id}/rfis`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-amber-500 transition-all shadow-xl">
-            <FileQuestion size={18} className="text-amber-500" />
-            <div className="text-left"><p className="text-[8px] font-black text-slate-500 uppercase">RFIs</p><p className="text-xs font-black uppercase text-white">{rfiCount}</p></div>
+
+          <Link href={`/projects/${id}/site-instructions`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-emerald-500 transition-all shadow-xl">
+            <Plus size={18} className="text-emerald-500" />
+            <div className="text-left"><p className="text-[8px] font-black text-slate-500 uppercase">Directives</p><p className="text-xs font-black uppercase text-white">SIs</p></div>
+          </Link>
+
+          <Link href={`/projects/${id}/incidents`} className="flex items-center gap-3 bg-slate-900 border border-red-900/40 px-6 py-4 rounded-3xl hover:border-red-500 transition-all shadow-xl bg-red-950/10">
+            <ShieldCheck size={18} className="text-red-500" />
+            <div className="text-left"><p className="text-[8px] font-black text-slate-500 uppercase">Safety</p><p className="text-xs font-black uppercase text-white">Incidents</p></div>
           </Link>
         </div>
         <Link href={`/projects/${id}/incidents`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-orange-500 transition-all shadow-xl">
