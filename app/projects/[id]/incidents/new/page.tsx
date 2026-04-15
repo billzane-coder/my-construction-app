@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import { 
   ChevronLeft, AlertTriangle, Send, Loader2, 
-  Camera, ShieldAlert, X, Info
+  Camera, ShieldAlert, X, Info, Plus 
 } from 'lucide-react'
 
 const CLASSIFICATIONS = [
