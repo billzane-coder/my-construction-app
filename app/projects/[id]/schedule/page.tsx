@@ -7,13 +7,12 @@ import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import { 
   ChevronLeft, Plus, Save, Loader2, GripVertical, 
-  CalendarDays, HardHat, AlertTriangle, Link as LinkIcon
+  CalendarDays, HardHat, AlertTriangle, Link as LinkIcon, Edit2, Trash2
 } from 'lucide-react'
 
-// Helper: Convert YYYY-MM-DD to a JS Date at midnight local time
 const parseDate = (d: string) => new Date(d + 'T00:00:00')
 const DAY_MS = 86400000
-const COL_WIDTH = 48 // Pixels per day in the grid
+const COL_WIDTH = 48 
 
 export default function ScheduleMaster() {
   const { id } = useParams()
@@ -24,18 +23,18 @@ export default function ScheduleMaster() {
   const [tasks, setTasks] = useState<any[]>([])
   const [trades, setTrades] = useState<any[]>([])
   
-  // Viewport/Grid state
   const [gridStartDate, setGridStartDate] = useState(new Date())
   
-  // Drag State
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragStartX, setDragStartX] = useState(0)
   const [dragStartOffset, setDragStartOffset] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // New Task Form State
+  // Modals
   const [showNewTask, setShowNewTask] = useState(false)
   const [newTask, setNewTask] = useState({ name: '', trade: '', start: '', duration: 1, deps: [] as string[] })
+  
+  const [editingTask, setEditingTask] = useState<any>(null)
 
   useEffect(() => {
     async function fetchData() {
@@ -47,7 +46,6 @@ export default function ScheduleMaster() {
       
       if (tData.data) {
         setTasks(tData.data)
-        // Set the grid start date to 3 days before the earliest task
         if (tData.data.length > 0) {
           const earliest = new Date(Math.min(...tData.data.map(t => parseDate(t.start_date).getTime())))
           earliest.setDate(earliest.getDate() - 3)
@@ -60,13 +58,12 @@ export default function ScheduleMaster() {
     fetchData()
   }, [id])
 
-  // --- ENGINE: Calculate Dependencies & Critical Path ---
+  // --- ENGINE ---
   const { processedTasks, projectEndDate, criticalPathIds } = useMemo(() => {
     let pTasks = [...tasks]
     let maxEnd = 0
     let endMap: Record<string, number> = {}
 
-    // 1. Calculate end dates for all tasks
     pTasks.forEach(t => {
       const startMs = parseDate(t.start_date).getTime()
       const endMs = startMs + (t.duration_days * DAY_MS)
@@ -74,13 +71,11 @@ export default function ScheduleMaster() {
       if (endMs > maxEnd) maxEnd = endMs
     })
 
-    // 2. Determine Critical Path (Walk backwards from max end date)
     let cPath = new Set<string>()
     const findCriticalChain = (taskId: string) => {
       cPath.add(taskId)
       const task = pTasks.find(t => t.id === taskId)
-      if (task && task.dependencies) {
-        // Find the dependency that forces this task's start date
+      if (task && task.dependencies?.length > 0) {
         let drivingDep = task.dependencies[0]
         let maxDepEnd = 0
         task.dependencies.forEach((dId: string) => {
@@ -90,20 +85,17 @@ export default function ScheduleMaster() {
       }
     }
 
-    // Find the terminal tasks (ones that end on the project max end date)
     pTasks.filter(t => endMap[t.id] === maxEnd).forEach(t => findCriticalChain(t.id))
 
     return { processedTasks: pTasks, projectEndDate: maxEnd, criticalPathIds: cPath }
   }, [tasks])
 
 
-  // --- DRAG AND DROP LOGIC ---
+  // --- DRAG LOGIC ---
   const handlePointerDown = (e: React.PointerEvent, taskId: string, start_date: string) => {
     e.currentTarget.setPointerCapture(e.pointerId)
     setDraggingId(taskId)
     setDragStartX(e.clientX)
-    
-    // Calculate current day offset from grid start
     const startMs = parseDate(start_date).getTime()
     const diffDays = Math.round((startMs - gridStartDate.getTime()) / DAY_MS)
     setDragStartOffset(diffDays)
@@ -117,11 +109,7 @@ export default function ScheduleMaster() {
     if (daysShifted !== 0) {
       const newOffset = dragStartOffset + daysShifted
       const newStartDate = new Date(gridStartDate.getTime() + (newOffset * DAY_MS))
-      
-      // Optimitically update UI
       applyCascadeUpdate(draggingId, newStartDate.toISOString().split('T')[0])
-      
-      // Reset drag origin so we don't multiply the shift
       setDragStartX(e.clientX)
       setDragStartOffset(newOffset)
     }
@@ -131,14 +119,12 @@ export default function ScheduleMaster() {
     if (!draggingId) return
     e.currentTarget.releasePointerCapture(e.pointerId)
     setDraggingId(null)
-    saveAllTasks() // Save the new cascaded dates to DB
+    saveAllTasks() 
   }
 
-  // --- CASCADE ENGINE ---
-  // When a task moves, push its dependents forward
   const applyCascadeUpdate = (movedTaskId: string, newStartDateStr: string) => {
     setTasks(prev => {
-      let draft = JSON.parse(JSON.stringify(prev)) // Deep copy
+      let draft = JSON.parse(JSON.stringify(prev)) 
       
       const updateDownstream = (taskId: string, startStr: string) => {
         const taskIndex = draft.findIndex((t: any) => t.id === taskId)
@@ -147,11 +133,9 @@ export default function ScheduleMaster() {
         draft[taskIndex].start_date = startStr
         const endMs = parseDate(startStr).getTime() + (draft[taskIndex].duration_days * DAY_MS)
 
-        // Find tasks that depend on THIS task
-        draft.forEach((child: any, cIdx: number) => {
+        draft.forEach((child: any) => {
           if (child.dependencies?.includes(taskId)) {
             const childStartMs = parseDate(child.start_date).getTime()
-            // If the parent overlaps the child, push the child
             if (endMs > childStartMs) {
               const newChildStart = new Date(endMs).toISOString().split('T')[0]
               updateDownstream(child.id, newChildStart)
@@ -167,10 +151,10 @@ export default function ScheduleMaster() {
 
   const saveAllTasks = async () => {
     setSaving(true)
-    const updates = tasks.map(t => ({ id: t.id, start_date: t.start_date }))
-    // Upsert all changed dates
+    // ONLY send the ID and Start Date to prevent Upsert conflicts on joins
+    const updates = tasks.map(t => ({ id: t.id, project_id: id, start_date: t.start_date, task_name: t.task_name, duration_days: t.duration_days }))
     const { error } = await supabase.from('project_schedule').upsert(updates)
-    if (error) alert("Failed to save schedule alignment.")
+    if (error) alert(`Sync failed: ${error.message}`)
     setSaving(false)
   }
 
@@ -181,18 +165,47 @@ export default function ScheduleMaster() {
       project_id: id, trade_id: newTask.trade || null, task_name: newTask.name,
       start_date: newTask.start, duration_days: newTask.duration, dependencies: newTask.deps
     }])
-    if (!error) {
-      setShowNewTask(false)
-      window.location.reload()
-    }
+    if (!error) { setShowNewTask(false); window.location.reload(); }
     setSaving(false)
   }
 
-  // Generate 60 days of grid columns
-  const gridDays = Array.from({ length: 60 }).map((_, i) => {
+  const handleUpdateTask = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSaving(true)
+    const { error } = await supabase.from('project_schedule').update({
+      task_name: editingTask.task_name,
+      duration_days: editingTask.duration_days,
+      start_date: editingTask.start_date
+    }).eq('id', editingTask.id)
+    
+    if (!error) { setEditingTask(null); window.location.reload(); }
+    setSaving(false)
+  }
+
+  const handleDeleteTask = async () => {
+    if(!confirm("Delete this task? Downstream dependencies will NOT be deleted automatically.")) return;
+    setSaving(true)
+    await supabase.from('project_schedule').delete().eq('id', editingTask.id)
+    setEditingTask(null)
+    window.location.reload()
+  }
+
+  // --- GRID GENERATION ---
+  const gridDays = Array.from({ length: 90 }).map((_, i) => {
     const d = new Date(gridStartDate.getTime() + (i * DAY_MS))
-    return { date: d, isWeekend: d.getDay() === 0 || d.getDay() === 6 }
+    return { date: d, isWeekend: d.getDay() === 0 || d.getDay() === 6, month: d.toLocaleString('en-US', { month: 'long', year: 'numeric' }) }
   })
+
+  // Calculate Month spans for the top header
+  let monthSpans: { name: string, colSpan: number }[] = []
+  let currentMonth = gridDays[0].month
+  let currentCount = 0
+  
+  gridDays.forEach(d => {
+    if (d.month === currentMonth) { currentCount++ } 
+    else { monthSpans.push({ name: currentMonth, colSpan: currentCount }); currentMonth = d.month; currentCount = 1 }
+  })
+  monthSpans.push({ name: currentMonth, colSpan: currentCount })
 
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Rendering Timeline...</div>
 
@@ -211,7 +224,7 @@ export default function ScheduleMaster() {
           )}
         </div>
         <div className="flex gap-3">
-          <button onClick={() => saveAllTasks()} className="bg-slate-800 text-slate-300 text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all flex items-center gap-2">
+          <button onClick={() => saveAllTasks()} disabled={saving} className="bg-slate-800 text-slate-300 text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all flex items-center gap-2">
             {saving ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>} Sync
           </button>
           <button onClick={() => setShowNewTask(true)} className="bg-blue-600 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-all flex items-center gap-2">
@@ -223,45 +236,60 @@ export default function ScheduleMaster() {
       {/* GANTT CONTAINER */}
       <div className="bg-slate-900 rounded-[32px] border border-slate-800 shadow-2xl overflow-hidden flex flex-col md:flex-row h-[70vh]">
         
-        {/* LEFT PANEL: Task List */}
+        {/* LEFT PANEL: Clickable Task List */}
         <div className="w-full md:w-80 border-r border-slate-800 bg-slate-950/50 flex flex-col z-20 shadow-xl">
-          <div className="h-16 border-b border-slate-800 flex items-center px-6 text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-900">
+          <div className="h-[72px] border-b border-slate-800 flex items-center px-6 text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-900">
             Work Breakdown
           </div>
-          <div className="overflow-y-auto custom-scrollbar flex-1">
+          <div className="overflow-y-auto custom-scrollbar flex-1 pb-10">
             {processedTasks.map(t => (
-              <div key={t.id} className="h-16 border-b border-slate-800/50 px-6 flex flex-col justify-center">
-                <p className="text-xs font-bold text-white truncate">{t.task_name}</p>
-                <p className="text-[9px] font-black text-blue-500 uppercase truncate tracking-widest mt-0.5">{t.project_contacts?.company || 'General'}</p>
-              </div>
+              <button 
+                key={t.id} 
+                onClick={() => setEditingTask(t)}
+                className="w-full h-16 border-b border-slate-800/50 px-6 flex flex-col justify-center text-left hover:bg-blue-600/10 transition-all group"
+              >
+                <div className="flex justify-between items-center w-full">
+                  <p className="text-xs font-bold text-white truncate group-hover:text-blue-400 transition-colors">{t.task_name}</p>
+                  <Edit2 size={12} className="text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+                <p className="text-[9px] font-black text-slate-500 uppercase truncate tracking-widest mt-0.5">{t.project_contacts?.company || 'General'}</p>
+              </button>
             ))}
           </div>
         </div>
 
         {/* RIGHT PANEL: Timeline Grid */}
-        <div className="flex-1 overflow-x-auto overflow-y-hidden custom-scrollbar bg-slate-950 relative" ref={containerRef}>
+        <div className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar bg-slate-950 relative" ref={containerRef}>
           
-          {/* Timeline Header (Days) */}
-          <div className="h-16 border-b border-slate-800 flex w-max bg-slate-900 sticky top-0 z-10">
-            {gridDays.map((d, i) => (
-              <div key={i} className={`flex-shrink-0 flex flex-col items-center justify-center border-r border-slate-800/50 ${d.isWeekend ? 'bg-slate-950/50' : ''}`} style={{ width: COL_WIDTH }}>
-                <span className="text-[8px] font-black text-slate-500 uppercase">{d.date.toLocaleDateString('en-US', { weekday: 'short' })}</span>
-                <span className={`text-[10px] font-black ${d.isWeekend ? 'text-slate-600' : 'text-slate-300'}`}>{d.date.getDate()}</span>
-              </div>
-            ))}
+          <div className="sticky top-0 z-10 bg-slate-900 border-b border-slate-800 shadow-sm">
+            {/* NEW: MONTH HEADER BAR */}
+            <div className="flex w-max border-b border-slate-800/50">
+              {monthSpans.map((m, i) => (
+                <div key={i} className="py-1 px-4 text-[10px] font-black text-blue-500 uppercase tracking-widest border-r border-slate-800/50" style={{ width: m.colSpan * COL_WIDTH }}>
+                  {m.name}
+                </div>
+              ))}
+            </div>
+
+            {/* DAY HEADER BAR */}
+            <div className="flex w-max h-10">
+              {gridDays.map((d, i) => (
+                <div key={i} className={`flex-shrink-0 flex flex-col items-center justify-center border-r border-slate-800/50 ${d.isWeekend ? 'bg-slate-950/50' : ''}`} style={{ width: COL_WIDTH }}>
+                  <span className={`text-[9px] font-black ${d.isWeekend ? 'text-slate-600' : 'text-slate-300'}`}>{d.date.getDate()}</span>
+                </div>
+              ))}
+            </div>
           </div>
 
-          {/* Timeline Rows (Tasks) */}
-          <div className="relative w-max">
-            {/* Background Grid Lines */}
+          {/* Timeline Rows */}
+          <div className="relative w-max pb-10">
             <div className="absolute inset-0 flex pointer-events-none">
               {gridDays.map((d, i) => (
                  <div key={i} className={`flex-shrink-0 border-r border-slate-800/30 h-full ${d.isWeekend ? 'bg-slate-900/20' : ''}`} style={{ width: COL_WIDTH }} />
               ))}
             </div>
 
-            {/* Task Bars */}
-            {processedTasks.map((t, index) => {
+            {processedTasks.map((t) => {
               const startMs = parseDate(t.start_date).getTime()
               const offsetDays = Math.floor((startMs - gridStartDate.getTime()) / DAY_MS)
               const isCritical = criticalPathIds.has(t.id)
@@ -271,26 +299,18 @@ export default function ScheduleMaster() {
                   {offsetDays >= 0 && (
                     <div 
                       className={`absolute top-1/2 -translate-y-1/2 h-10 rounded-xl flex items-center px-3 cursor-grab active:cursor-grabbing shadow-lg transition-colors ${
-                        isCritical ? 'bg-red-600/90 hover:bg-red-500 border border-red-400' : 'bg-blue-600/90 hover:bg-blue-500 border border-blue-400'
+                        isCritical ? 'bg-red-600 hover:bg-red-500 border border-red-400' : 'bg-blue-600 hover:bg-blue-500 border border-blue-400'
                       }`}
-                      style={{ 
-                        left: offsetDays * COL_WIDTH, 
-                        width: Math.max(t.duration_days * COL_WIDTH, COL_WIDTH - 8) 
-                      }}
+                      style={{ left: offsetDays * COL_WIDTH, width: Math.max(t.duration_days * COL_WIDTH, COL_WIDTH - 8) }}
                       onPointerDown={(e) => handlePointerDown(e, t.id, t.start_date)}
                       onPointerMove={handlePointerMove}
                       onPointerUp={handlePointerUp}
                     >
                       <GripVertical size={12} className="text-white/50 mr-2 flex-shrink-0" />
-                      <span className="text-[10px] font-black text-white truncate pointer-events-none">
-                        {t.duration_days}d
-                      </span>
+                      <span className="text-[10px] font-black text-white truncate pointer-events-none">{t.duration_days}d</span>
                     </div>
                   )}
-                  {/* Dependency Indicators (Simple visual dots) */}
-                  {t.dependencies?.length > 0 && (
-                    <div className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-600" title="Has prerequisites"><LinkIcon size={12}/></div>
-                  )}
+                  {t.dependencies?.length > 0 && <div className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-600" title="Has prerequisites"><LinkIcon size={12}/></div>}
                 </div>
               )
             })}
@@ -298,13 +318,43 @@ export default function ScheduleMaster() {
         </div>
       </div>
 
+      {/* --- EDIT TASK MODAL --- */}
+      {editingTask && (
+        <div className="fixed inset-0 bg-slate-950/90 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
+          <form onSubmit={handleUpdateTask} className="bg-slate-900 border-2 border-amber-500 p-8 rounded-[40px] max-w-lg w-full space-y-6 shadow-2xl">
+            <h2 className="text-2xl font-black text-white uppercase italic text-center">Edit Task</h2>
+            
+            <input value={editingTask.task_name} onChange={e => setEditingTask({...editingTask, task_name: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none" />
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-[9px] font-black text-slate-500 uppercase pl-2">Start Date</label>
+                <input type="date" value={editingTask.start_date} onChange={e => setEditingTask({...editingTask, start_date: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none [color-scheme:dark]" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[9px] font-black text-slate-500 uppercase pl-2">Duration (Days)</label>
+                <input type="number" min="1" value={editingTask.duration_days} onChange={e => setEditingTask({...editingTask, duration_days: parseInt(e.target.value)})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none" />
+              </div>
+            </div>
+
+            <div className="flex gap-4 pt-4">
+              <button type="button" onClick={() => setEditingTask(null)} className="flex-1 bg-slate-800 py-4 rounded-2xl font-black text-white uppercase text-[10px]">Cancel</button>
+              <button type="button" onClick={handleDeleteTask} className="w-14 bg-red-950 text-red-500 border border-red-900/50 rounded-2xl flex items-center justify-center hover:bg-red-600 hover:text-white transition-all"><Trash2 size={16}/></button>
+              <button type="submit" disabled={saving} className="flex-1 bg-amber-600 py-4 rounded-2xl font-black text-white uppercase text-[10px] disabled:opacity-50 flex justify-center items-center gap-2">
+                {saving && <Loader2 size={14} className="animate-spin"/>} Save
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* NEW TASK MODAL */}
       {showNewTask && (
         <div className="fixed inset-0 bg-slate-950/90 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
-          <div className="bg-slate-900 border-2 border-blue-600 p-8 rounded-[40px] max-w-lg w-full space-y-6 shadow-2xl">
+          <form onSubmit={handleCreateTask} className="bg-slate-900 border-2 border-blue-600 p-8 rounded-[40px] max-w-lg w-full space-y-6 shadow-2xl">
             <h2 className="text-2xl font-black text-white uppercase italic text-center">Add Schedule Item</h2>
             
-            <input value={newTask.name} onChange={e => setNewTask({...newTask, name: e.target.value})} placeholder="Task Name (e.g. Rough Framing)" className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none" />
+            <input required value={newTask.name} onChange={e => setNewTask({...newTask, name: e.target.value})} placeholder="Task Name (e.g. Rough Framing)" className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none" />
             
             <select value={newTask.trade} onChange={e => setNewTask({...newTask, trade: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-slate-400 outline-none">
               <option value="">Assigned Trade (Optional)</option>
@@ -314,11 +364,11 @@ export default function ScheduleMaster() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-[9px] font-black text-slate-500 uppercase pl-2">Start Date</label>
-                <input type="date" value={newTask.start} onChange={e => setNewTask({...newTask, start: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none [color-scheme:dark]" />
+                <input required type="date" value={newTask.start} onChange={e => setNewTask({...newTask, start: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none [color-scheme:dark]" />
               </div>
               <div className="space-y-2">
                 <label className="text-[9px] font-black text-slate-500 uppercase pl-2">Duration (Days)</label>
-                <input type="number" min="1" value={newTask.duration} onChange={e => setNewTask({...newTask, duration: parseInt(e.target.value)})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none" />
+                <input required type="number" min="1" value={newTask.duration} onChange={e => setNewTask({...newTask, duration: parseInt(e.target.value)})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none" />
               </div>
             </div>
 
@@ -331,10 +381,10 @@ export default function ScheduleMaster() {
             </div>
 
             <div className="flex gap-4 pt-4">
-              <button onClick={() => setShowNewTask(false)} className="flex-1 bg-slate-800 py-4 rounded-2xl font-black text-white uppercase text-[10px]">Cancel</button>
-              <button onClick={handleCreateTask} disabled={!newTask.name || !newTask.start} className="flex-1 bg-blue-600 py-4 rounded-2xl font-black text-white uppercase text-[10px] disabled:opacity-50">Save Task</button>
+              <button type="button" onClick={() => setShowNewTask(false)} className="flex-1 bg-slate-800 py-4 rounded-2xl font-black text-white uppercase text-[10px]">Cancel</button>
+              <button type="submit" disabled={saving} className="flex-1 bg-blue-600 py-4 rounded-2xl font-black text-white uppercase text-[10px] disabled:opacity-50">Save Task</button>
             </div>
-          </div>
+          </form>
         </div>
       )}
 

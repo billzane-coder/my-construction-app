@@ -54,18 +54,28 @@ export default function GlobalPunchList() {
     return matchesSearch && matchesStatus && matchesProject && matchesTrade
   })
 
-  const exportToCSV = () => {
-    const headers = ['Project', 'Status', 'Trade', 'Location', 'Description', 'Date Identified', 'Resolved Date']
-    const csvRows = filteredItems.map(item => [
-      `"${item.projects?.name || 'Unknown'}"`,
-      item.status,
-      `"${item.assigned_to || 'Unassigned'}"`,
-      `"${item.location || 'General'}"`,
-      `"${(item.description || '').replace(/"/g, '""')}"`,
-      new Date(item.created_at).toLocaleDateString(),
-      item.resolved_at ? new Date(item.resolved_at).toLocaleDateString() : 'Pending'
-    ])
-    const csvContent = [headers.join(','), ...csvRows.map(e => e.join(','))].join('\n')
+const exportToCSV = () => {
+    // Standardize headers
+    const headers = ['Project Name', 'Status', 'Assigned Trade', 'Location', 'Description', 'Identified Date', 'Resolved Date']
+    
+    const csvRows = filteredItems.map(item => {
+      // Escape quotes in description to prevent CSV breaking
+      const cleanDesc = (item.description || '').replace(/"/g, '""')
+      
+      return [
+        `"${item.projects?.name || 'Unknown Project'}"`,
+        `"${item.status}"`,
+        `"${item.assigned_to || 'General/Super'}"`,
+        `"${item.location || 'Site'}"`,
+        `"${cleanDesc}"`,
+        `"${new Date(item.created_at).toLocaleDateString()}"`,
+        `"${item.resolved_at ? new Date(item.resolved_at).toLocaleDateString() : 'Pending'}"`
+      ]
+    })
+
+    const csvContent = [headers.join(','), ...csvRows.map(row => row.join(','))].join('\n')
+    
+    // Create the download link
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
