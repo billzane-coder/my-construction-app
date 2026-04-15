@@ -10,7 +10,7 @@ import Link from 'next/link'
 import { 
   Plus, Users, HardHat, Building2, FileCheck, ShieldCheck, 
   FileText, Phone, Mail, ChevronLeft, Loader2, MessageSquare,
-  Settings2, Save, X, ExternalLink, ClipboardList, FileQuestion, Images, CalendarDays
+  Settings2, Save, X, ExternalLink, ClipboardList, FileQuestion, Images, Inbox, ClipboardCheck
 } from 'lucide-react'
 
 export default function ProjectWarRoom() {
@@ -32,7 +32,9 @@ export default function ProjectWarRoom() {
   // KPI Counts
   const [punchCount, setPunchCount] = useState(0)
   const [logCount, setLogCount] = useState(0)
+  const [rfiCount, setRfiCount] = useState(0)
   const [manpowerTotal, setManpowerTotal] = useState(0)
+  const [inspectionProgress, setInspectionProgress] = useState(0)
 
   // Modals & Editing State
   const [editingContact, setEditingContact] = useState<any>(null)
@@ -46,14 +48,16 @@ export default function ProjectWarRoom() {
     if (!id) return
     setLoading(true)
     
-    const [p, manual, logs, punch, cts, dcs, subs] = await Promise.all([
+    const [p, manual, logs, punch, cts, dcs, rfis, subs, inspections] = await Promise.all([
       supabase.from('projects').select('*').eq('id', id).single(),
       supabase.from('project_photos').select('*').eq('project_id', id),
       supabase.from('daily_logs').select('*').eq('project_id', id).order('log_date', { ascending: false }),
       supabase.from('punch_list').select('id, status').eq('project_id', id),
       supabase.from('project_contacts').select('*').eq('project_id', id),
       supabase.from('project_documents').select('*').eq('project_id', id),
-      supabase.from('project_submittals').select('*').eq('project_id', id)
+      supabase.from('rfis').select('id, status').eq('project_id', id).eq('status', 'Open'),
+      supabase.from('project_submittals').select('*').eq('project_id', id),
+      supabase.from('project_inspections').select('status, unit_name').eq('project_id', id)
     ])
 
     setProject(p.data)
@@ -64,15 +68,22 @@ export default function ProjectWarRoom() {
     // KPI Processing
     setPunchCount(punch.data?.filter(i => i.status === 'Open').length || 0)
     setLogCount(logs.data?.length || 0)
+    setRfiCount(rfis.data?.length || 0) 
     
-    // Pull most recent manpower total
     if (logs.data && logs.data[0]) {
-      const latest = logs.data[0].manpower || ""
-      const match = latest.match(/(\d+)/)
+      const match = (logs.data[0].manpower || "").match(/(\d+)/)
       setManpowerTotal(match ? parseInt(match[0]) : 0)
     }
 
-    // Photo Stream Consolidation
+    // Inspection Math (11 Standard Phases)
+    if (inspections.data && inspections.data.length > 0) {
+      const uniqueUnits = new Set(inspections.data.map(i => i.unit_name)).size
+      const totalExpected = uniqueUnits * 11 
+      const passed = inspections.data.filter(i => i.status === 'Pass').length
+      setInspectionProgress(totalExpected === 0 ? 0 : Math.round((passed / totalExpected) * 100))
+    }
+
+    // Photo Stream
     const photoStream = [
       ...(manual.data || []).map(i => ({ url: i.url || i.photo_url, label: i.caption, src: 'Manual', date: i.created_at })),
       ...(logs.data || []).flatMap(i => {
@@ -87,7 +98,6 @@ export default function ProjectWarRoom() {
 
   useEffect(() => { fetchData() }, [id])
 
-  // --- HANDLERS ---
   const handleUpdateContact = async (e: React.FormEvent) => {
     e.preventDefault()
     const { error } = await supabase.from('project_contacts').update(editingContact).eq('id', editingContact.id)
@@ -98,18 +108,20 @@ export default function ProjectWarRoom() {
     setUploading(true)
     const path = `${id}/gallery/${Date.now()}-${file.name}`
     const { error: sErr } = await supabase.storage.from('project-files').upload(path, file)
+    
     if (!sErr) {
       const { data: u } = supabase.storage.from('project-files').getPublicUrl(path)
       await supabase.from('project_photos').insert([{ project_id: id, caption: file.name, source: 'Manual', url: u.publicUrl }])
       fetchData()
+    } else {
+      alert(`Photo upload failed: ${sErr.message}`)
     }
     setUploading(false)
   }
 
   const handleUploadDoc = async (file: File, contactId: string, category: string, title: string) => {
     setUploading(true)
-    // 📂 ORGANIZE BY TRADE BUCKET
-    const path = `${id}/trades/${contactId}/${category.toLowerCase()}/${Date.now()}-${file.name}`
+    const path = `${id}/trades/${contactId}/${category}/${Date.now()}-${file.name}`
     const { error: sErr } = await supabase.storage.from('project-files').upload(path, file)
     
     if (!sErr) {
@@ -117,10 +129,10 @@ export default function ProjectWarRoom() {
       const { error: dbErr } = await supabase.from('project_submittals').insert([{
         project_id: id, contact_id: contactId, title, category, url: u.publicUrl, status: 'Pending Review'
       }])
-      if (!dbErr) fetchData()
-    }
+      if (dbErr) alert(`Database Error: ${dbErr.message}`)
+      else { fetchData(); setShowSubmittalModal({ show: false, contactId: null, category: 'Submittal' }) }
+    } else alert(`Storage Error: ${sErr.message}`)
     setUploading(false)
-    setShowSubmittalModal({ show: false, contactId: null, category: 'Submittal' })
   }
 
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-[0.5em]">Syncing Master...</div>
@@ -138,52 +150,37 @@ export default function ProjectWarRoom() {
           <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest mt-3 flex items-center gap-2">📍 {project?.address || project?.location}</p>
         </div>
         
-        {/* CONSOLIDATED KPI MODULES */}
-        <div className="flex flex-wrap gap-3 items-center">
+        {/* KPI MODULES */}
+        <div className="flex flex-wrap gap-4 items-center">
           
-          <div className="flex items-center gap-3 bg-blue-600/10 border border-blue-500/20 px-5 py-3 rounded-2xl">
-            <Users size={16} className="text-blue-500" />
+          <div className="flex items-center gap-3 bg-blue-600/10 border border-blue-500/20 px-6 py-4 rounded-3xl">
+            <Users size={18} className="text-blue-500" />
             <div className="text-left">
-              <p className="text-[7px] font-black text-slate-500 uppercase italic leading-none mb-1">Manpower</p>
-              <p className="text-[11px] font-black uppercase text-blue-400 leading-none">{manpowerTotal}</p>
+              <p className="text-[8px] font-black text-slate-500 uppercase italic">Headcount</p>
+              <p className="text-xs font-black uppercase text-blue-400">{manpowerTotal} Workers</p>
             </div>
           </div>
-
-          {/* NEW: Schedule Button */}
-          <Link href={`/projects/${id}/schedule`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-5 py-3 rounded-2xl hover:border-blue-500 transition-all shadow-xl">
-            <CalendarDays size={16} className="text-blue-500" />
-            <div className="text-left"><p className="text-[7px] font-black text-slate-500 uppercase leading-none mb-1">Timeline</p><p className="text-[11px] font-black uppercase text-white leading-none">Schedule</p></div>
+          
+          <Link href={`/projects/${id}/matrix`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-emerald-500 transition-all shadow-xl">
+            <ClipboardCheck size={18} className="text-emerald-500" />
+            <div className="text-left"><p className="text-[8px] font-black text-slate-500 uppercase">Inspections</p><p className="text-xs font-black uppercase text-white">{inspectionProgress}% Pass</p></div>
           </Link>
 
-          <Link href={`/projects/${id}/logs`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-5 py-3 rounded-2xl hover:border-blue-500 transition-all shadow-xl">
-            <FileText size={16} className="text-blue-500" />
-            <div className="text-left"><p className="text-[7px] font-black text-slate-500 uppercase leading-none mb-1">Reports</p><p className="text-[11px] font-black uppercase text-white leading-none">{logCount} Logs</p></div>
+          <Link href={`/projects/${id}/logs`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-blue-500 transition-all shadow-xl">
+            <FileText size={18} className="text-blue-500" />
+            <div className="text-left"><p className="text-[8px] font-black text-slate-500 uppercase">Logs</p><p className="text-xs font-black uppercase text-white">{logCount}</p></div>
           </Link>
-
-          <Link href={`/projects/${id}/punchlist`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-5 py-3 rounded-2xl hover:border-red-500 transition-all shadow-xl">
-            <ClipboardList size={16} className="text-red-500" />
-            <div className="text-left"><p className="text-[7px] font-black text-slate-500 uppercase leading-none mb-1">Punch</p><p className="text-[11px] font-black uppercase text-white leading-none">{punchCount} Open</p></div>
+          
+          <Link href={`/projects/${id}/punchlist`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-red-500 transition-all shadow-xl">
+            <ClipboardList size={18} className="text-red-500" />
+            <div className="text-left"><p className="text-[8px] font-black text-slate-500 uppercase">Punch</p><p className="text-xs font-black uppercase text-white">{punchCount}</p></div>
           </Link>
-
-          <Link href={`/projects/${id}/submittals`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-5 py-3 rounded-2xl hover:border-amber-500 transition-all shadow-xl">
-            <FileCheck size={16} className="text-amber-500" />
-            <div className="text-left"><p className="text-[7px] font-black text-slate-500 uppercase leading-none mb-1">Docs</p><p className="text-[11px] font-black uppercase text-white leading-none">Submittals</p></div>
+          
+          <Link href={`/projects/${id}/rfis`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-amber-500 transition-all shadow-xl">
+            <FileQuestion size={18} className="text-amber-500" />
+            <div className="text-left"><p className="text-[8px] font-black text-slate-500 uppercase">RFIs</p><p className="text-xs font-black uppercase text-white">{rfiCount}</p></div>
           </Link>
-
-          <Link href={`/projects/${id}/site-instructions`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-5 py-3 rounded-2xl hover:border-emerald-500 transition-all shadow-xl">
-            <Plus size={16} className="text-emerald-500" />
-            <div className="text-left"><p className="text-[7px] font-black text-slate-500 uppercase leading-none mb-1">Directives</p><p className="text-[11px] font-black uppercase text-white leading-none">SIs</p></div>
-          </Link>
-
-          {/* FIXED: Single Safety Hub Button */}
-          <Link href={`/projects/${id}/safety`} className="flex items-center gap-3 bg-red-950/20 border-2 border-red-600/30 px-5 py-3 rounded-2xl hover:border-red-500 transition-all shadow-xl group">
-            <ShieldCheck size={16} className="text-red-500 group-hover:animate-pulse" />
-            <div className="text-left">
-              <p className="text-[7px] font-black text-slate-500 uppercase leading-none mb-1">Safety</p>
-              <p className="text-[11px] font-black uppercase text-white leading-none">Hub</p>
-            </div>
-          </Link>
-
+          
         </div>
       </div>
 
@@ -191,36 +188,41 @@ export default function ProjectWarRoom() {
       <div className="flex gap-2 border-b border-slate-800 mb-10 overflow-x-auto no-scrollbar">
         {['photos', 'plans', 'contacts'].map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)} className={`px-10 py-5 text-[11px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'text-blue-500 border-b-2 border-blue-500 bg-blue-500/5' : 'text-slate-500 hover:text-slate-300'}`}>
-            {tab === 'contacts' ? 'Trade Directory' : tab === 'plans' ? 'Blueprint Vault' : 'Site Stream'}
+            {tab === 'contacts' ? 'Directory & Compliance' : tab === 'plans' ? 'Blueprint Vault' : 'Site Stream'}
           </button>
         ))}
       </div>
 
-      {/* TABS CONTENT (Site Stream, Blueprints, Trade Directory) */}
+      {/* TAB 1: SITE PHOTO STREAM */}
       {activeTab === 'photos' && (
         <div className="space-y-8 animate-in fade-in duration-500">
           <div className="flex flex-col md:flex-row justify-between items-center bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 shadow-xl gap-4">
-            <h3 className="text-2xl font-black uppercase italic tracking-tighter text-white">Project <span className="text-blue-500">Gallery</span></h3>
-            <label className="bg-blue-600 text-white text-[10px] font-black px-10 py-4 rounded-2xl uppercase cursor-pointer hover:bg-blue-500 transition-all shadow-lg flex items-center gap-2">
+            <h3 className="text-2xl font-black uppercase italic tracking-tighter">Site <span className="text-blue-500">Stream</span></h3>
+            <label className="bg-blue-600 text-white text-[10px] font-black px-10 py-4 rounded-2xl uppercase cursor-pointer hover:bg-blue-500 transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2">
               {uploading ? <Loader2 className="animate-spin" size={14}/> : <Images size={14}/>}
-              {uploading ? 'Processing...' : 'Upload Site Photo'}
-              <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleUploadPhoto(e.target.files[0])} />
+              {uploading ? 'Processing...' : 'Add Visual'}
+              <input type="file" accept="image/jpeg,image/png,image/jpg,image/heic" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if(f) handleUploadPhoto(f) }} />
             </label>
           </div>
+
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
             {allPhotos.map((p, i) => (
               <div key={i} className="relative aspect-square bg-slate-900 rounded-[32px] overflow-hidden border border-slate-800 group shadow-xl">
-                <img src={p.url} className="w-full h-full object-cover group-hover:scale-110 transition-all duration-700" alt="Site" />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 p-6 flex flex-col justify-end opacity-0 group-hover:opacity-100 transition-all">
-                  <span className="text-[7px] font-black px-2 py-1 rounded mb-2 self-start uppercase bg-blue-600 text-white">{p.src}</span>
-                  <p className="text-[10px] font-black truncate uppercase text-white">{p.label || 'Site Visual'}</p>
+                <img src={p.url} className="w-full h-full object-cover group-hover:scale-105 transition-all duration-700" />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950 p-6 flex flex-col justify-end opacity-0 group-hover:opacity-100 transition-all">
+                  <span className="text-[8px] font-black px-2 py-1 rounded mb-2 self-start uppercase bg-blue-600">{p.src}</span>
+                  <p className="text-[11px] font-black truncate uppercase text-white">{p.label || 'Site Visual'}</p>
                 </div>
               </div>
             ))}
+            {allPhotos.length === 0 && (
+              <div className="col-span-full text-center py-20 border-2 border-dashed border-slate-800 rounded-[32px] text-slate-600 font-black uppercase text-[10px] tracking-widest">No visual data recorded yet.</div>
+            )}
           </div>
         </div>
       )}
 
+      {/* TAB 2: BLUEPRINT VAULT */}
       {activeTab === 'plans' && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-in fade-in duration-500">
           <button onClick={() => setShowPlanModal(true)} className="aspect-[4/3] border-4 border-dashed border-slate-800 rounded-[48px] flex flex-col items-center justify-center text-slate-600 hover:text-blue-500 hover:border-blue-500/50 transition-all">
@@ -231,52 +233,94 @@ export default function ProjectWarRoom() {
             <div key={plan.id} className="bg-slate-900 p-8 rounded-[48px] border border-slate-800 shadow-2xl relative">
               <span className="bg-blue-950 text-blue-400 text-[10px] font-black px-4 py-1.5 rounded-full uppercase mb-4 inline-block italic">Rev: {plan.revision_number}</span>
               <h4 className="text-2xl font-black text-white uppercase italic truncate mb-8">{plan.title}</h4>
-              <Link href={`/projects/${id}/viewer/${plan.id}`} className="block w-full text-center bg-slate-800 hover:bg-blue-600 py-6 rounded-3xl text-[11px] font-black uppercase text-white transition-all shadow-lg">Open Viewer →</Link>
+              <Link href={`/projects/${id}/viewer/${plan.id}`} className="block w-full text-center bg-slate-800 hover:bg-blue-600 py-6 rounded-3xl text-[11px] font-black uppercase text-white transition-all shadow-lg">Open Internal Viewer →</Link>
             </div>
           ))}
         </div>
       )}
 
+      {/* TAB 3: TRADE COMPLIANCE VAULT */}
       {activeTab === 'contacts' && (
         <div className="space-y-12 animate-in fade-in duration-500">
           <div className="flex justify-between items-center bg-slate-900/50 p-8 rounded-[40px] border border-slate-800 shadow-xl">
              <h3 className="text-2xl font-black uppercase italic">Trade <span className="text-blue-500">Directory</span></h3>
-             <button onClick={() => setShowContactModal(true)} className="bg-emerald-600 text-white text-[10px] font-black px-10 py-5 rounded-3xl uppercase shadow-lg hover:bg-emerald-500 transition-all">+ Register Trade</button>
+             <button onClick={() => setShowContactModal(true)} className="bg-emerald-600 text-white text-[10px] font-black px-10 py-5 rounded-3xl uppercase shadow-lg shadow-emerald-900/20 hover:bg-emerald-500 transition-all">+ Register Trade</button>
           </div>
+
           <div className="grid grid-cols-1 gap-12">
             {contacts.map(trade => (
               <div key={trade.id} className="bg-slate-900 rounded-[48px] border border-slate-800 shadow-2xl overflow-hidden flex flex-col">
+                
+                {/* TRADE HEADER & INLINE EDITING */}
                 <div className="p-8 md:p-10 border-b border-slate-800 bg-slate-900/50">
-                  <div className="flex flex-col lg:flex-row justify-between gap-8">
-                    <div className="flex-1">
-                      <h4 className="text-4xl font-black text-white uppercase italic leading-none">{trade.company}</h4>
-                      <p className="text-[11px] font-black text-blue-500 uppercase tracking-[0.2em] mt-3">{trade.trade_role}</p>
-                      <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="bg-black/20 p-6 rounded-3xl border border-slate-800/50">
-                          <p className="text-[9px] font-black text-slate-600 uppercase mb-2 flex items-center gap-2"><HardHat size={14} className="text-emerald-500" /> Site Foreman</p>
-                          <p className="text-lg font-black text-white uppercase truncate">{trade.foreman_name || 'N/A'}</p>
-                          <div className="mt-6 grid grid-cols-2 gap-3">
-                            <a href={`tel:${trade.foreman_phone}`} className="bg-slate-800 hover:bg-emerald-600 text-white py-3 rounded-2xl text-[9px] font-black uppercase flex justify-center items-center gap-2 transition-all">Call</a>
-                            <a href={`sms:${trade.foreman_phone}`} className="bg-slate-800 hover:bg-blue-600 text-white py-3 rounded-2xl text-[9px] font-black uppercase flex justify-center items-center gap-2 transition-all">Text</a>
-                          </div>
+                  {editingContact?.id === trade.id ? (
+                    <form onSubmit={handleUpdateContact} className="space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <input className="bg-slate-950 p-4 rounded-xl border border-blue-500/50 text-white font-bold" value={editingContact.company} onChange={e => setEditingContact({...editingContact, company: e.target.value})} placeholder="Company Name" />
+                        <input className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-white font-bold" value={editingContact.trade_role} onChange={e => setEditingContact({...editingContact, trade_role: e.target.value})} placeholder="Trade Role" />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <p className="text-[9px] font-black text-slate-500 uppercase pl-2">Foreman Contact</p>
+                          <input className="w-full bg-slate-950 p-4 rounded-xl border border-slate-800 text-white text-sm" value={editingContact.foreman_name || ''} onChange={e => setEditingContact({...editingContact, foreman_name: e.target.value})} placeholder="Foreman Name" />
+                          <input className="w-full bg-slate-950 p-4 rounded-xl border border-slate-800 text-white text-sm" value={editingContact.foreman_phone || ''} onChange={e => setEditingContact({...editingContact, foreman_phone: e.target.value})} placeholder="Foreman Phone" />
                         </div>
-                        <div className="bg-black/20 p-6 rounded-3xl border border-slate-800/50">
-                          <p className="text-[9px] font-black text-slate-600 uppercase mb-2 flex items-center gap-2"><Building2 size={14} className="text-blue-500" /> Office PM</p>
-                          <p className="text-lg font-black text-white uppercase truncate">{trade.office_name || 'N/A'}</p>
-                          <div className="mt-6 grid grid-cols-2 gap-3">
-                            <a href={`tel:${trade.office_phone}`} className="bg-slate-800 hover:bg-blue-600 text-white py-3 rounded-2xl text-[9px] font-black uppercase flex justify-center items-center gap-2 transition-all">Call</a>
-                            <a href={`mailto:${trade.email}`} className="bg-slate-800 hover:bg-amber-600 text-white py-3 rounded-2xl text-[9px] font-black uppercase flex justify-center items-center gap-2 transition-all">Email</a>
+                        <div className="space-y-2">
+                          <p className="text-[9px] font-black text-slate-500 uppercase pl-2">Office Contact</p>
+                          <input className="w-full bg-slate-950 p-4 rounded-xl border border-slate-800 text-white text-sm" value={editingContact.office_name || ''} onChange={e => setEditingContact({...editingContact, office_name: e.target.value})} placeholder="PM Name" />
+                          <input className="w-full bg-slate-950 p-4 rounded-xl border border-slate-800 text-white text-sm" value={editingContact.office_phone || ''} onChange={e => setEditingContact({...editingContact, office_phone: e.target.value})} placeholder="Office Phone" />
+                        </div>
+                      </div>
+                      <input className="w-full bg-slate-950 p-4 rounded-xl border border-slate-800 text-white text-sm" value={editingContact.email || ''} onChange={e => setEditingContact({...editingContact, email: e.target.value})} placeholder="Company Email" />
+                      
+                      <div className="flex gap-4">
+                        <button type="submit" className="flex-1 bg-blue-600 p-4 rounded-xl font-black text-white uppercase text-[10px] flex items-center justify-center gap-2"><Save size={16}/> Save Updates</button>
+                        <button type="button" onClick={() => setEditingContact(null)} className="flex-1 bg-slate-800 p-4 rounded-xl font-black text-white uppercase text-[10px] flex items-center justify-center gap-2"><X size={16}/> Cancel</button>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="flex flex-col lg:flex-row justify-between gap-8">
+                      <div className="flex-1">
+                        <h4 className="text-4xl font-black text-white uppercase italic leading-none">{trade.company}</h4>
+                        <p className="text-[11px] font-black text-blue-500 uppercase tracking-[0.2em] mt-3">{trade.trade_role}</p>
+                        
+                        <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="bg-black/20 p-6 rounded-3xl border border-slate-800/50 flex flex-col justify-between">
+                            <div>
+                              <p className="text-[9px] font-black text-slate-600 uppercase mb-2 flex items-center gap-2"><HardHat size={14} className="text-emerald-500" /> Site Foreman</p>
+                              <p className="text-lg font-black text-white uppercase truncate">{trade.foreman_name || 'Unassigned'}</p>
+                            </div>
+                            <div className="mt-6 grid grid-cols-2 gap-3">
+                              <a href={`tel:${trade.foreman_phone}`} className="bg-slate-800 hover:bg-emerald-600 text-white py-4 rounded-2xl text-[10px] font-black uppercase flex justify-center items-center gap-2 transition-all shadow-lg"><Phone size={14}/> Call</a>
+                              <a href={`sms:${trade.foreman_phone}`} className="bg-slate-800 hover:bg-blue-600 text-white py-4 rounded-2xl text-[10px] font-black uppercase flex justify-center items-center gap-2 transition-all shadow-lg"><MessageSquare size={14}/> Text</a>
+                            </div>
+                          </div>
+                          <div className="bg-black/20 p-6 rounded-3xl border border-slate-800/50 flex flex-col justify-between">
+                            <div>
+                              <p className="text-[9px] font-black text-slate-600 uppercase mb-2 flex items-center gap-2"><Building2 size={14} className="text-blue-500" /> Office / PM</p>
+                              <p className="text-lg font-black text-white uppercase truncate">{trade.office_name || 'Unassigned'}</p>
+                            </div>
+                            <div className="mt-6 grid grid-cols-2 gap-3">
+                              <a href={`tel:${trade.office_phone}`} className="bg-slate-800 hover:bg-blue-600 text-white py-4 rounded-2xl text-[10px] font-black uppercase flex justify-center items-center gap-2 transition-all shadow-lg"><Phone size={14}/> Call</a>
+                              <a href={`mailto:${trade.email}`} className="bg-slate-800 hover:bg-amber-600 text-white py-4 rounded-2xl text-[10px] font-black uppercase flex justify-center items-center gap-2 transition-all shadow-lg"><Mail size={14}/> Email</a>
+                            </div>
                           </div>
                         </div>
                       </div>
+                      
+                      <button type="button" onClick={() => setEditingContact(trade)} className="p-4 bg-slate-800 rounded-2xl text-slate-400 hover:text-white transition-all shadow-xl active:scale-95 touch-manipulation z-10 flex-shrink-0 self-start">
+                        <Settings2 size={24} />
+                      </button>
                     </div>
-                    <button onClick={() => setEditingContact(trade)} className="self-start p-4 bg-slate-800 rounded-2xl text-slate-400 hover:text-white transition-all"><Settings2 size={24} /></button>
-                  </div>
+                  )}
                 </div>
-                <div className="p-8 md:p-10 grid grid-cols-1 lg:grid-cols-3 gap-8 bg-slate-950/30">
+
+                {/* THE FOUR COMPLIANCE BOXES */}
+                <div className="p-6 md:p-10 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 bg-slate-950/30">
                   <DocBox title="Submittals" icon={<FileCheck size={18} className="text-blue-500" />} docs={submittals.filter(s => s.contact_id === trade.id && s.category === 'Submittal')} onAdd={() => setShowSubmittalModal({ show: true, contactId: trade.id, category: 'Submittal' })} />
                   <DocBox title="Safety Docs" icon={<ShieldCheck size={18} className="text-emerald-500" />} docs={submittals.filter(s => s.contact_id === trade.id && s.category === 'Safety')} onAdd={() => setShowSubmittalModal({ show: true, contactId: trade.id, category: 'Safety' })} />
                   <DocBox title="Contracts" icon={<FileText size={18} className="text-amber-500" />} docs={submittals.filter(s => s.contact_id === trade.id && s.category === 'Contract')} onAdd={() => setShowSubmittalModal({ show: true, contactId: trade.id, category: 'Contract' })} />
+                  <DocBox title="Site Instructions" icon={<Inbox size={18} className="text-purple-500" />} docs={submittals.filter(s => s.contact_id === trade.id && s.category === 'SI')} onAdd={() => setShowSubmittalModal({ show: true, contactId: trade.id, category: 'SI' })} />
                 </div>
               </div>
             ))}
@@ -284,7 +328,8 @@ export default function ProjectWarRoom() {
         </div>
       )}
 
-      {/* --- MODALS (Submittal, Plan, Contact) --- */}
+      {/* --- MODALS --- */}
+      
       {showSubmittalModal.show && (
         <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <form onSubmit={async (e) => {
@@ -292,21 +337,23 @@ export default function ProjectWarRoom() {
             const fd = new FormData(e.currentTarget);
             const title = fd.get('title') as string;
             const file = (e.currentTarget.elements.namedItem('file') as HTMLInputElement).files?.[0];
-            if (!file || !title) return alert('Provide title and file.');
+            
+            if (!file || !title) return alert('Please provide both a title and a file.');
             await handleUploadDoc(file, showSubmittalModal.contactId!, showSubmittalModal.category, title);
           }} className="bg-slate-900 border-2 border-blue-600 p-8 rounded-[40px] max-w-lg w-full space-y-6 shadow-2xl">
-            <h2 className="text-2xl font-black text-white uppercase italic text-center">Vault {showSubmittalModal.category}</h2>
-            <input name="title" required placeholder="Document Name" className="w-full p-4 bg-slate-950 border border-slate-800 rounded-xl font-bold text-white outline-none" />
-            <input name="file" type="file" required accept=".pdf" className="w-full text-xs text-slate-500" />
+            <h2 className="text-2xl font-black text-white uppercase italic text-center">Vault New {showSubmittalModal.category === 'SI' ? 'Instruction' : showSubmittalModal.category}</h2>
+            <input name="title" required placeholder={`Document Name (e.g. ${showSubmittalModal.category === 'Safety' ? 'WSIB' : showSubmittalModal.category === 'SI' ? 'SI-001 Wall Relocation' : 'PO'})`} className="w-full p-4 bg-slate-950 border border-slate-800 rounded-xl font-bold text-white outline-none focus:border-blue-500" />
+            <input name="file" type="file" required accept=".pdf" className="w-full text-xs text-slate-500 file:bg-slate-800 file:text-white file:px-4 file:py-2 file:rounded-lg cursor-pointer" />
             <div className="flex gap-4">
               <button type="button" onClick={() => setShowSubmittalModal({show: false, contactId: null, category: 'Submittal'})} className="flex-1 bg-slate-800 py-4 rounded-2xl font-black text-white uppercase text-[10px]">Cancel</button>
-              <button type="submit" className="flex-1 bg-blue-600 py-4 rounded-2xl font-black text-white uppercase text-[10px]">{uploading ? 'Uploading...' : 'Upload'}</button>
+              <button type="submit" disabled={uploading} className="flex-1 bg-blue-600 py-4 rounded-2xl font-black text-white uppercase text-[10px] disabled:opacity-50">
+                {uploading ? 'Uploading...' : 'Upload'}
+              </button>
             </div>
           </form>
         </div>
       )}
 
-      {/* Blueprint Upload Modal */}
       {showPlanModal && (
         <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <form onSubmit={async (e) => {
@@ -337,7 +384,6 @@ export default function ProjectWarRoom() {
         </div>
       )}
 
-      {/* Register Trade Modal */}
       {showContactModal && (
         <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <form onSubmit={async (e) => {
@@ -354,13 +400,15 @@ export default function ProjectWarRoom() {
               office_phone: fd.get('office_phone'), 
               email: fd.get('email')
             }]);
-            if (!error) { setShowContactModal(false); fetchData(); }
+            if (!error) { setShowContactModal(false); fetchData(); } else { alert(error.message); }
           }} className="bg-slate-900 border-2 border-emerald-600 p-10 rounded-[56px] max-w-2xl w-full space-y-6 shadow-2xl overflow-y-auto max-h-[90vh]">
             <h2 className="text-2xl font-black text-white uppercase italic text-center">New Site Trade Registration</h2>
+            
             <div className="grid grid-cols-2 gap-4">
               <input name="company" required placeholder="Company Name" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-blue-500" />
               <input name="trade_role" required placeholder="Trade (e.g. Drywall)" className="p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-blue-500 outline-none focus:border-blue-500" />
             </div>
+
             <div className="grid grid-cols-2 gap-6">
               <div className="space-y-3">
                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Site Foreman</p>
@@ -373,14 +421,17 @@ export default function ProjectWarRoom() {
                 <input name="office_phone" placeholder="Office Phone" className="w-full p-4 bg-slate-950 rounded-xl border border-slate-800 font-bold text-white text-sm" />
               </div>
             </div>
+
             <input name="email" placeholder="Primary Email Address" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-blue-500" />
+            
             <div className="flex gap-4 pt-6">
-              <button type="button" onClick={() => setShowContactModal(false)} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black uppercase text-[10px]">Discard</button>
-              <button type="submit" className="flex-1 bg-emerald-600 text-white py-5 rounded-3xl font-black uppercase text-[10px] shadow-xl">Register Trade</button>
+              <button type="button" onClick={() => setShowContactModal(false)} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black uppercase text-[10px] tracking-widest">Discard</button>
+              <button type="submit" className="flex-1 bg-emerald-600 text-white py-5 rounded-3xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-emerald-900/30">Register Trade</button>
             </div>
           </form>
         </div>
       )}
+
     </div>
   )
 }
@@ -399,7 +450,7 @@ function DocBox({ title, icon, docs, onAdd }: { title: string, icon: any, docs: 
       <div className="flex-1 space-y-3">
         {docs.length === 0 ? (
           <div className="h-24 flex items-center justify-center border-2 border-dashed border-slate-800 rounded-2xl">
-            <p className="text-[8px] font-black text-slate-700 uppercase tracking-widest italic text-center">Awaiting Compliance Docs</p>
+            <p className="text-[8px] font-black text-slate-700 uppercase tracking-widest italic">Awaiting Docs</p>
           </div>
         ) : (
           docs.map(doc => (
