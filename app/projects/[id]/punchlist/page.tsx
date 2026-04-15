@@ -1,253 +1,213 @@
 'use client'
 
-// 1. VERCEL BUILD FIX
-export const dynamic = 'force-dynamic' 
+export const dynamic = 'force-dynamic'
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { 
-  Share2, Printer, CheckCircle2, Circle, 
-  Plus, Trash2, MapPin, HardHat, ChevronLeft,
-  Camera, Loader2, AlertTriangle
+  ChevronLeft, ClipboardList, Plus, Search, 
+  CheckCircle2, AlertCircle, Download, Filter
 } from 'lucide-react'
 
-export default function ProjectPunchList() {
+export default function MasterPunchList() {
   const { id } = useParams()
   const router = useRouter()
   
   const [project, setProject] = useState<any>(null)
-  const [items, setItems] = useState<any[]>([])
+  const [punchItems, setPunchItems] = useState<any[]>([])
   const [trades, setTrades] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [isSaving, setIsSaving] = useState(false)
-  const [uploading, setUploading] = useState(false)
+  
+  // Filters
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('Open') // Default to Open
+  const [tradeFilter, setTradeFilter] = useState('All')
 
-  const fetchData = async () => {
-    if (!id) return
-    setLoading(true)
-    const [proj, punch, contacts] = await Promise.all([
-      supabase.from('projects').select('*').eq('id', id).single(),
-      supabase.from('punch_list').select('*').eq('project_id', id).order('created_at', { ascending: false }),
-      supabase.from('project_contacts').select('id, company, trade_role').eq('project_id', id)
+  useEffect(() => {
+    async function fetchData() {
+      if (!id) return
+      
+      const [projData, punchData, tradeData] = await Promise.all([
+        supabase.from('projects').select('name').eq('id', id).single(),
+        supabase.from('punch_list').select('*').eq('project_id', id).order('created_at', { ascending: false }),
+        supabase.from('project_contacts').select('id, company').eq('project_id', id)
+      ])
+
+      if (projData.data) setProject(projData.data)
+      if (punchData.data) setPunchItems(punchData.data)
+      if (tradeData.data) setTrades(tradeData.data)
+      
+      setLoading(false)
+    }
+    fetchData()
+  }, [id])
+
+  // --- FILTERING LOGIC ---
+  const filteredItems = punchItems.filter(item => {
+    const matchesSearch = 
+      (item.description || '').toLowerCase().includes(search.toLowerCase()) ||
+      (item.location || '').toLowerCase().includes(search.toLowerCase())
+    const matchesStatus = statusFilter === 'All' || item.status === statusFilter
+    const matchesTrade = tradeFilter === 'All' || item.assigned_to === tradeFilter
+    
+    return matchesSearch && matchesStatus && matchesTrade
+  })
+
+  // --- CSV EXPORT LOGIC ---
+  const exportToCSV = () => {
+    // 1. Create CSV Headers
+    const headers = ['Status', 'Trade', 'Location', 'Description', 'Date Identified', 'Resolved Date']
+    
+    // 2. Map data to rows
+    const csvRows = filteredItems.map(item => [
+      item.status,
+      `"${item.assigned_to || 'Unassigned'}"`, // Quotes prevent commas in company names from breaking the CSV
+      `"${item.location || 'General'}"`,
+      `"${(item.description || '').replace(/"/g, '""')}"`, // Escape internal quotes
+      new Date(item.created_at).toLocaleDateString(),
+      item.resolved_at ? new Date(item.resolved_at).toLocaleDateString() : 'Pending'
     ])
-    setProject(proj.data)
-    setItems(punch.data || [])
-    setTrades(contacts.data || [])
-    setLoading(false)
-  }
 
-  useEffect(() => { fetchData() }, [id])
-
-  const handleAddPunch = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    setIsSaving(true)
-    const fd = new FormData(e.currentTarget)
+    // 3. Combine headers and rows
+    const csvContent = [headers.join(','), ...csvRows.map(e => e.join(','))].join('\n')
     
-    // 1. Handle Photo Upload First (if attached)
-    let photoUrl = null
-    const file = (e.currentTarget.elements.namedItem('photo') as HTMLInputElement).files?.[0]
+    // 4. Trigger browser download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `${project?.name?.replace(/\s+/g, '_')}_Punch_List.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  // --- QUICK TOGGLE STATUS ---
+  const toggleStatus = async (e: React.MouseEvent, item: any) => {
+    e.preventDefault() // Prevent navigating to the item detail page
+    const newStatus = item.status === 'Open' ? 'Resolved' : 'Open'
+    const resolvedAt = newStatus === 'Resolved' ? new Date().toISOString() : null
     
-    if (file) {
-      setUploading(true)
-      const path = `${id}/punch/${Date.now()}-${file.name}`
-      const { error: sErr } = await supabase.storage.from('project-files').upload(path, file)
-      if (!sErr) {
-        const { data: u } = supabase.storage.from('project-files').getPublicUrl(path)
-        photoUrl = u.publicUrl
-      }
-      setUploading(false)
-    }
-
-    // 2. Build and Save the Ticket
-    const newItem = {
-      project_id: id,
-      task: fd.get('task'),
-      location: fd.get('location'),
-      unit_number: fd.get('unit_number')?.toString().toUpperCase(), 
-      trade_assigned: fd.get('trade_assigned'),
-      priority: fd.get('priority'),
-      photo_url: photoUrl, // Attach photo URL
-      status: 'Open'
-    }
-
-    const { error } = await supabase.from('punch_list').insert([newItem])
-    if (!error) {
-      (e.target as HTMLFormElement).reset()
-      fetchData()
-    } else {
-      alert(error.message)
-    }
-    setIsSaving(false)
+    // Optimistic UI update
+    setPunchItems(prev => prev.map(p => p.id === item.id ? { ...p, status: newStatus, resolved_at: resolvedAt } : p))
+    
+    // Database update
+    await supabase.from('punch_list').update({ status: newStatus, resolved_at: resolvedAt }).eq('id', item.id)
   }
 
-  const toggleStatus = async (itemId: string, currentStatus: string) => {
-    const newStatus = currentStatus === 'Open' ? 'Resolved' : 'Open'
-    await supabase.from('punch_list').update({ status: newStatus }).eq('id', itemId)
-    setItems(items.map(i => i.id === itemId ? { ...i, status: newStatus } : i))
-  }
-
-  const handleShare = async () => {
-    const openItems = items.filter(i => i.status === 'Open')
-    if (openItems.length === 0) return alert("No open items to share.")
-
-    const shareText = `🏗️ PUNCH LIST: ${project?.name}\n` + 
-      openItems.map(i => `• [${i.unit_number || 'GEN'}] ${i.task} (${i.trade_assigned})`).join('\n')
-
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: `${project?.name} - Punch List`,
-          text: shareText,
-        })
-      } catch (e) { console.log('Share aborted') }
-    } else {
-      navigator.clipboard.writeText(shareText)
-      alert("List copied to clipboard!")
-    }
-  }
-
-  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-[0.5em]">Syncing Punch List...</div>
+  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Syncing Punch List...</div>
 
   return (
-    <div className="max-w-4xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
+    <div className="max-w-6xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
       
-      {/* HEADER SECTION */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-10 border-b-4 border-blue-600 pb-8 print:hidden">
+      {/* HEADER */}
+      <div className="mb-10 border-b-4 border-blue-600 pb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
           <button onClick={() => router.push(`/projects/${id}`)} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white transition-all">
             <ChevronLeft size={14} /> Back to War Room
           </button>
-          <h1 className="text-4xl font-black uppercase italic tracking-tighter leading-none">Punch <span className="text-blue-500">Manager</span></h1>
-          <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] mt-3">Active Deficiencies: {items.filter(i => i.status === 'Open').length}</p>
+          <h1 className="text-4xl font-black text-white tracking-tighter uppercase italic leading-none">
+            Master <span className="text-blue-500">Punch</span>
+          </h1>
+          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-3 flex items-center gap-2">
+            <ClipboardList size={14} className="text-blue-500" /> {project?.name || 'Project Audits'}
+          </p>
         </div>
         
         <div className="flex gap-3 w-full md:w-auto">
-          <button onClick={handleShare} className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-blue-600 px-6 py-4 rounded-2xl text-[10px] font-black uppercase text-white hover:bg-blue-500 transition-all shadow-xl shadow-blue-900/20">
-            <Share2 size={16} /> Share List
+          <button onClick={exportToCSV} className="flex-1 md:flex-none bg-slate-800 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all border border-slate-700 flex items-center justify-center gap-2">
+            <Download size={14} /> Export CSV
           </button>
-          <button onClick={() => window.print()} className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-slate-900 border border-slate-800 px-6 py-4 rounded-2xl text-[10px] font-black uppercase text-slate-400 hover:text-white transition-all">
-            <Printer size={16} /> Print
-          </button>
+          <Link href={`/projects/${id}/punchlist/new`} className="flex-1 md:flex-none bg-blue-600 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase shadow-lg hover:bg-blue-500 transition-all flex items-center justify-center gap-2">
+            <Plus size={14} /> Log Issue
+          </Link>
         </div>
       </div>
 
-      {/* NEW ITEM ENTRY FORM */}
-      <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 mb-10 shadow-2xl print:hidden">
-        <form onSubmit={handleAddPunch} className="space-y-4">
-          
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Deficiency Description</label>
-            <input name="task" required placeholder="e.g. Damage to corner bead at bulk head" className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl font-bold text-white outline-none focus:border-blue-500 transition-all" />
+      {/* FILTERS */}
+      <div className="flex flex-col md:flex-row gap-4 mb-8 bg-slate-900/50 p-4 rounded-[32px] border border-slate-800">
+        
+        <div className="flex-1 relative">
+          <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+          <input 
+            type="text"
+            placeholder="Search items or locations..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full bg-slate-950 border border-slate-800 p-5 pl-14 rounded-2xl text-sm font-bold focus:border-blue-500 outline-none text-white placeholder:text-slate-600"
+          />
+        </div>
+
+        <div className="flex gap-4">
+          <div className="relative flex-1 md:w-48">
+            <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+            <select 
+              value={tradeFilter}
+              onChange={(e) => setTradeFilter(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 p-5 pl-10 rounded-2xl text-[10px] font-black text-amber-500 outline-none uppercase tracking-widest appearance-none cursor-pointer"
+            >
+              <option value="All">All Trades</option>
+              {trades.map(t => <option key={t.id} value={t.company}>{t.company}</option>)}
+            </select>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Unit / Grid #</label>
-              <input name="unit_number" placeholder="204B" onInput={(e) => (e.currentTarget.value = e.currentTarget.value.toUpperCase())} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl font-black uppercase text-white outline-none focus:border-blue-500" />
-            </div>
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Area / Room</label>
-              <input name="location" placeholder="Master Ensuite" className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl font-bold text-white outline-none focus:border-blue-500" />
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Priority</label>
-              <select name="priority" className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl font-black text-xs outline-none focus:border-blue-500 appearance-none text-white h-[58px]">
-                <option value="Med" className="text-slate-400">Medium</option>
-                <option value="Urgent" className="text-red-500">Urgent</option>
-              </select>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end pt-2">
-            <div className="md:col-span-2 space-y-2">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Assign Trade</label>
-              <select name="trade_assigned" required className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl font-black uppercase text-[10px] outline-none focus:border-blue-500 h-[58px] appearance-none text-white cursor-pointer">
-                <option value="">Select Subcontractor...</option>
-                {trades.map(t => (
-                  <option key={t.id} value={t.company}>{t.company} — {t.trade_role}</option>
-                ))}
-                <option value="General">General / PM</option>
-              </select>
-            </div>
-            
-            <div className="flex items-center">
-              <label className="w-full bg-slate-800 hover:bg-slate-700 text-white font-black h-[58px] rounded-2xl uppercase text-[10px] tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2">
-                {uploading ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
-                {uploading ? 'Processing...' : 'Add Photo'}
-                <input type="file" name="photo" accept="image/jpeg,image/png,image/jpg" className="hidden" />
-              </label>
-            </div>
-
-            <button disabled={isSaving || uploading} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black h-[58px] rounded-2xl uppercase text-[10px] tracking-widest transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">
-              <Plus size={16} /> {isSaving ? 'Logging...' : 'Drop Ticket'}
-            </button>
-          </div>
-        </form>
+          <select 
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="flex-1 md:w-40 bg-slate-950 border border-slate-800 p-5 rounded-2xl text-[10px] font-black text-blue-400 outline-none uppercase tracking-widest appearance-none cursor-pointer text-center"
+          >
+            <option value="Open">🔴 Open</option>
+            <option value="Resolved">🟢 Resolved</option>
+            <option value="All">Show All</option>
+          </select>
+        </div>
       </div>
 
-      {/* THE PUNCH LIST */}
-      <div className="space-y-4">
-        {items.map((item) => (
-          <div key={item.id} className={`flex flex-col sm:flex-row gap-4 p-6 rounded-[24px] border transition-all ${item.status === 'Resolved' ? 'bg-slate-950/50 border-slate-900 opacity-50' : item.priority === 'Urgent' ? 'bg-slate-900 border-red-900/50 shadow-xl' : 'bg-slate-900 border-slate-800 shadow-xl'}`}>
-            
-            <div className="flex justify-between sm:justify-start items-start gap-4">
-              <button onClick={() => toggleStatus(item.id, item.status)} className={`mt-1 transition-transform active:scale-90 ${item.status === 'Resolved' ? 'text-emerald-500' : 'text-slate-600 hover:text-blue-500'}`}>
-                {item.status === 'Resolved' ? <CheckCircle2 size={32} /> : <Circle size={32} />}
-              </button>
-              
-              {/* Photo Thumbnail */}
-              {item.photo_url && (
-                <div className="w-16 h-16 rounded-xl overflow-hidden border border-slate-800 flex-shrink-0 hidden sm:block">
-                  <img src={item.photo_url} alt="Deficiency" className="w-full h-full object-cover" />
-                </div>
-              )}
-            </div>
-
-            <div className="flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-2 mb-2">
-                <span className="bg-blue-950/50 text-blue-400 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border border-blue-900/30">
-                  {item.unit_number || 'GEN'}
-                </span>
-                {item.priority === 'Urgent' && (
-                  <span className="flex items-center gap-1 bg-red-950/30 text-red-500 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border border-red-900/30">
-                    <AlertTriangle size={10} /> Urgent
-                  </span>
-                )}
-              </div>
-              
-              <h3 className={`text-lg font-black uppercase italic leading-tight mb-2 ${item.status === 'Resolved' ? 'line-through text-slate-600' : 'text-white'}`}>
-                {item.task}
-              </h3>
-              
-              <div className="flex flex-wrap items-center gap-4 text-[10px] font-bold uppercase text-slate-500 tracking-widest">
-                <span className="flex items-center gap-1.5"><HardHat size={12} className="text-blue-500"/> {item.trade_assigned}</span>
-                {item.location && <span className="flex items-center gap-1.5"><MapPin size={12} className="text-slate-600"/> {item.location}</span>}
-              </div>
-            </div>
-
-            <div className="flex sm:flex-col items-center justify-between sm:justify-center border-t sm:border-t-0 sm:border-l border-slate-800 pt-4 sm:pt-0 sm:pl-4 mt-2 sm:mt-0">
-               {/* Show photo thumbnail on mobile bottom row if it exists */}
-               {item.photo_url && (
-                <div className="w-10 h-10 rounded-lg overflow-hidden border border-slate-800 block sm:hidden">
-                  <img src={item.photo_url} alt="Deficiency" className="w-full h-full object-cover" />
-                </div>
-              )}
-              <button 
-                onClick={async () => { if(confirm('Permanently delete this ticket?')) { await supabase.from('punch_list').delete().eq('id', item.id); fetchData(); } }}
-                className="text-slate-700 hover:text-red-500 transition-colors p-2 rounded-lg hover:bg-slate-800 ml-auto"
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
-            
+      {/* PUNCH LIST DATA */}
+      <div className="space-y-3">
+        {filteredItems.length === 0 ? (
+          <div className="text-center py-20 border-2 border-dashed border-slate-800 rounded-[32px] text-slate-600 font-black uppercase text-[10px] tracking-widest">
+            No punch list items match this filter.
           </div>
-        ))}
+        ) : (
+          filteredItems.map(item => (
+            <Link href={`/projects/${id}/punchlist/${item.id}`} key={item.id} className="block group">
+              <div className={`bg-slate-900 p-5 rounded-[24px] border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 hover:scale-[1.01] ${
+                item.status === 'Resolved' ? 'border-emerald-900/30 opacity-75 hover:opacity-100' : 'border-slate-800 hover:border-blue-500'
+              }`}>
+                
+                {/* QUICK TOGGLE BUTTON */}
+                <button 
+                  onClick={(e) => toggleStatus(e, item)}
+                  className={`hidden md:flex flex-shrink-0 w-12 h-12 rounded-full border-2 items-center justify-center transition-all ${
+                    item.status === 'Resolved' ? 'bg-emerald-500/20 border-emerald-500 text-emerald-500' : 'bg-slate-950 border-slate-700 text-slate-700 hover:border-blue-500 hover:text-blue-500'
+                  }`}
+                >
+                  {item.status === 'Resolved' ? <CheckCircle2 size={24} /> : <div className="w-4 h-4 rounded-full border-2 border-current" />}
+                </button>
 
-        {items.length === 0 && (
-          <div className="text-center py-20 border-2 border-dashed border-slate-800 rounded-[32px]">
-            <p className="text-[10px] font-black text-slate-600 uppercase tracking-[0.4em] italic">No Deficiencies Logged</p>
-          </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="text-[9px] font-black px-2 py-1 rounded bg-slate-950 text-amber-500 uppercase tracking-widest border border-slate-800">
+                      {item.assigned_to || 'Unassigned'}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-500 italic">📍 {item.location || 'General Site'}</span>
+                  </div>
+                  <h3 className={`text-lg font-black uppercase tracking-tight ${item.status === 'Resolved' ? 'text-slate-400 line-through' : 'text-white'}`}>
+                    {item.description}
+                  </h3>
+                </div>
+
+                <div className="flex md:flex-col justify-between items-center md:items-end text-[9px] font-black uppercase tracking-widest text-slate-500">
+                  <span>Found: {new Date(item.created_at).toLocaleDateString()}</span>
+                  {item.status === 'Resolved' && <span className="text-emerald-500">Fixed: {new Date(item.resolved_at).toLocaleDateString()}</span>}
+                </div>
+
+              </div>
+            </Link>
+          ))
         )}
       </div>
 

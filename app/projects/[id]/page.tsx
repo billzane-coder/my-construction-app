@@ -167,6 +167,13 @@ export default function ProjectWarRoom() {
             <div className="text-left"><p className="text-[8px] font-black text-slate-500 uppercase">RFIs</p><p className="text-xs font-black uppercase text-white">{rfiCount}</p></div>
           </Link>
         </div>
+        <Link href={`/projects/${id}/incidents`} className="flex items-center gap-3 bg-slate-900 border border-slate-800 px-6 py-4 rounded-3xl hover:border-orange-500 transition-all shadow-xl">
+  <ShieldCheck size={18} className="text-orange-500" />
+  <div className="text-left">
+    <p className="text-[8px] font-black text-slate-500 uppercase">Incidents</p>
+    <p className="text-xs font-black uppercase text-white">View Log</p>
+  </div>
+</Link>
       </div>
 
       {/* PRIMARY TAB SYSTEM */}

@@ -3,7 +3,10 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
-import { ZoomIn, ZoomOut, Maximize } from 'lucide-react'
+import { 
+  ZoomIn, ZoomOut, Maximize, Link as LinkIcon, 
+  Paperclip, ChevronLeft, Save, Trash2, X, Info 
+} from 'lucide-react'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
 
@@ -27,10 +30,12 @@ export default function ProPlanViewer() {
   const [plan, setPlan] = useState<any>(null)
   const [planVersions, setPlanVersions] = useState<any[]>([])
   const [markups, setMarkups] = useState<any[]>([])
+  const [openSubmittals, setOpenSubmittals] = useState<any[]>([])
   
   const [activeTool, setActiveTool] = useState<Tool>('select')
-  const [viewMode, setViewMode] = useState<'clean' | 'marked'>('clean')
+  const [viewMode, setViewMode] = useState<'clean' | 'marked'>('marked')
   const [loading, setLoading] = useState(true)
+  const [showLinkModal, setShowLinkModal] = useState(false)
   
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [interaction, setInteraction] = useState<Interaction>(null)
@@ -41,26 +46,31 @@ export default function ProPlanViewer() {
 
   useEffect(() => {
     async function init() {
+      if (!planId) return
       const { data: p } = await supabase.from('project_documents').select('*').eq('id', planId).single()
-      const [versions, m] = await Promise.all([
-        supabase.from('project_documents').select('id, revision_number').eq('title', p.title).eq('project_id', id).order('created_at', { ascending: false }),
-        supabase.from('plan_markups').select('*').eq('plan_id', planId)
+      
+      const [versions, m, subs] = await Promise.all([
+        supabase.from('project_documents').select('id, revision_number').eq('title', p?.title).eq('project_id', id).order('created_at', { ascending: false }),
+        supabase.from('plan_markups').select('*').eq('plan_id', planId),
+        supabase.from('project_submittals').select('id, title').eq('project_id', id)
       ])
       
-      setPlan(p); setPlanVersions(versions.data || []); setMarkups(m.data || []); setLoading(false)
+      setPlan(p); 
+      setPlanVersions(versions.data || []); 
+      setMarkups(m.data || []); 
+      setOpenSubmittals(subs.data || []);
+      setLoading(false)
     }
     init()
   }, [planId, id])
 
-  useEffect(() => {
-    const handleKeyDown = async (e: KeyboardEvent) => {
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId && activeTool === 'select') {
-        await deleteMarkup(selectedId)
-      }
+  const linkDrawingToSubmittal = async (subId: string) => {
+    const { error } = await supabase.from('project_submittals').update({ linked_document_id: planId }).eq('id', subId)
+    if (!error) {
+      alert("Drawing linked to submittal successfully.")
+      setShowLinkModal(false)
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedId, activeTool])
+  }
 
   const deleteMarkup = async (markupId: string) => {
     await supabase.from('plan_markups').delete().eq('id', markupId)
@@ -152,15 +162,15 @@ export default function ProPlanViewer() {
 
   const canPan = viewMode === 'clean' || (activeTool === 'select' && !interaction)
 
-  if (loading) return <div className="h-screen bg-slate-950 flex items-center justify-center font-black text-blue-500 animate-pulse tracking-widest uppercase">Rendering Vault...</div>
+  if (loading) return <div className="h-screen bg-slate-950 flex items-center justify-center font-black text-blue-500 animate-pulse uppercase tracking-widest">Rendering Vault...</div>
 
   return (
     <div className="h-screen w-screen bg-slate-900 flex flex-col overflow-hidden print:bg-white print:h-auto print:overflow-visible">
       
+      {/* TOOLBAR */}
       <div className="bg-slate-950 border-b border-slate-800 p-4 flex flex-wrap justify-between items-center z-50 shadow-2xl print:hidden gap-4">
         <div className="flex gap-4 items-center">
           <button onClick={() => router.back()} className="px-4 py-2 text-slate-500 hover:text-white font-black text-[10px] uppercase transition-all">← Exit</button>
-          <div className="h-8 w-[1px] bg-slate-800" />
           
           <select value={planId as string} onChange={(e) => router.push(`/projects/${id}/viewer/${e.target.value}`)} className="bg-slate-900 border border-slate-700 text-white font-black text-[10px] uppercase px-4 py-2 rounded-xl outline-none">
             {planVersions.map(v => <option key={v.id} value={v.id}>{plan?.title} - {v.revision_number}</option>)}
@@ -188,27 +198,30 @@ export default function ProPlanViewer() {
         )}
 
         <div className="flex gap-3 items-center">
+          <button onClick={() => setShowLinkModal(true)} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 shadow-lg">
+            <Paperclip size={14} /> Link to Submittal
+          </button>
           <button onClick={() => window.print()} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all border border-slate-700">
             Export PDF
           </button>
         </div>
       </div>
 
+      {/* VIEWPORT AREA */}
       <div className="flex-1 relative overflow-hidden bg-slate-800 select-none print:bg-white print:overflow-visible">
         
-<TransformWrapper
-  initialScale={1}
-  minScale={0.5}
-  maxScale={6}
-  panning={{ disabled: !canPan }} 
-  wheel={{ step: 0.05 }} 
-  doubleClick={{ disabled: true }}
-  centerOnInit={true}
->
+        <TransformWrapper
+          initialScale={1}
+          minScale={0.1}
+          maxScale={10}
+          panning={{ disabled: !canPan }} 
+          wheel={{ step: 0.01 }} // Granular zoom for precision control
+          doubleClick={{ disabled: true }}
+          centerOnInit={true}
+        >
           {({ zoomIn, zoomOut, resetTransform }) => (
             <>
               <div className="absolute bottom-6 right-6 z-50 flex flex-col gap-2 print:hidden">
-                {/* BUTTONS NOW HARD-CODED TO EXACTLY 25% JUMPS */}
                 <button onClick={() => zoomIn(0.25)} className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-slate-300 hover:text-white hover:border-blue-500 shadow-xl transition-all"><ZoomIn size={20}/></button>
                 <button onClick={() => zoomOut(0.25)} className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-slate-300 hover:text-white hover:border-blue-500 shadow-xl transition-all"><ZoomOut size={20}/></button>
                 <button onClick={() => resetTransform()} className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-slate-300 hover:text-white hover:border-blue-500 shadow-xl transition-all mt-2"><Maximize size={18}/></button>
@@ -281,6 +294,28 @@ export default function ProPlanViewer() {
         </TransformWrapper>
       </div>
 
+      {/* SUBMITTAL LINKING MODAL */}
+      {showLinkModal && (
+        <div className="fixed inset-0 bg-slate-950/90 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="bg-slate-900 border-2 border-amber-600 p-8 rounded-[40px] max-w-lg w-full space-y-6 shadow-2xl">
+            <h2 className="text-2xl font-black text-white uppercase italic text-center">Attach to Submittal</h2>
+            <p className="text-[10px] font-black text-slate-500 uppercase text-center tracking-widest">Link this markup to an existing approval item.</p>
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+              {openSubmittals.length > 0 ? openSubmittals.map(s => (
+                <button key={s.id} onClick={() => linkDrawingToSubmittal(s.id)} className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl text-left font-bold text-white hover:border-amber-500 transition-all flex items-center justify-between group">
+                  <span className="truncate">{s.title}</span>
+                  <LinkIcon size={14} className="text-slate-600 group-hover:text-amber-500" />
+                </button>
+              )) : (
+                <div className="p-4 text-center text-slate-600 text-xs font-bold uppercase">No submittals found for this project</div>
+              )}
+            </div>
+            <button onClick={() => setShowLinkModal(false)} className="w-full bg-slate-800 py-4 rounded-2xl font-black text-white uppercase text-[10px] tracking-widest hover:bg-slate-700">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* PRINT STYLES - REMOVED TRANSFORM RESET TO CAPTURE CURRENT ZOOM */}
       <style jsx global>{`
         @media print {
           @page { margin: 0; size: auto; }
@@ -288,13 +323,19 @@ export default function ProPlanViewer() {
           .print\\:hidden { display: none !important; }
           .print\\:bg-white { background: white !important; }
           
-          .react-transform-wrapper, .react-transform-component {
-            transform: none !important;
-            width: 100% !important;
-            height: auto !important;
+          /* Allow the browser to capture the current transform/zoom level */
+          .react-transform-wrapper {
             overflow: visible !important;
           }
+          .react-transform-component {
+            width: 100% !important;
+            height: auto !important;
+          }
         }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #020617; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
       `}</style>
     </div>
   )

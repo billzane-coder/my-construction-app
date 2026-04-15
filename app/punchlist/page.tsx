@@ -1,199 +1,226 @@
 'use client'
 
-// 1. VERCEL BUILD FIX
 export const dynamic = 'force-dynamic'
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import { 
-  CheckCircle2, AlertCircle, Clock, 
-  Search, Filter, Plus, ChevronRight, 
-  HardHat, MapPin, Loader2, ArrowLeft
+  ClipboardList, Search, CheckCircle2, 
+  Download, Filter, Building2
 } from 'lucide-react'
 
-export default function GlobalPunchManager() {
-  const [tickets, setTickets] = useState<any[]>([])
+export default function GlobalPunchList() {
+  const [punchItems, setPunchItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  
+  // Derived filter options
+  const [uniqueProjects, setUniqueProjects] = useState<string[]>([])
+  const [uniqueTrades, setUniqueTrades] = useState<string[]>([])
+  
+  // Active Filters
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('All')
-  const [priorityFilter, setPriorityFilter] = useState('All')
-
-  // Fetch ALL tickets across ALL projects
-  const fetchTickets = async () => {
-    setLoading(true)
-    const { data, error } = await supabase
-      .from('punch_list')
-      .select(`
-        *,
-        projects (name)
-      `)
-      .order('created_at', { ascending: false })
-
-    if (!error && data) {
-      setTickets(data)
-    }
-    setLoading(false)
-  }
+  const [statusFilter, setStatusFilter] = useState('Open')
+  const [projectFilter, setProjectFilter] = useState('All')
+  const [tradeFilter, setTradeFilter] = useState('All')
 
   useEffect(() => {
-    fetchTickets()
+    async function fetchGlobalData() {
+      // Fetch all punch items and join the project name
+      const { data } = await supabase
+        .from('punch_list')
+        .select('*, projects(name)')
+        .order('created_at', { ascending: false })
+
+      if (data) {
+        setPunchItems(data)
+        
+        // Extract unique project names and trades for the dropdowns
+        const projects = Array.from(new Set(data.map(item => item.projects?.name).filter(Boolean))) as string[]
+        const trades = Array.from(new Set(data.map(item => item.assigned_to).filter(Boolean))) as string[]
+        
+        setUniqueProjects(projects)
+        setUniqueTrades(trades)
+      }
+      setLoading(false)
+    }
+    fetchGlobalData()
   }, [])
 
-  // Filtering Logic
-  const filteredTickets = tickets.filter(t => {
+  // --- FILTERING LOGIC ---
+  const filteredItems = punchItems.filter(item => {
     const matchesSearch = 
-      (t.description || '').toLowerCase().includes(search.toLowerCase()) ||
-      (t.task || '').toLowerCase().includes(search.toLowerCase()) ||
-      (t.location || '').toLowerCase().includes(search.toLowerCase()) ||
-      (t.projects?.name || '').toLowerCase().includes(search.toLowerCase())
+      (item.description || '').toLowerCase().includes(search.toLowerCase()) ||
+      (item.location || '').toLowerCase().includes(search.toLowerCase())
+    const matchesStatus = statusFilter === 'All' || item.status === statusFilter
+    const matchesProject = projectFilter === 'All' || item.projects?.name === projectFilter
+    const matchesTrade = tradeFilter === 'All' || item.assigned_to === tradeFilter
     
-    const matchesStatus = statusFilter === 'All' || t.status === statusFilter
-    const matchesPriority = priorityFilter === 'All' || t.priority === priorityFilter
-    
-    return matchesSearch && matchesStatus && matchesPriority
+    return matchesSearch && matchesStatus && matchesProject && matchesTrade
   })
 
-  // Quick stats for the top bar
-  const openCount = tickets.filter(t => t.status !== 'Resolved').length
-  const urgentCount = tickets.filter(t => t.priority === 'Urgent' && t.status !== 'Resolved').length
+  // --- CSV EXPORT LOGIC (Cross-Project) ---
+  const exportToCSV = () => {
+    const headers = ['Project', 'Status', 'Trade', 'Location', 'Description', 'Date Identified', 'Resolved Date']
+    
+    const csvRows = filteredItems.map(item => [
+      `"${item.projects?.name || 'Unknown Project'}"`,
+      item.status,
+      `"${item.assigned_to || 'Unassigned'}"`,
+      `"${item.location || 'General'}"`,
+      `"${(item.description || '').replace(/"/g, '""')}"`,
+      new Date(item.created_at).toLocaleDateString(),
+      item.resolved_at ? new Date(item.resolved_at).toLocaleDateString() : 'Pending'
+    ])
+
+    const csvContent = [headers.join(','), ...csvRows.map(e => e.join(','))].join('\n')
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `Global_Punch_List_${new Date().toISOString().split('T')[0]}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  // --- QUICK TOGGLE STATUS ---
+  const toggleStatus = async (e: React.MouseEvent, item: any) => {
+    e.preventDefault() 
+    const newStatus = item.status === 'Open' ? 'Resolved' : 'Open'
+    const resolvedAt = newStatus === 'Resolved' ? new Date().toISOString() : null
+    
+    // Optimistic UI update
+    setPunchItems(prev => prev.map(p => p.id === item.id ? { ...p, status: newStatus, resolved_at: resolvedAt } : p))
+    
+    // Database update
+    await supabase.from('punch_list').update({ status: newStatus, resolved_at: resolvedAt }).eq('id', item.id)
+  }
+
+  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Compiling Global Records...</div>
 
   return (
-    <div className="max-w-7xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
+    <div className="max-w-6xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
       
       {/* HEADER */}
-      <div className="mb-10 border-b-4 border-blue-600 pb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+      <div className="mb-10 border-b-4 border-blue-600 pb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mt-4">
         <div>
-          <Link href="/dashboard" className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white transition-all">
-            <ArrowLeft size={14} /> Back to Command Center
-          </Link>
-          <h1 className="text-5xl font-black text-white tracking-tighter uppercase italic leading-none">
-            Master <span className="text-blue-500">Punch</span>
+          <h1 className="text-4xl font-black text-white tracking-tighter uppercase italic leading-none">
+            Global <span className="text-blue-500">Punch</span>
           </h1>
           <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-3 flex items-center gap-2">
-            <AlertCircle size={14} className="text-blue-500" /> Global Portfolio Deficiencies
+            <ClipboardList size={14} className="text-blue-500" /> Executive Overview
           </p>
         </div>
-      </div>
-
-      {/* QUICK STATS */}
-      <div className="grid grid-cols-2 gap-4 mb-10">
-        <div className="bg-slate-900/50 p-6 md:p-8 rounded-[32px] border border-slate-800 flex items-center justify-between shadow-xl">
-          <div>
-            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Open Issues</p>
-            <p className="text-5xl font-black text-white tracking-tighter">{openCount}</p>
-          </div>
-          <AlertCircle size={40} className="text-blue-500/50 hidden md:block" />
-        </div>
-        <div className="bg-slate-900/50 p-6 md:p-8 rounded-[32px] border border-red-900/30 flex items-center justify-between shadow-xl">
-          <div>
-            <p className="text-[9px] font-black text-red-500/70 uppercase tracking-widest mb-1">Urgent Action</p>
-            <p className="text-5xl font-black text-red-500 tracking-tighter">{urgentCount}</p>
-          </div>
-          <Clock size={40} className="text-red-500/50 hidden md:block animate-pulse" />
+        
+        <div className="flex gap-3 w-full md:w-auto">
+          <button onClick={exportToCSV} className="flex-1 md:flex-none bg-blue-600 text-white text-[10px] font-black px-8 py-4 rounded-2xl uppercase shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-all flex items-center justify-center gap-2">
+            <Download size={14} /> Export Master CSV
+          </button>
         </div>
       </div>
 
-      {/* SEARCH & FILTERS */}
-      <div className="flex flex-col md:flex-row gap-4 mb-10">
+      {/* FILTERS */}
+      <div className="flex flex-col lg:flex-row gap-4 mb-8 bg-slate-900/50 p-4 rounded-[32px] border border-slate-800">
+        
         <div className="flex-1 relative">
-          <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-600" size={18} />
+          <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
           <input 
             type="text"
-            placeholder="Search by site, unit, or description..."
+            placeholder="Search items or locations..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-800 p-6 pl-14 rounded-[28px] text-sm font-bold focus:border-blue-500 outline-none transition-all placeholder:text-slate-600 shadow-lg"
+            className="w-full bg-slate-950 border border-slate-800 p-5 pl-14 rounded-2xl text-sm font-bold focus:border-blue-500 outline-none text-white placeholder:text-slate-600"
           />
         </div>
-        <div className="flex gap-4">
+
+        <div className="flex flex-wrap md:flex-nowrap gap-4">
+          
+          <div className="relative flex-1 md:w-48">
+            <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+            <select 
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 p-5 pl-10 rounded-2xl text-[10px] font-black text-white outline-none uppercase tracking-widest appearance-none cursor-pointer"
+            >
+              <option value="All">All Projects</option>
+              {uniqueProjects.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+
+          <div className="relative flex-1 md:w-40">
+            <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+            <select 
+              value={tradeFilter}
+              onChange={(e) => setTradeFilter(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 p-5 pl-10 rounded-2xl text-[10px] font-black text-amber-500 outline-none uppercase tracking-widest appearance-none cursor-pointer"
+            >
+              <option value="All">All Trades</option>
+              {uniqueTrades.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+
           <select 
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="bg-slate-900 border border-slate-800 p-6 rounded-[28px] text-[10px] font-black text-blue-400 outline-none uppercase tracking-widest cursor-pointer hover:border-blue-500 transition-all appearance-none text-center min-w-[140px] shadow-lg"
+            className="flex-1 md:w-36 bg-slate-950 border border-slate-800 p-5 rounded-2xl text-[10px] font-black text-blue-400 outline-none uppercase tracking-widest appearance-none cursor-pointer text-center"
           >
-            <option value="All">All Status</option>
-            <option value="Open">Open</option>
-            <option value="Resolved">Resolved</option>
-          </select>
-          <select 
-            value={priorityFilter}
-            onChange={(e) => setPriorityFilter(e.target.value)}
-            className="bg-slate-900 border border-slate-800 p-6 rounded-[28px] text-[10px] font-black text-blue-400 outline-none uppercase tracking-widest cursor-pointer hover:border-blue-500 transition-all appearance-none text-center min-w-[140px] shadow-lg"
-          >
-            <option value="All">All Priority</option>
-            <option value="Urgent">Urgent</option>
-            <option value="Med">Medium</option>
+            <option value="Open">🔴 Open</option>
+            <option value="Resolved">🟢 Resolved</option>
+            <option value="All">Show All</option>
           </select>
         </div>
       </div>
 
-      {/* TICKET LIST */}
-      {loading ? (
-        <div className="flex flex-col items-center justify-center py-20 gap-4">
-          <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
-          <p className="text-slate-500 font-black uppercase tracking-widest text-[10px]">Syncing Global Data...</p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {filteredTickets.length === 0 ? (
-            <div className="text-center py-20 border-2 border-dashed border-slate-800 rounded-[32px] text-slate-600 font-black uppercase text-[10px] tracking-widest">
-              No tickets match your filters.
-            </div>
-          ) : (
-            filteredTickets.map(ticket => (
-              <Link href={`/punchlist/${ticket.id}`} key={ticket.id} className="block group">
-                <div className={`bg-slate-900 p-6 md:p-8 rounded-[32px] border transition-all shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6 hover:scale-[1.01] ${
-                  ticket.status === 'Resolved' ? 'border-emerald-900/30 opacity-60' : 
-                  ticket.priority === 'Urgent' ? 'border-red-900/50 hover:border-red-500' : 
-                  'border-slate-800 hover:border-blue-500'
-                }`}>
-                  
-                  {/* Left Block: Core Info */}
-                  <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-3 mb-4">
-                      <span className={`text-[9px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest ${
-                        ticket.status === 'Resolved' ? 'bg-emerald-950 text-emerald-500' : 'bg-slate-800 text-slate-400'
-                      }`}>
-                        {ticket.status}
-                      </span>
-                      {ticket.priority === 'Urgent' && (
-                        <span className="text-[9px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest bg-red-950/30 text-red-500 border border-red-900/50">
-                          Urgent
-                        </span>
-                      )}
-                      <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-1 bg-blue-950/30 px-3 py-1.5 rounded-lg border border-blue-900/30">
-                        {ticket.projects?.name || 'Unknown Site'}
-                      </span>
-                    </div>
-                    
-                    <h3 className={`text-xl md:text-2xl font-black uppercase italic tracking-tighter leading-tight ${ticket.status === 'Resolved' ? 'line-through text-slate-500' : 'text-white'}`}>
-                      {ticket.task || ticket.description}
-                    </h3>
-                  </div>
+      {/* PUNCH LIST DATA */}
+      <div className="space-y-3">
+        {filteredItems.length === 0 ? (
+          <div className="text-center py-20 border-2 border-dashed border-slate-800 rounded-[32px] text-slate-600 font-black uppercase text-[10px] tracking-widest">
+            No punch items match your filters.
+          </div>
+        ) : (
+          filteredItems.map(item => (
+            <Link href={`/projects/${item.project_id}/punchlist/${item.id}`} key={item.id} className="block group">
+              <div className={`bg-slate-900 p-5 rounded-[24px] border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 hover:scale-[1.01] ${
+                item.status === 'Resolved' ? 'border-emerald-900/30 opacity-75 hover:opacity-100' : 'border-slate-800 hover:border-blue-500'
+              }`}>
+                
+                {/* QUICK TOGGLE BUTTON */}
+                <button 
+                  onClick={(e) => toggleStatus(e, item)}
+                  className={`hidden md:flex flex-shrink-0 w-12 h-12 rounded-full border-2 items-center justify-center transition-all ${
+                    item.status === 'Resolved' ? 'bg-emerald-500/20 border-emerald-500 text-emerald-500' : 'bg-slate-950 border-slate-700 text-slate-700 hover:border-blue-500 hover:text-blue-500'
+                  }`}
+                >
+                  {item.status === 'Resolved' ? <CheckCircle2 size={24} /> : <div className="w-4 h-4 rounded-full border-2 border-current" />}
+                </button>
 
-                  {/* Middle Block: Details */}
-                  <div className="flex flex-col gap-3 md:w-64 border-t md:border-t-0 md:border-l border-slate-800 pt-4 md:pt-0 md:pl-8">
-                    <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                      <MapPin size={14} className="text-blue-500" /> {ticket.unit_number ? `Unit ${ticket.unit_number}` : (ticket.location || 'Site Wide')}
-                    </div>
-                    <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                      <HardHat size={14} className="text-blue-500" /> {ticket.trade_assigned || 'Unassigned'}
-                    </div>
+                <div className="flex-1">
+                  <div className="flex items-center flex-wrap gap-2 mb-2">
+                    <span className="text-[9px] font-black px-2 py-1 rounded bg-blue-950 text-blue-400 uppercase tracking-widest border border-blue-900/50">
+                      {item.projects?.name || 'Unknown Project'}
+                    </span>
+                    <span className="text-[9px] font-black px-2 py-1 rounded bg-slate-950 text-amber-500 uppercase tracking-widest border border-slate-800">
+                      {item.assigned_to || 'Unassigned'}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-500 italic ml-1">📍 {item.location || 'General Site'}</span>
                   </div>
-
-                  {/* Right Block: Action */}
-                  <div className="hidden md:flex items-center justify-end w-12">
-                    <div className="w-12 h-12 rounded-full bg-slate-950 border border-slate-800 flex items-center justify-center group-hover:bg-blue-600 group-hover:border-blue-500 transition-all">
-                      <ChevronRight size={18} className="text-slate-500 group-hover:text-white" />
-                    </div>
-                  </div>
+                  <h3 className={`text-lg font-black uppercase tracking-tight ${item.status === 'Resolved' ? 'text-slate-400 line-through' : 'text-white'}`}>
+                    {item.description}
+                  </h3>
                 </div>
-              </Link>
-            ))
-          )}
-        </div>
-      )}
+
+                <div className="flex md:flex-col justify-between items-center md:items-end text-[9px] font-black uppercase tracking-widest text-slate-500">
+                  <span>Found: {new Date(item.created_at).toLocaleDateString()}</span>
+                  {item.status === 'Resolved' && <span className="text-emerald-500">Fixed: {new Date(item.resolved_at).toLocaleDateString()}</span>}
+                </div>
+
+              </div>
+            </Link>
+          ))
+        )}
+      </div>
 
     </div>
   )
