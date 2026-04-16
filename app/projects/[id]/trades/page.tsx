@@ -168,13 +168,46 @@ export default function TradeHub() {
         <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <form onSubmit={async (e) => {
             e.preventDefault(); 
-            const fd = new FormData(e.currentTarget);
-            const { error } = await supabase.from('project_contacts').insert([{ 
-              project_id: id, company: fd.get('company'), trade_role: fd.get('trade_role'), 
-              foreman_name: fd.get('foreman_name'), foreman_phone: fd.get('foreman_phone'),
-              office_name: fd.get('office_name'), office_phone: fd.get('office_phone'), email: fd.get('email')
-            }]);
-            if (!error) { setShowContactModal(false); fetchData(); }
+            
+            try {
+              const fd = new FormData(e.currentTarget);
+              
+              // 1. Build the payload
+              const payload = { 
+                project_id: id, 
+                company: fd.get('company'), 
+                trade_role: fd.get('trade_role'), 
+                foreman_name: fd.get('foreman_name'), 
+                foreman_phone: fd.get('foreman_phone'),
+                office_name: fd.get('office_name'), 
+                office_phone: fd.get('office_phone'), 
+                email: fd.get('email')
+              };
+
+              console.log("Attempting to save payload:", payload);
+
+              // 2. Fire the insert
+              const { data, error } = await supabase
+                .from('project_contacts')
+                .insert([payload])
+                .select(); 
+
+              // 3. Handle the response
+              if (error) {
+                console.error("SUPABASE ERROR:", error.message, error.details, error.hint);
+                alert(`Save failed: ${error.message}`); 
+                return; 
+              }
+
+              // Success
+              console.log("Save successful!", data);
+              setShowContactModal(false); 
+              fetchData();
+
+            } catch (err) {
+              console.error("Total crash during save:", err);
+              alert("Something broke before reaching Supabase. Check console.");
+            }
           }} className="bg-slate-900 border-2 border-emerald-600 p-10 rounded-[56px] max-w-2xl w-full space-y-6 shadow-2xl overflow-y-auto max-h-[90vh]">
             <h2 className="text-2xl font-black text-white uppercase italic text-center">New Trade Registration</h2>
             <div className="grid grid-cols-2 gap-4">
