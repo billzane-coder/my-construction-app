@@ -227,4 +227,63 @@ export default function TradeHub() {
               <div className="space-y-3">
                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Office / PM</p>
                 <input name="office_name" placeholder="Contact Name" className="w-full p-4 bg-slate-950 rounded-xl border border-slate-800 font-bold text-white text-sm outline-none focus:border-blue-500" />
-                <input name="office_phone" placeholder="Office Phone" className="w-full p-4 bg-slate-950 rounded-xl border border
+                <input name="office_phone" placeholder="Office Phone" className="w-full p-4 bg-slate-950 rounded-xl border border-slate-800 font-bold text-white text-sm outline-none focus:border-blue-500" />
+              </div>
+            </div>
+            <input name="email" placeholder="Primary Email Address" className="w-full p-5 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-blue-500" />
+            <div className="flex gap-4 pt-6">
+              <button type="button" onClick={() => setShowContactModal(false)} className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-5 rounded-3xl font-black uppercase text-[10px] tracking-widest transition-all">Cancel</button>
+              <button type="submit" className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-5 rounded-3xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-emerald-900/30 transition-all">Register Trade</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showSubmittalModal.show && (
+        <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            const file = (e.currentTarget.elements.namedItem('file') as HTMLInputElement).files?.[0];
+            const title = fd.get('title') as string;
+            if (file && title && showSubmittalModal.contactId) {
+              handleUploadDoc(file, showSubmittalModal.contactId, showSubmittalModal.category, title);
+            }
+          }} className="bg-slate-900 border-2 border-blue-600 p-8 rounded-[40px] max-w-md w-full space-y-6 shadow-2xl">
+            <h2 className="text-2xl font-black text-white uppercase italic text-center">Vault New {showSubmittalModal.category}</h2>
+            <input name="title" required placeholder="Document Name" className="w-full p-4 bg-slate-950 border border-slate-800 rounded-xl font-bold text-white outline-none focus:border-blue-500" />
+            <input name="file" type="file" required className="w-full text-xs text-slate-500 file:bg-slate-800 file:text-white file:px-4 file:py-2 file:rounded-xl file:border-0 cursor-pointer" />
+            <div className="flex gap-4">
+              <button type="button" onClick={() => setShowSubmittalModal({show: false, contactId: null, category: 'Submittal'})} className="flex-1 bg-slate-800 py-4 rounded-2xl font-black text-white uppercase text-[10px] hover:bg-slate-700">Cancel</button>
+              <button type="submit" disabled={uploading} className="flex-1 bg-blue-600 py-4 rounded-2xl font-black text-white uppercase text-[10px] disabled:opacity-50 hover:bg-blue-500">{uploading ? 'Uploading...' : 'Upload'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+    </div>
+  )
+}
+
+function DocBox({ title, icon, docs, onAdd }: any) {
+  return (
+    <div className="bg-slate-950/50 p-6 rounded-[32px] border border-slate-800 flex flex-col h-full shadow-lg">
+      <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-3">
+        <h5 className="text-[9px] font-black uppercase tracking-widest flex items-center gap-2 text-slate-400">
+          {icon} {title}
+        </h5>
+        <button onClick={onAdd} className="bg-blue-600 text-white p-1.5 rounded-lg hover:scale-110 transition-all shadow-lg"><Plus size={12} /></button>
+      </div>
+      <div className="space-y-2 flex-1">
+        {docs.length === 0 ? <p className="text-[8px] font-black text-slate-700 uppercase italic text-center py-4">Awaiting Files</p> :
+          docs.map((doc: any) => (
+            <a href={doc.url} target="_blank" key={doc.id} rel="noreferrer" className="block bg-slate-900 p-2.5 rounded-xl border border-slate-800 flex justify-between items-center hover:border-blue-500 transition-all group">
+              <span className="text-[10px] font-bold text-white uppercase truncate pr-2 group-hover:text-blue-400">{doc.title}</span>
+              <ExternalLink size={12} className="text-slate-500 group-hover:text-blue-400" />
+            </a>
+          ))
+        }
+      </div>
+    </div>
+  )
+}
