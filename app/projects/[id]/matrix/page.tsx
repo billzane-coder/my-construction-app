@@ -113,11 +113,18 @@ export default function InspectionMatrix() {
     if (!activeCell) return
     setSaving(true)
     
-    await supabase.from('project_inspections')
+    const { error } = await supabase.from('project_inspections')
       .update({ status: newStatus, notes: activeCell.notes })
       .eq('project_id', id)
       .eq('unit_name', activeCell.unit)
       .eq('inspection_type', activeCell.phase)
+
+    // ERROR CATCHER: Alerts if Supabase rejects the new status/phase due to an ENUM constraint
+    if (error) {
+      alert(`Save Failed: ${error.message}\n\nPlease change 'inspection_type' to TEXT in your Supabase table settings.`)
+      setSaving(false)
+      return
+    }
       
     if (newStatus === 'Pass' || newStatus === 'Fail') {
       const today = new Date().toISOString().split('T')[0]
@@ -334,70 +341,74 @@ export default function InspectionMatrix() {
       )}
 
       <div className="bg-slate-900 rounded-[32px] border border-slate-800 shadow-2xl w-full relative z-0">
-        <div className="overflow-x-auto custom-scrollbar p-1 pb-6 bg-slate-950 w-full rounded-[32px]">
-          <table className="w-full text-left border-collapse min-w-max">
-            <thead className="bg-slate-950 sticky top-0 z-10 shadow-sm border-b border-slate-800">
-              <tr>
-                <th className="p-3 md:p-5 font-black text-[10px] text-slate-500 uppercase tracking-widest border-r border-slate-800 min-w-[120px] max-w-[140px] md:min-w-[200px] md:max-w-none sticky left-0 bg-slate-950 z-20 shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)]">
-                  Unit / Lot
-                </th>
-                {INSPECTION_PHASES.map((phase, i) => (
-                  <th key={i} className="p-4 font-black text-[10px] text-slate-400 uppercase tracking-wider border-r border-slate-800 min-w-[140px] text-center">
-                    {phase}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            
-            <tbody className="divide-y divide-slate-800/50">
-              {units.length === 0 && (
+        {/* THIS WRAPPER FORCES THE SCROLL */}
+        <div className="w-full overflow-x-auto custom-scrollbar p-1 pb-6 bg-slate-950 rounded-[32px]">
+          {/* BRUTE FORCE WIDTH: Ensures the table is always wide enough to scroll */}
+          <div className="min-w-[1400px]">
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-slate-950 sticky top-0 z-10 shadow-sm border-b border-slate-800">
                 <tr>
-                  <td colSpan={INSPECTION_PHASES.length + 1} className="p-12 text-center text-[10px] font-black uppercase tracking-widest text-slate-600">
-                    No units added to matrix.
-                  </td>
+                  <th className="p-5 font-black text-[10px] text-slate-500 uppercase tracking-widest border-r border-slate-800 min-w-[150px] sticky left-0 bg-slate-950 z-20 shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)]">
+                    Unit / Lot
+                  </th>
+                  {INSPECTION_PHASES.map((phase, i) => (
+                    <th key={i} className="p-4 font-black text-[10px] text-slate-400 uppercase tracking-wider border-r border-slate-800 min-w-[140px] text-center">
+                      {phase}
+                    </th>
+                  ))}
                 </tr>
-              )}
+              </thead>
               
-              {units.map((unit) => (
-                <tr key={unit} className="hover:bg-slate-800/20 transition-colors group">
-                  <td className="p-3 md:p-5 font-black text-white text-xs md:text-sm uppercase tracking-widest border-r border-slate-800 sticky left-0 bg-slate-900 z-10 shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)] min-w-[120px] max-w-[140px] md:min-w-[200px] md:max-w-none break-words">
-                    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2">
-                      <span className="whitespace-normal leading-tight">{unit}</span>
-                      <button onClick={() => handleDeleteUnit(unit)} className="text-slate-600 hover:text-red-500 opacity-100 md:opacity-0 group-hover:opacity-100 transition-all p-1 md:p-2 -ml-1 md:ml-0">
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </td>
-                  
-                  {INSPECTION_PHASES.map((phase, cIdx) => {
-                    const record = getCellRecord(unit, phase)
-                    const isSelected = selectedRequests.includes(`${unit}|${phase}`)
-                    const isDimmed = requestMode && !isSelected
-
-                    return (
-                      <td key={cIdx} className="p-2 border-r border-slate-800 align-middle">
-                        <button 
-                          onClick={() => handleCellClick(unit, phase)}
-                          className={`relative w-full p-3 rounded-xl border transition-all text-center flex flex-col items-center justify-center gap-1 ${
-                            isSelected ? 'bg-amber-500 text-slate-950 border-amber-400 ring-2 ring-amber-500 ring-offset-2 ring-offset-slate-900' :
-                            STATUS_COLORS[record.status as keyof typeof STATUS_COLORS] || STATUS_COLORS['Not Ready']
-                          } ${requestMode ? 'cursor-pointer hover:scale-95' : 'hover:opacity-80'} ${isDimmed ? 'opacity-20 grayscale' : ''}`}
-                        >
-                          <span className="text-[9px] font-black uppercase tracking-widest">
-                            {isSelected ? 'SELECTED' : record.status}
-                          </span>
-                          
-                          {record.document_url && !isSelected && (
-                            <Paperclip size={10} className="absolute top-1 right-1 opacity-60" />
-                          )}
+              <tbody className="divide-y divide-slate-800/50">
+                {units.length === 0 && (
+                  <tr>
+                    <td colSpan={INSPECTION_PHASES.length + 1} className="p-12 text-center text-[10px] font-black uppercase tracking-widest text-slate-600">
+                      No units added to matrix.
+                    </td>
+                  </tr>
+                )}
+                
+                {units.map((unit) => (
+                  <tr key={unit} className="hover:bg-slate-800/20 transition-colors group">
+                    <td className="p-5 font-black text-white text-sm uppercase tracking-widest border-r border-slate-800 sticky left-0 bg-slate-900 z-10 shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)] min-w-[150px] break-words">
+                      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2">
+                        <span className="whitespace-normal leading-tight">{unit}</span>
+                        <button onClick={() => handleDeleteUnit(unit)} className="text-slate-600 hover:text-red-500 opacity-100 md:opacity-0 group-hover:opacity-100 transition-all p-2">
+                          <Trash2 size={14} />
                         </button>
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      </div>
+                    </td>
+                    
+                    {INSPECTION_PHASES.map((phase, cIdx) => {
+                      const record = getCellRecord(unit, phase)
+                      const isSelected = selectedRequests.includes(`${unit}|${phase}`)
+                      const isDimmed = requestMode && !isSelected
+
+                      return (
+                        <td key={cIdx} className="p-2 border-r border-slate-800 align-middle">
+                          <button 
+                            onClick={() => handleCellClick(unit, phase)}
+                            className={`relative w-full p-3 rounded-xl border transition-all text-center flex flex-col items-center justify-center gap-1 ${
+                              isSelected ? 'bg-amber-500 text-slate-950 border-amber-400 ring-2 ring-amber-500 ring-offset-2 ring-offset-slate-900' :
+                              STATUS_COLORS[record.status as keyof typeof STATUS_COLORS] || STATUS_COLORS['Not Ready']
+                            } ${requestMode ? 'cursor-pointer hover:scale-95' : 'hover:opacity-80'} ${isDimmed ? 'opacity-20 grayscale' : ''}`}
+                          >
+                            <span className="text-[9px] font-black uppercase tracking-widest">
+                              {isSelected ? 'SELECTED' : record.status}
+                            </span>
+                            
+                            {record.document_url && !isSelected && (
+                              <Paperclip size={10} className="absolute top-1 right-1 opacity-60" />
+                            )}
+                          </button>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
