@@ -10,14 +10,15 @@ import {
   CheckCircle2, AlertTriangle, Clock, XCircle, Send, Loader2, Upload, FileText, Trash2
 } from 'lucide-react'
 
-// --- RESTORED & EXPANDED PHASES (Old names kept exact so your data returns!) ---
+// --- RESTORED & EXPANDED PHASES ---
 const INSPECTION_PHASES = [
+  'Locates',                // NEW: Step Zero!
   'Footing / Foundation',
-  'Backfill',               // NEW
+  'Backfill',               
   'Underground Plumbing',
-  'Underground Insulation', // NEW
-  'Framing',                // Kept original name so your framing data returns
-  'Air Barrier',            // NEW
+  'Underground Insulation', 
+  'Framing',                
+  'Air Barrier',            
   'Rough Plumbing',
   'Rough HVAC',
   'ESA Rough-In',
@@ -35,7 +36,7 @@ const STATUS_COLORS = {
   'Partial': 'bg-amber-950/40 text-amber-500 border-amber-900/50',
   'Fail': 'bg-red-950/40 text-red-500 border-red-900/50',
   'Pass': 'bg-emerald-950/30 text-emerald-500 border-emerald-900/50',
-  'N/A': 'bg-slate-950/50 text-slate-700 line-through opacity-50 border-slate-900' // N/A STATUS
+  'N/A': 'bg-slate-950/50 text-slate-700 line-through opacity-50 border-slate-900' 
 }
 
 type CellData = { unit: string, phase: string, status: string, notes: string, document_url: string | null }
@@ -102,7 +103,6 @@ export default function InspectionMatrix() {
     setSaving(false)
   }
 
-  // --- DELETE LOT LOGIC ---
   const handleDeleteUnit = async (unitName: string) => {
     if (!confirm(`Delete "${unitName}"? This will erase all inspection records for this row.`)) return
     await supabase.from('project_inspections').delete().eq('project_id', id).eq('unit_name', unitName)
@@ -179,7 +179,6 @@ export default function InspectionMatrix() {
     return inspections.find(i => i.unit_name === unit && i.inspection_type === phase) || { status: 'Not Ready', document_url: null }
   }
 
-  // --- MASTER PDF EXPORTER WITH AUTO-ARCHIVE ---
   const handleExportPDF = async () => {
     setExporting(true)
     
@@ -247,7 +246,6 @@ export default function InspectionMatrix() {
       const fileName = requestMode ? `Inspection_Request_${project?.name}.pdf` : `Matrix_Status_${project?.name}.pdf`
       doc.save(fileName.replace(/\s+/g, '_'))
 
-      // --- AUTO-ARCHIVE BATCH REQUESTS TO THE MATRIX CELLS ---
       if (requestMode && selectedRequests.length > 0) {
         const pdfBlob = doc.output('blob')
         const storagePath = `${id}/requests/Request_${Date.now()}.pdf`
@@ -335,13 +333,12 @@ export default function InspectionMatrix() {
         </div>
       )}
 
-      <div className="bg-slate-900 rounded-[32px] border border-slate-800 shadow-2xl overflow-hidden">
-        <div className="overflow-x-auto custom-scrollbar p-1 pb-6 bg-slate-950 w-full inline-block min-w-full">
-          <table className="w-full text-left border-collapse">
+      <div className="bg-slate-900 rounded-[32px] border border-slate-800 shadow-2xl w-full relative z-0">
+        <div className="overflow-x-auto custom-scrollbar p-1 pb-6 bg-slate-950 w-full rounded-[32px]">
+          <table className="w-full text-left border-collapse min-w-max">
             <thead className="bg-slate-950 sticky top-0 z-10 shadow-sm border-b border-slate-800">
               <tr>
-                {/* 1. MOBILE RESPONSIVE TH WIDTH */}
-                <th className="p-3 md:p-5 font-black text-[10px] text-slate-500 uppercase tracking-widest border-r border-slate-800 min-w-[90px] max-w-[110px] md:min-w-[150px] md:max-w-none sticky left-0 bg-slate-950 z-20">
+                <th className="p-3 md:p-5 font-black text-[10px] text-slate-500 uppercase tracking-widest border-r border-slate-800 min-w-[120px] max-w-[140px] md:min-w-[200px] md:max-w-none sticky left-0 bg-slate-950 z-20 shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)]">
                   Unit / Lot
                 </th>
                 {INSPECTION_PHASES.map((phase, i) => (
@@ -363,8 +360,7 @@ export default function InspectionMatrix() {
               
               {units.map((unit) => (
                 <tr key={unit} className="hover:bg-slate-800/20 transition-colors group">
-                  {/* 2. MOBILE RESPONSIVE TD WIDTH */}
-                  <td className="p-3 md:p-5 font-black text-white text-xs md:text-sm uppercase tracking-widest border-r border-slate-800 sticky left-0 bg-slate-900 z-10 shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)] min-w-[90px] max-w-[110px] md:min-w-[150px] md:max-w-none break-words">
+                  <td className="p-3 md:p-5 font-black text-white text-xs md:text-sm uppercase tracking-widest border-r border-slate-800 sticky left-0 bg-slate-900 z-10 shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)] min-w-[120px] max-w-[140px] md:min-w-[200px] md:max-w-none break-words">
                     <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2">
                       <span className="whitespace-normal leading-tight">{unit}</span>
                       <button onClick={() => handleDeleteUnit(unit)} className="text-slate-600 hover:text-red-500 opacity-100 md:opacity-0 group-hover:opacity-100 transition-all p-1 md:p-2 -ml-1 md:ml-0">
@@ -405,7 +401,6 @@ export default function InspectionMatrix() {
         </div>
       </div>
 
-      {/* --- ADD UNIT MODAL --- */}
       {showAddUnit && (
         <div className="fixed inset-0 bg-slate-950/90 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <form onSubmit={handleAddUnit} className="bg-slate-900 border-2 border-blue-600 p-8 rounded-[40px] max-w-md w-full space-y-6 shadow-2xl">
@@ -421,7 +416,6 @@ export default function InspectionMatrix() {
         </div>
       )}
 
-      {/* --- RESTORED STATUS & UPLOAD MODAL --- */}
       {activeCell && !requestMode && (
         <div className="fixed inset-0 bg-slate-950/90 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <div className="bg-slate-900 border border-slate-800 p-8 rounded-[40px] max-w-md w-full space-y-6 shadow-2xl">
@@ -445,7 +439,6 @@ export default function InspectionMatrix() {
               <button onClick={() => handleUpdateStatus('Fail')} className="p-4 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 bg-red-950/40 text-red-500 border border-red-900/50 hover:bg-red-900/50 transition-colors"><XCircle size={14}/> Fail</button>
             </div>
 
-            {/* N/A Button */}
             <button onClick={() => handleUpdateStatus('N/A')} className="w-full p-4 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 bg-slate-950 text-slate-500 border border-slate-800 hover:bg-slate-800 transition-colors">Mark as N/A (Not Applicable)</button>
 
             <div className="border-t border-slate-800 pt-6">
