@@ -52,7 +52,6 @@ export default function ProjectLogArchive() {
           </p>
         </div>
         
-        {/* THIS IS THE MISSING NEW BUTTON */}
         <Link href={`/projects/${id}/logs/new`} className="bg-blue-600 text-white text-[10px] font-black px-8 py-4 rounded-2xl uppercase shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-all flex items-center gap-2">
           <Plus size={16} /> New Entry
         </Link>
@@ -78,7 +77,10 @@ export default function ProjectLogArchive() {
                   </div>
                   <h3 className="text-xl font-black uppercase italic tracking-tighter text-white flex items-center gap-3">
                     <Calendar className="text-slate-500" size={20}/>
-                    {new Date(log.log_date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                    
+                    {/* ✅ THE FIX: Appended 'T12:00:00' to force local timezone calculation */}
+                    {new Date(log.log_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                    
                   </h3>
                 </div>
 

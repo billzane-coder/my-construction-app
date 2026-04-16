@@ -4,7 +4,51 @@ export const dynamic = 'force-dynamic'
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
-import { ChevronLeft, HardHat, CloudRain, Clock, Loader2, FileCheck, Images, Plus, Minus, Trash2, Printer, Share2, Lock } from 'lucide-react'
+import { ChevronLeft, HardHat, CloudRain, Clock, Loader2, FileCheck, Images, Plus, Minus, Trash2, Printer, Share2, Lock, Unlock } from 'lucide-react'
+
+// --- 🛠️ IMAGE COMPRESSION ENGINE ---
+const compressImage = (file: File): Promise<File> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.readAsDataURL(file)
+    reader.onload = (event) => {
+      const img = new Image()
+      img.src = event.target?.result as string
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const MAX_WIDTH = 1200 // Compresses massive iPhone photos perfectly
+        const MAX_HEIGHT = 1200
+        let width = img.width
+        let height = img.height
+
+        if (width > height) {
+          if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+        } else {
+          if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
+        }
+
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        ctx?.drawImage(img, 0, 0, width, height)
+
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              const compressedFile = new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() })
+              resolve(compressedFile)
+            } else {
+              reject(new Error('Canvas compression failed'))
+            }
+          },
+          'image/jpeg',
+          0.7 // 70% Quality (Huge file size reduction, no visible loss on PDFs)
+        )
+      }
+    }
+    reader.onerror = (error) => reject(error)
+  })
+}
 
 export default function EditDailyLog() {
   const { id, logid } = useParams()
@@ -67,13 +111,22 @@ export default function EditDailyLog() {
     return contacts.filter(c => tradeCounts[c.id] > 0).map(c => `${tradeCounts[c.id]} ${c.company} (${c.trade_role})`).join(', ')
   }
 
+  // --- 📸 COMPRESSED UPLOAD LOGIC ---
   const handlePhotoUpload = async (file: File) => {
     setUploading(true)
-    const path = `${id}/logs/${Date.now()}-${file.name}`
-    const { error } = await supabase.storage.from('project-files').upload(path, file)
-    if (!error) {
-      const { data } = supabase.storage.from('project-files').getPublicUrl(path)
-      setPhotos(prev => [...prev, data.publicUrl])
+    try {
+      const compressedFile = await compressImage(file)
+      const path = `${id}/logs/${Date.now()}-${compressedFile.name}`
+      const { error } = await supabase.storage.from('project-files').upload(path, compressedFile)
+      if (!error) {
+        const { data } = supabase.storage.from('project-files').getPublicUrl(path)
+        setPhotos(prev => [...prev, data.publicUrl])
+      } else {
+        alert(`Upload error: ${error.message}`)
+      }
+    } catch (err) {
+      console.error(err)
+      alert("Failed to compress and upload image.")
     }
     setUploading(false)
   }
@@ -89,6 +142,19 @@ export default function EditDailyLog() {
     if (!error) {
       if (isFinal) { router.push(`/projects/${id}/logs`); router.refresh(); } 
       else { setStatus('Draft'); alert("Draft saved."); }
+    }
+    setSaving(false)
+  }
+
+  // --- 🔓 UNLOCK LOGIC ---
+  const handleUnlock = async () => {
+    if (!confirm("Are you sure you want to unlock this log for editing?")) return
+    setSaving(true)
+    const { error } = await supabase.from('daily_logs').update({ status: 'Draft' }).eq('id', logid)
+    if (!error) {
+      setStatus('Draft')
+    } else {
+      alert("Failed to unlock log.")
     }
     setSaving(false)
   }
@@ -116,44 +182,12 @@ export default function EditDailyLog() {
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
           @page { margin: 0.5in; size: portrait; }
-          
-          /* 1. DESTROY ALL SCROLL TRAPS: Force everything to be its natural height */
-          * {
-            overflow: visible !important;
-            height: auto !important;
-            max-height: none !important;
-            position: static !important;
-          }
-
-          /* 2. FORCE FULL WIDTH & WHITE BACKGROUND ON ROOT ELEMENTS */
-          html, body, #__next, main {
-            background: white !important;
-            display: block !important;
-            width: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-
-          /* 3. NUKE TAILWIND DARK MODE BOXES */
-          div[class*="bg-slate-9"], div[class*="bg-slate-8"] {
-            background-color: white !important;
-            border-color: #cbd5e1 !important;
-            color: black !important;
-          }
-
-          /* 4. HIDE NON-DOCUMENT UI */
+          * { overflow: visible !important; height: auto !important; max-height: none !important; position: static !important; }
+          html, body, #__next, main { background: white !important; display: block !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
+          div[class*="bg-slate-9"], div[class*="bg-slate-8"] { background-color: white !important; border-color: #cbd5e1 !important; color: black !important; }
           .print\\:hidden { display: none !important; }
-
-          /* 5. PREVENT AWKWARD PAGE BREAKS */
-          .print\\:break-inside-avoid {
-             page-break-inside: avoid !important;
-          }
-
-          /* 6. FORCE TEXT TO BLACK */
-          p, h1, h2, h3, h4, span, div, label {
-            color: black !important;
-            text-shadow: none !important;
-          }
+          .print\\:break-inside-avoid { page-break-inside: avoid !important; }
+          p, h1, h2, h3, h4, span, div, label { color: black !important; text-shadow: none !important; }
         }
       `}} />
 
@@ -167,7 +201,7 @@ export default function EditDailyLog() {
           <div className="text-right">
             <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">Date of Record</p>
             <p className="text-lg font-black text-black">
-              {date ? new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' }) : 'No Date'}
+              {date ? new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' }) : 'No Date'}
             </p>
           </div>
         </div>
@@ -179,7 +213,12 @@ export default function EditDailyLog() {
           <button onClick={() => router.back()} className="text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white flex items-center gap-1"><ChevronLeft size={12}/> Back to Archive</button>
           <div className="flex items-center gap-4">
             <h1 className="text-4xl font-black text-white tracking-tighter uppercase italic leading-none">Edit <span className="text-blue-500">Log</span></h1>
-            {status === 'Final' && <span className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-3 py-1 rounded-lg text-[9px] font-black uppercase flex items-center gap-1"><Lock size={10}/> Signed</span>}
+            {status === 'Final' && (
+              <div className="flex items-center gap-2">
+                <span className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-3 py-1 rounded-lg text-[9px] font-black uppercase flex items-center gap-1"><Lock size={10}/> Signed</span>
+                <button onClick={handleUnlock} disabled={saving} className="bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700 hover:text-white px-3 py-1 rounded-lg text-[9px] font-black uppercase flex items-center gap-1 transition-all"><Unlock size={10}/> Unlock</button>
+              </div>
+            )}
           </div>
         </div>
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} disabled={status === 'Final'} className="bg-slate-900 border border-slate-800 text-blue-400 font-black p-3 rounded-2xl outline-none disabled:opacity-50" />
