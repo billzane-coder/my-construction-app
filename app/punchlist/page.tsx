@@ -86,12 +86,38 @@ const exportToCSV = () => {
     document.body.removeChild(link)
   }
 
+// --- BULLETPROOF GLOBAL STATUS TOGGLE ---
   const toggleStatus = async (e: React.MouseEvent, item: any) => {
-    e.preventDefault() 
+    e.preventDefault()
+    e.stopPropagation() 
+    
     const newStatus = item.status === 'Open' ? 'Resolved' : 'Open'
     const resolvedAt = newStatus === 'Resolved' ? new Date().toISOString() : null
+
+    // 1. Store the old state in case we need to revert (The "Safety Net")
+    const oldItems = [...punchItems]
+
+    // 2. Optimistic Update (UI changes instantly for the user)
     setPunchItems(prev => prev.map(p => p.id === item.id ? { ...p, status: newStatus, resolved_at: resolvedAt } : p))
-    await supabase.from('punch_list').update({ status: newStatus, resolved_at: resolvedAt }).eq('id', item.id)
+    
+    // 3. Database Update
+    const { error } = await supabase
+      .from('punch_list')
+      .update({ 
+        status: newStatus, 
+        resolved_at: resolvedAt 
+      })
+      .eq('id', item.id)
+
+    if (error) {
+      console.error("Supabase Error:", error)
+      // 4. If it fails, alert the user and ROLLBACK the UI
+      alert(`Sync Failed: ${error.message}. Checking connection...`)
+      setPunchItems(oldItems)
+    } else {
+      // SUCCESS: No action needed, the UI is already correct
+      console.log(`Item ${item.id} successfully updated to ${newStatus}`)
+    }
   }
 
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Compiling Global Records...</div>

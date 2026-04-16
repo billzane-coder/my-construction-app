@@ -1,12 +1,17 @@
 'use client'
+
+export const dynamic = 'force-dynamic' 
+
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
-import dynamic from 'next/dynamic'
+import dynamicImport from 'next/dynamic'
 import { 
   ZoomIn, ZoomOut, Maximize, Link as LinkIcon, 
-  Paperclip, ChevronLeft, Save, Trash2, X, Info 
+  Paperclip, ChevronLeft, ChevronRight, Layers, Plus, Trash2
 } from 'lucide-react'
+
+// PDF Styles
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
 
@@ -14,11 +19,11 @@ import 'react-pdf/dist/Page/TextLayer.css'
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch'
 
 // Initialize PDF Worker
-const Document = dynamic(() => import('react-pdf').then((mod) => {
+const Document = dynamicImport(() => import('react-pdf').then((mod) => {
   mod.pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${mod.pdfjs.version}/build/pdf.worker.min.mjs`
   return mod.Document
 }), { ssr: false })
-const Page = dynamic(() => import('react-pdf').then((mod) => mod.Page), { ssr: false })
+const Page = dynamicImport(() => import('react-pdf').then((mod) => mod.Page), { ssr: false })
 
 type Tool = 'select' | 'pin' | 'cloud' | 'arrow' | 'text'
 type Interaction = { type: 'draw' | 'move' | 'resize', id?: string, handle?: 'start' | 'end' | 'br' } | null
@@ -30,12 +35,15 @@ export default function ProPlanViewer() {
   const [plan, setPlan] = useState<any>(null)
   const [planVersions, setPlanVersions] = useState<any[]>([])
   const [markups, setMarkups] = useState<any[]>([])
-  const [openSubmittals, setOpenSubmittals] = useState<any[]>([])
+  
+  const [numPages, setNumPages] = useState<number>(0)
+  const [pageNumber, setPageNumber] = useState<number>(1)
+  const [activeLayer, setActiveLayer] = useState<string>('Master')
+  const [availableLayers, setAvailableLayers] = useState<string[]>(['Master'])
   
   const [activeTool, setActiveTool] = useState<Tool>('select')
   const [viewMode, setViewMode] = useState<'clean' | 'marked'>('marked')
   const [loading, setLoading] = useState(true)
-  const [showLinkModal, setShowLinkModal] = useState(false)
   
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [interaction, setInteraction] = useState<Interaction>(null)
@@ -48,35 +56,23 @@ export default function ProPlanViewer() {
     async function init() {
       if (!planId) return
       const { data: p } = await supabase.from('project_documents').select('*').eq('id', planId).single()
-      
-      const [versions, m, subs] = await Promise.all([
+      const [versions, m] = await Promise.all([
         supabase.from('project_documents').select('id, revision_number').eq('title', p?.title).eq('project_id', id).order('created_at', { ascending: false }),
-        supabase.from('plan_markups').select('*').eq('plan_id', planId),
-        supabase.from('project_submittals').select('id, title').eq('project_id', id)
+        supabase.from('plan_markups').select('*').eq('plan_id', planId)
       ])
       
       setPlan(p); 
       setPlanVersions(versions.data || []); 
       setMarkups(m.data || []); 
-      setOpenSubmittals(subs.data || []);
+      
+      if (m.data) {
+        const layers = Array.from(new Set(m.data.map((item: any) => item.layer_name || 'Master'))) as string[]
+        setAvailableLayers(layers.length > 0 ? layers : ['Master'])
+      }
       setLoading(false)
     }
     init()
   }, [planId, id])
-
-  const linkDrawingToSubmittal = async (subId: string) => {
-    const { error } = await supabase.from('project_submittals').update({ linked_document_id: planId }).eq('id', subId)
-    if (!error) {
-      alert("Drawing linked to submittal successfully.")
-      setShowLinkModal(false)
-    }
-  }
-
-  const deleteMarkup = async (markupId: string) => {
-    await supabase.from('plan_markups').delete().eq('id', markupId)
-    setMarkups(prev => prev.filter(m => m.id !== markupId))
-    setSelectedId(null)
-  }
 
   const getCoords = (e: React.MouseEvent | React.TouchEvent) => {
     if (!containerRef.current) return { x: 0, y: 0 }
@@ -117,7 +113,10 @@ export default function ProPlanViewer() {
     if (interaction.type === 'draw') {
       setLastPos(coords)
     } else if (interaction.type === 'move' && interaction.id) {
-      setMarkups(prev => prev.map(m => m.id === interaction.id ? { ...m, x_percent: m.x_percent + dx, y_percent: m.y_percent + dy, end_x_percent: (m.end_x_percent || 0) + dx, end_y_percent: (m.end_y_percent || 0) + dy } : m))
+      setMarkups(prev => prev.map(m => m.id === interaction.id ? { 
+        ...m, x_percent: m.x_percent + dx, y_percent: m.y_percent + dy, 
+        end_x_percent: (m.end_x_percent || 0) + dx, end_y_percent: (m.end_y_percent || 0) + dy 
+      } : m))
       setLastPos(coords)
     } else if (interaction.type === 'resize' && interaction.id) {
       setMarkups(prev => prev.map(m => {
@@ -136,50 +135,94 @@ export default function ProPlanViewer() {
     if (!interaction) return
 
     if (interaction.type === 'draw') {
-      let textVal = ""
-      if (activeTool === 'text') textVal = prompt("Enter text:") || "New Note"
-      
-      let finalEnd = lastPos
-      if (activeTool === 'cloud' && Math.abs(finalEnd.x - startPos.x) < 1) finalEnd = { x: startPos.x + 8, y: startPos.y + 5 }
-
-      const { data: newMarkup } = await supabase.from('plan_markups').insert([{
-        project_id: id, plan_id: planId, markup_type: activeTool,
-        x_percent: Math.min(startPos.x, finalEnd.x), y_percent: Math.min(startPos.y, finalEnd.y),
-        end_x_percent: Math.max(startPos.x, finalEnd.x), end_y_percent: Math.max(startPos.y, finalEnd.y),
-        markup_text: textVal, status: 'Open'
-      }]).select().single()
-
-      if (newMarkup) setMarkups([...markups, newMarkup])
-      setSelectedId(newMarkup?.id || null)
-      if (activeTool !== 'text') setActiveTool('select') 
-
+      if (activeTool === 'text') {
+        setTimeout(async () => {
+          const val = prompt("Enter Site Note:")
+          if (!val) {
+            setInteraction(null)
+            return
+          }
+          const { data: newMarkup } = await supabase.from('plan_markups').insert([{
+            project_id: id, plan_id: planId, markup_type: 'text',
+            page_number: pageNumber, layer_name: activeLayer,
+            x_percent: startPos.x, y_percent: startPos.y,
+            end_x_percent: startPos.x + 10, 
+            end_y_percent: startPos.y + 4,
+            markup_text: val, status: 'Open'
+          }]).select().single()
+          if (newMarkup) setMarkups(prev => [...prev, newMarkup])
+          setSelectedId(newMarkup?.id || null)
+          setActiveTool('select') 
+        }, 10)
+      } else {
+        const { data: newMarkup } = await supabase.from('plan_markups').insert([{
+          project_id: id, plan_id: planId, markup_type: activeTool,
+          page_number: pageNumber, layer_name: activeLayer,
+          x_percent: Math.min(startPos.x, lastPos.x), y_percent: Math.min(startPos.y, lastPos.y),
+          end_x_percent: Math.max(startPos.x, lastPos.x), end_y_percent: Math.max(startPos.y, lastPos.y),
+          markup_text: "", status: 'Open'
+        }]).select().single()
+        if (newMarkup) setMarkups(prev => [...prev, newMarkup])
+        setSelectedId(newMarkup?.id || null)
+        setActiveTool('select') 
+      }
     } else if (interaction.type === 'move' || interaction.type === 'resize') {
       const m = markups.find(mx => mx.id === interaction.id)
-      if (m) await supabase.from('plan_markups').update({ x_percent: m.x_percent, y_percent: m.y_percent, end_x_percent: m.end_x_percent, end_y_percent: m.end_y_percent }).eq('id', m.id)
+      if (m) await supabase.from('plan_markups').update({ 
+        x_percent: m.x_percent, y_percent: m.y_percent, 
+        end_x_percent: m.end_x_percent, end_y_percent: m.end_y_percent 
+      }).eq('id', m.id)
     }
     setInteraction(null)
   }
 
+  const deleteMarkup = async () => {
+    if (!selectedId) return
+    await supabase.from('plan_markups').delete().eq('id', selectedId)
+    setMarkups(prev => prev.filter(m => m.id !== selectedId))
+    setSelectedId(null)
+  }
+
   const canPan = viewMode === 'clean' || (activeTool === 'select' && !interaction)
 
-  if (loading) return <div className="h-screen bg-slate-950 flex items-center justify-center font-black text-blue-500 animate-pulse uppercase tracking-widest">Rendering Vault...</div>
+  if (loading) return <div className="h-screen bg-slate-950 flex items-center justify-center font-black text-blue-500 animate-pulse uppercase tracking-[0.3em] italic">Opening Vault...</div>
 
   return (
-    <div className="h-screen w-screen bg-slate-900 flex flex-col overflow-hidden print:bg-white print:h-auto print:overflow-visible">
+    <div className="h-screen w-screen bg-slate-900 flex flex-col overflow-hidden select-none">
       
       {/* TOOLBAR */}
-      <div className="bg-slate-950 border-b border-slate-800 p-4 flex flex-wrap justify-between items-center z-50 shadow-2xl print:hidden gap-4">
+      <div className="bg-slate-950 border-b border-slate-800 p-4 flex flex-wrap justify-between items-center z-50 shadow-2xl gap-4">
         <div className="flex gap-4 items-center">
           <button onClick={() => router.back()} className="px-4 py-2 text-slate-500 hover:text-white font-black text-[10px] uppercase transition-all">← Exit</button>
           
-          <select value={planId as string} onChange={(e) => router.push(`/projects/${id}/viewer/${e.target.value}`)} className="bg-slate-900 border border-slate-700 text-white font-black text-[10px] uppercase px-4 py-2 rounded-xl outline-none">
-            {planVersions.map(v => <option key={v.id} value={v.id}>{plan?.title} - {v.revision_number}</option>)}
-          </select>
+          {/* VERSION SELECTOR (FIXED VISIBILITY) */}
+          <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 px-4 py-2 rounded-xl">
+             <Layers size={14} className="text-amber-500" />
+             <select 
+               value={activeLayer} 
+               onChange={(e) => { setActiveLayer(e.target.value); setSelectedId(null); }} 
+               className="bg-slate-900 text-white font-black text-[10px] outline-none cursor-pointer uppercase [color-scheme:dark]"
+             >
+               {availableLayers.map(layer => (
+                 <option key={layer} value={layer} className="bg-slate-900 text-white">{layer}</option>
+               ))}
+             </select>
+             <button onClick={() => { const n = prompt("New Version Name:"); if(n) {setAvailableLayers([...availableLayers, n]); setActiveLayer(n); } }} className="ml-2 text-blue-500 hover:text-white"><Plus size={14}/></button>
+          </div>
 
-          <select value={viewMode} onChange={(e) => setViewMode(e.target.value as 'clean' | 'marked')} className={`font-black text-[10px] uppercase px-4 py-2 rounded-xl outline-none border ${viewMode === 'marked' ? 'bg-amber-500/10 text-amber-500 border-amber-500/30' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'}`}>
-            <option value="clean">Clean Document</option>
-            <option value="marked">Active Markups</option>
-          </select>
+          {/* PAGE SELECTOR (FIXED VISIBILITY) */}
+          <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 px-4 py-2 rounded-xl">
+             <span className="text-[9px] font-black text-slate-500 uppercase">Sheet</span>
+             <select 
+               value={pageNumber} 
+               onChange={(e) => { setPageNumber(Number(e.target.value)); setSelectedId(null); }} 
+               className="bg-slate-900 text-white font-black text-[10px] outline-none cursor-pointer [color-scheme:dark]"
+             >
+               {Array.from(new Array(numPages), (el, index) => (
+                 <option key={index + 1} value={index + 1} className="bg-slate-900 text-white">{index + 1} of {numPages}</option>
+               ))}
+             </select>
+          </div>
         </div>
 
         {viewMode === 'marked' && (
@@ -189,102 +232,135 @@ export default function ProPlanViewer() {
                 {t === 'select' ? '🖱️' : t === 'pin' ? '📍' : t === 'cloud' ? '☁️' : t === 'arrow' ? '↗️' : '📝'} {t}
               </button>
             ))}
-            {selectedId && (
-              <button onClick={() => deleteMarkup(selectedId)} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-red-600/20 text-red-500 hover:bg-red-600 hover:text-white transition-all ml-2">
-                🗑️ Delete
-              </button>
-            )}
+            {selectedId && <button onClick={deleteMarkup} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-red-600/20 text-red-500 ml-2 hover:bg-red-600 hover:text-white transition-all">🗑️ Delete</button>}
           </div>
         )}
 
         <div className="flex gap-3 items-center">
-          <button onClick={() => setShowLinkModal(true)} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 shadow-lg">
-            <Paperclip size={14} /> Link to Submittal
-          </button>
-          <button onClick={() => window.print()} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all border border-slate-700">
-            Export PDF
-          </button>
+          <select 
+            value={viewMode} 
+            onChange={(e) => setViewMode(e.target.value as 'clean' | 'marked')} 
+            className="bg-slate-900 border border-slate-700 text-white font-black text-[10px] uppercase px-4 py-2 rounded-xl outline-none [color-scheme:dark]"
+          >
+            <option value="marked" className="bg-slate-900">Show Markups</option>
+            <option value="clean" className="bg-slate-900">Hide Markups</option>
+          </select>
         </div>
       </div>
 
       {/* VIEWPORT AREA */}
-      <div className="flex-1 relative overflow-hidden bg-slate-800 select-none print:bg-white print:overflow-visible">
-        
+      <div className="flex-1 relative overflow-hidden bg-slate-800">
         <TransformWrapper
-          initialScale={1}
-          minScale={0.1}
+          initialScale={1} 
+          minScale={0.3} 
           maxScale={10}
           panning={{ disabled: !canPan }} 
-          wheel={{ step: 0.01 }} // Granular zoom for precision control
+          wheel={{ step: 0.0005, disabled: false }}
           doubleClick={{ disabled: true }}
           centerOnInit={true}
         >
           {({ zoomIn, zoomOut, resetTransform }) => (
             <>
-              <div className="absolute bottom-6 right-6 z-50 flex flex-col gap-2 print:hidden">
-                <button onClick={() => zoomIn(0.25)} className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-slate-300 hover:text-white hover:border-blue-500 shadow-xl transition-all"><ZoomIn size={20}/></button>
-                <button onClick={() => zoomOut(0.25)} className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-slate-300 hover:text-white hover:border-blue-500 shadow-xl transition-all"><ZoomOut size={20}/></button>
-                <button onClick={() => resetTransform()} className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-slate-300 hover:text-white hover:border-blue-500 shadow-xl transition-all mt-2"><Maximize size={18}/></button>
+              <div className="absolute bottom-6 right-6 z-50 flex flex-col gap-2">
+                <button onClick={() => zoomIn(0.25)} className="w-12 h-12 bg-slate-950 border border-slate-800 rounded-2xl flex items-center justify-center text-slate-300 shadow-xl hover:border-blue-500"><ZoomIn size={20}/></button>
+                <button onClick={() => zoomOut(0.25)} className="w-12 h-12 bg-slate-950 border border-slate-800 rounded-2xl flex items-center justify-center text-slate-300 shadow-xl hover:border-blue-500"><ZoomOut size={20}/></button>
+                <button onClick={() => resetTransform()} className="w-12 h-12 bg-slate-950 border border-slate-800 rounded-2xl flex items-center justify-center text-slate-300 shadow-xl mt-2"><Maximize size={18}/></button>
               </div>
 
               <TransformComponent wrapperStyle={{ width: "100%", height: "100%" }}>
-                <div ref={containerRef} className="relative inline-block shadow-[0_0_100px_rgba(0,0,0,0.5)] bg-white print:shadow-none print:w-full">
-                  
+                <div ref={containerRef} className="relative inline-block bg-white shadow-2xl">
                   {plan?.file_url && (
-                    <Document file={plan.file_url} loading={<div className="p-20 text-slate-500 font-black">Rendering Document...</div>}>
-                      <Page pageNumber={1} scale={2.0} renderTextLayer={false} renderAnnotationLayer={false} className="pointer-events-none print:w-full" />
+                    <Document 
+                      file={plan.file_url} 
+                      onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+                      loading={<div className="p-20 text-slate-500 font-black uppercase tracking-widest animate-pulse">Rendering Blueprint...</div>}
+                    >
+                      <Page pageNumber={pageNumber} scale={2.0} renderTextLayer={false} renderAnnotationLayer={false} className="pointer-events-none" />
                     </Document>
                   )}
 
-                  {(viewMode === 'marked' || (typeof window !== 'undefined' && window.matchMedia('print').matches)) && (
+                  {/* SVG INTERACTION LAYER */}
+                  {viewMode === 'marked' && (
                     <svg 
                       className={`absolute inset-0 w-full h-full z-10 ${canPan ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'}`}
                       onMouseDown={handleStageDown} onMouseMove={handleMove} onMouseUp={handleUp} onMouseLeave={handleUp}
-                      onTouchStart={handleStageDown} onTouchMove={handleMove} onTouchEnd={handleUp}
                     >
-                      {markups.map((m) => {
-                        const isSelected = selectedId === m.id
-                        const dynamicStroke = isSelected ? 4 : 2 
+                      {markups
+                        .filter(m => (m.page_number || 1) === pageNumber)
+                        .filter(m => (m.layer_name || 'Master') === activeLayer)
+                        .map((m) => {
+                          const isSelected = selectedId === m.id
+                          const color = isSelected ? "#3b82f6" : "#dc2626"
+                          
+                          return (
+                            <g key={m.id} onMouseDown={(e) => handleShapeDown(e, m.id, 'move')}>
+                              {m.markup_type === 'cloud' && (
+                                <>
+                                  <rect x={`${Math.min(m.x_percent, m.end_x_percent)}%`} y={`${Math.min(m.y_percent, m.end_y_percent)}%`} width={`${Math.abs(m.end_x_percent - m.x_percent)}%`} height={`${Math.abs(m.end_y_percent - m.y_percent)}%`} fill={isSelected ? "rgba(59,130,246,0.1)" : "rgba(220,38,38,0.1)"} stroke={color} strokeWidth={isSelected ? 4 : 2} strokeDasharray="8,4" rx={10} />
+                                  {isSelected && <circle cx={`${Math.max(m.x_percent, m.end_x_percent)}%`} cy={`${Math.max(m.y_percent, m.end_y_percent)}%`} r={8} fill="white" stroke="#3b82f6" strokeWidth={2} className="cursor-nwse-resize" onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'br')} />}
+                                </>
+                              )}
+
+                              {m.markup_type === 'arrow' && (
+                                <>
+                                  <line x1={`${m.x_percent}%`} y1={`${m.y_percent}%`} x2={`${m.end_x_percent}%`} y2={`${m.end_y_percent}%`} stroke={color} strokeWidth={isSelected ? 6 : 4} markerEnd={isSelected ? "url(#arrowhead-blue)" : "url(#arrowhead-red)"} />
+                                  {isSelected && (
+                                    <>
+                                      <circle cx={`${m.x_percent}%`} cy={`${m.y_percent}%`} r={8} fill="white" stroke="#3b82f6" strokeWidth={2} onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'start')} />
+                                      <circle cx={`${m.end_x_percent}%`} cy={`${m.end_y_percent}%`} r={8} fill="white" stroke="#3b82f6" strokeWidth={2} onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'end')} />
+                                    </>
+                                  )}
+                                </>
+                              )}
+
+                              {m.markup_type === 'pin' && <circle cx={`${m.x_percent}%`} cy={`${m.y_percent}%`} r={isSelected ? 16 : 10} fill={color} stroke="white" strokeWidth={2} />}
+                              
+                              {/* TEXT MARKUP (WITH DYNAMIC RESIZING) */}
+                              {m.markup_type === 'text' && (
+                                <g>
+                                  <rect 
+                                    x={`${m.x_percent - 1}%`} 
+                                    y={`${m.y_percent - 4}%`} 
+                                    width={`${Math.max(10, Math.abs(m.end_x_percent - m.x_percent))}%`} 
+                                    height={`${Math.max(5, Math.abs(m.end_y_percent - m.y_percent))}%`} 
+                                    fill="transparent" 
+                                  />
+                                  <text 
+                                    x={`${m.x_percent}%`} 
+                                    y={`${m.y_percent}%`} 
+                                    fill={color} 
+                                    fontSize={Math.max(12, Math.abs(m.end_x_percent - m.x_percent) * 4)} 
+                                    className="font-black italic select-none pointer-events-none"
+                                    style={{ paintOrder: 'stroke', stroke: 'black', strokeWidth: '0.5px' }}
+                                  >
+                                    {m.markup_text}
+                                  </text>
+                                  {isSelected && (
+                                    <circle 
+                                      cx={`${m.end_x_percent}%`} 
+                                      cy={`${m.end_y_percent}%`} 
+                                      r={8} 
+                                      fill="white" 
+                                      stroke="#3b82f6" 
+                                      strokeWidth={2} 
+                                      className="cursor-nwse-resize" 
+                                      onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'br')} 
+                                    />
+                                  )}
+                                </g>
+                              )}
+                            </g>
+                          )
+                        })}
+
+                        {/* DRAW PREVIEWS */}
+                        {interaction?.type === 'draw' && activeTool === 'cloud' && <rect x={`${Math.min(startPos.x, lastPos.x)}%`} y={`${Math.min(startPos.y, lastPos.y)}%`} width={`${Math.abs(lastPos.x - startPos.x)}%`} height={`${Math.abs(lastPos.y - startPos.y)}%`} fill="rgba(59,130,246,0.1)" stroke="#3b82f6" strokeWidth={2} strokeDasharray="8,4" rx={10} />}
+                        {interaction?.type === 'draw' && activeTool === 'arrow' && <line x1={`${startPos.x}%`} y1={`${startPos.y}%`} x2={`${lastPos.x}%`} y2={`${lastPos.y}%`} stroke="#3b82f6" strokeWidth={4} markerEnd="url(#arrowhead-blue)" />}
                         
-                        return (
-                          <g key={m.id} className={activeTool === 'select' ? 'cursor-move' : ''} onMouseDown={(e) => handleShapeDown(e, m.id, 'move')} onTouchStart={(e) => handleShapeDown(e, m.id, 'move')}>
-                            {m.markup_type === 'cloud' && (
-                              <>
-                                <rect x={`${Math.min(m.x_percent, m.end_x_percent)}%`} y={`${Math.min(m.y_percent, m.end_y_percent)}%`} width={`${Math.abs(m.end_x_percent - m.x_percent)}%`} height={`${Math.abs(m.end_y_percent - m.y_percent)}%`} fill={isSelected ? "rgba(59,130,246,0.1)" : "rgba(220,38,38,0.1)"} stroke={isSelected ? "#3b82f6" : "#dc2626"} strokeWidth={dynamicStroke} strokeDasharray={`8,4`} rx={10} />
-                                {isSelected && <circle cx={`${Math.max(m.x_percent, m.end_x_percent)}%`} cy={`${Math.max(m.y_percent, m.end_y_percent)}%`} r={8} fill="white" stroke="#3b82f6" strokeWidth={2} className="cursor-nwse-resize print:hidden" onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'br')} onTouchStart={(e) => handleShapeDown(e, m.id, 'resize', 'br')} />}
-                              </>
-                            )}
-
-                            {m.markup_type === 'arrow' && (
-                              <>
-                                <line x1={`${m.x_percent}%`} y1={`${m.y_percent}%`} x2={`${m.end_x_percent}%`} y2={`${m.end_y_percent}%`} stroke={isSelected ? "#3b82f6" : "#dc2626"} strokeWidth={dynamicStroke * 1.5} markerEnd={isSelected ? "url(#arrowhead-blue)" : "url(#arrowhead-red)"} />
-                                {isSelected && (
-                                  <>
-                                    <circle cx={`${m.x_percent}%`} cy={`${m.y_percent}%`} r={8} fill="white" stroke="#3b82f6" strokeWidth={2} className="print:hidden" onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'start')} onTouchStart={(e) => handleShapeDown(e, m.id, 'resize', 'start')} />
-                                    <circle cx={`${m.end_x_percent}%`} cy={`${m.end_y_percent}%`} r={8} fill="white" stroke="#3b82f6" strokeWidth={2} className="print:hidden" onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'end')} onTouchStart={(e) => handleShapeDown(e, m.id, 'resize', 'end')} />
-                                  </>
-                                )}
-                              </>
-                            )}
-
-                            {m.markup_type === 'pin' && (
-                              <circle cx={`${m.x_percent}%`} cy={`${m.y_percent}%`} r={isSelected ? 16 : 10} fill={isSelected ? "#3b82f6" : "#dc2626"} stroke="white" strokeWidth={2} />
-                            )}
-
-                            {m.markup_type === 'text' && (
-                              <text x={`${m.x_percent}%`} y={`${m.y_percent}%`} fill={isSelected ? "#3b82f6" : "#dc2626"} fontSize={16} className="font-black italic select-none" style={{ paintOrder: 'stroke', stroke: 'black', strokeWidth: `0.5px` }}>{m.markup_text}</text>
-                            )}
-                          </g>
-                        )
-                      })}
-
-                      {interaction?.type === 'draw' && activeTool === 'cloud' && <rect x={`${Math.min(startPos.x, lastPos.x)}%`} y={`${Math.min(startPos.y, lastPos.y)}%`} width={`${Math.abs(lastPos.x - startPos.x)}%`} height={`${Math.abs(lastPos.y - startPos.y)}%`} fill="rgba(59,130,246,0.1)" stroke="#3b82f6" strokeWidth={2} strokeDasharray={`8,4`} rx={10} />}
-                      {interaction?.type === 'draw' && activeTool === 'arrow' && <line x1={`${startPos.x}%`} y1={`${startPos.y}%`} x2={`${lastPos.x}%`} y2={`${lastPos.y}%`} stroke="#3b82f6" strokeWidth={4} markerEnd="url(#arrowhead-blue)" />}
-                      
-                      <defs>
-                        <marker id="arrowhead-red" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#dc2626" /></marker>
-                        <marker id="arrowhead-blue" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6" /></marker>
-                      </defs>
+                        <defs>
+                          <marker id="arrowhead-red" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#dc2626" /></marker>
+                          <marker id="arrowhead-blue" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6" /></marker>
+                        </defs>
                     </svg>
                   )}
                 </div>
@@ -293,50 +369,6 @@ export default function ProPlanViewer() {
           )}
         </TransformWrapper>
       </div>
-
-      {/* SUBMITTAL LINKING MODAL */}
-      {showLinkModal && (
-        <div className="fixed inset-0 bg-slate-950/90 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
-          <div className="bg-slate-900 border-2 border-amber-600 p-8 rounded-[40px] max-w-lg w-full space-y-6 shadow-2xl">
-            <h2 className="text-2xl font-black text-white uppercase italic text-center">Attach to Submittal</h2>
-            <p className="text-[10px] font-black text-slate-500 uppercase text-center tracking-widest">Link this markup to an existing approval item.</p>
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-              {openSubmittals.length > 0 ? openSubmittals.map(s => (
-                <button key={s.id} onClick={() => linkDrawingToSubmittal(s.id)} className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl text-left font-bold text-white hover:border-amber-500 transition-all flex items-center justify-between group">
-                  <span className="truncate">{s.title}</span>
-                  <LinkIcon size={14} className="text-slate-600 group-hover:text-amber-500" />
-                </button>
-              )) : (
-                <div className="p-4 text-center text-slate-600 text-xs font-bold uppercase">No submittals found for this project</div>
-              )}
-            </div>
-            <button onClick={() => setShowLinkModal(false)} className="w-full bg-slate-800 py-4 rounded-2xl font-black text-white uppercase text-[10px] tracking-widest hover:bg-slate-700">Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {/* PRINT STYLES - REMOVED TRANSFORM RESET TO CAPTURE CURRENT ZOOM */}
-      <style jsx global>{`
-        @media print {
-          @page { margin: 0; size: auto; }
-          body { background: white; margin: 0; padding: 0; }
-          .print\\:hidden { display: none !important; }
-          .print\\:bg-white { background: white !important; }
-          
-          /* Allow the browser to capture the current transform/zoom level */
-          .react-transform-wrapper {
-            overflow: visible !important;
-          }
-          .react-transform-component {
-            width: 100% !important;
-            height: auto !important;
-          }
-        }
-
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #020617; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
-      `}</style>
     </div>
   )
 }

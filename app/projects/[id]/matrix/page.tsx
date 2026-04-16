@@ -10,14 +10,14 @@ import {
   CheckCircle2, AlertTriangle, Clock, XCircle, Send, Loader2, Upload, FileText
 } from 'lucide-react'
 
-// Standard Ontario Multi-Unit Inspection Phases
 const INSPECTION_PHASES = [
   'Underground Plumbing',
   'Footing / Foundation',
-  'Framing',
   'Rough Plumbing',
   'Rough HVAC',
   'ESA Rough-In',
+  'Framing',
+  'Firestopping',
   'Insulation / Vapor',
   'Final Plumbing',
   'Final HVAC',
@@ -42,17 +42,15 @@ export default function InspectionMatrix() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [project, setProject] = useState<any>(null)
   
-  // Matrix Data
   const [units, setUnits] = useState<string[]>([])
   const [inspections, setInspections] = useState<any[]>([])
 
-  // UI Modes
   const [requestMode, setRequestMode] = useState(false)
   const [selectedRequests, setSelectedRequests] = useState<string[]>([]) 
   
-  // Modals
   const [showAddUnit, setShowAddUnit] = useState(false)
   const [activeCell, setActiveCell] = useState<CellData | null>(null)
 
@@ -60,7 +58,7 @@ export default function InspectionMatrix() {
     if (!id) return
     setLoading(true)
     const [projData, insData] = await Promise.all([
-      supabase.from('projects').select('name').eq('id', id).single(),
+      supabase.from('projects').select('name, address').eq('id', id).single(),
       supabase.from('project_inspections').select('*').eq('project_id', id)
     ])
     
@@ -76,9 +74,7 @@ export default function InspectionMatrix() {
 
   useEffect(() => { fetchData() }, [id])
 
-  // --- ACTIONS ---
-
-  const handleAddUnit = async (e: React.FormEvent) => {
+  const handleAddUnit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const fd = new FormData(e.currentTarget)
     const unitName = fd.get('unit_name') as string
@@ -97,43 +93,27 @@ export default function InspectionMatrix() {
     setSaving(false)
   }
 
-  // UPDATED: Now includes the auto-log feature
   const handleUpdateStatus = async (newStatus: string) => {
     if (!activeCell) return
     setSaving(true)
     
-    // 1. Update the inspection cell
     await supabase.from('project_inspections')
       .update({ status: newStatus, notes: activeCell.notes })
       .eq('project_id', id)
       .eq('unit_name', activeCell.unit)
       .eq('inspection_type', activeCell.phase)
       
-    // 2. AUTOMATIC LOGGING TRIGGER
     if (newStatus === 'Pass' || newStatus === 'Fail') {
       const today = new Date().toISOString().split('T')[0]
       const autoNote = `📋 INSPECTION ${newStatus.toUpperCase()}: ${activeCell.unit} - ${activeCell.phase} ${activeCell.notes ? `(${activeCell.notes})` : ''}`
 
-      // Check if a Daily Log exists for today
-      const { data: existingLog } = await supabase
-        .from('daily_logs')
-        .select('id, work_performed')
-        .eq('project_id', id)
-        .eq('log_date', today)
-        .maybeSingle()
+      const { data: existingLog } = await supabase.from('daily_logs').select('id, work_performed').eq('project_id', id).eq('log_date', today).maybeSingle()
 
       if (existingLog) {
-        // Append the note to today's log
         const updatedNotes = existingLog.work_performed ? `${existingLog.work_performed}\n${autoNote}` : autoNote
         await supabase.from('daily_logs').update({ work_performed: updatedNotes }).eq('id', existingLog.id)
       } else {
-        // Create a fresh Draft log with this note
-        await supabase.from('daily_logs').insert([{
-          project_id: id,
-          log_date: today,
-          work_performed: autoNote,
-          status: 'Draft'
-        }])
+        await supabase.from('daily_logs').insert([{ project_id: id, log_date: today, work_performed: autoNote, status: 'Draft' }])
       }
     }
 
@@ -154,13 +134,7 @@ export default function InspectionMatrix() {
     
     if (!sErr) {
       const { data: u } = supabase.storage.from('project-files').getPublicUrl(path)
-      
-      await supabase.from('project_inspections')
-        .update({ document_url: u.publicUrl })
-        .eq('project_id', id)
-        .eq('unit_name', activeCell.unit)
-        .eq('inspection_type', activeCell.phase)
-
+      await supabase.from('project_inspections').update({ document_url: u.publicUrl }).eq('project_id', id).eq('unit_name', activeCell.unit).eq('inspection_type', activeCell.phase)
       setActiveCell({ ...activeCell, document_url: u.publicUrl })
       fetchData() 
     } else {
@@ -189,8 +163,119 @@ export default function InspectionMatrix() {
     return inspections.find(i => i.unit_name === unit && i.inspection_type === phase) || { status: 'Not Ready', document_url: null }
   }
 
-  const handlePrint = () => {
-    window.print()
+// --- NATIVE AUTOTABLE PDF EXPORTER (OFFICIAL DOCUMENTS) ---
+  const handleExportPDF = async () => {
+    setExporting(true)
+    
+    try {
+      // Dynamic imports to prevent server-side crashes
+      const { jsPDF } = await import('jspdf')
+      const autoTable = (await import('jspdf-autotable')).default
+
+      // Document Setup: Portrait for letters, Landscape for the wide matrix
+      const doc = new jsPDF(requestMode ? 'portrait' : 'landscape')
+
+      // --- DOCUMENT HEADER ---
+      doc.setFontSize(22)
+      doc.setTextColor(15, 23, 42) // Slate 900
+      doc.setFont("helvetica", "bold")
+      doc.text(requestMode ? "INSPECTION REQUEST" : "MASTER INSPECTION STATUS", 14, 22)
+
+      doc.setFontSize(10)
+      doc.setFont("helvetica", "normal")
+      doc.setTextColor(100, 116, 139) // Slate 500
+      doc.text(`Project: ${project?.name || 'N/A'}`, 14, 30)
+      doc.text(`Address: ${project?.address || 'N/A'}`, 14, 35)
+      doc.text(`Date Generated: ${new Date().toLocaleDateString()}`, 14, 40)
+      doc.text(`Generated By: Site Superintendent`, 14, 45)
+
+      if (requestMode) {
+        // --- MODE 1: BATCH REQUEST FORM ---
+        const tableData = selectedRequests.map(req => {
+          const [unit, phase] = req.split('|')
+          return [unit, phase, "REQUESTED", ""] // Empty column for inspector notes
+        })
+
+        autoTable(doc, {
+          startY: 55,
+          head: [['Unit / Lot', 'Inspection Phase', 'Status', 'Inspector Notes / Sign-off']],
+          body: tableData,
+          theme: 'grid',
+          headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold' }, // Blue 600
+          bodyStyles: { minCellHeight: 15, valign: 'middle' },
+          columnStyles: { 
+            0: { fontStyle: 'bold' },
+            3: { cellWidth: 80 } // Give the inspector room to write
+          }
+        })
+
+        // Add Signature Lines
+        const finalY = (doc as any).lastAutoTable.finalY || 100
+        doc.setFontSize(10)
+        doc.setTextColor(15, 23, 42)
+        doc.text("Authorized Site Signature: ___________________________", 14, finalY + 30)
+        doc.text("Date: ________________", 120, finalY + 30)
+
+      } else {
+        // --- MODE 2: FULL WIDE MATRIX ---
+        const tableHead = ['Unit', ...INSPECTION_PHASES]
+        const tableBody = units.map(unit => [
+          unit,
+          ...INSPECTION_PHASES.map(phase => getCellRecord(unit, phase).status)
+        ])
+
+        autoTable(doc, {
+          startY: 55,
+          head: [tableHead],
+          body: tableBody,
+          theme: 'grid',
+          styles: { fontSize: 7, halign: 'center', valign: 'middle' },
+          headStyles: { fillColor: [15, 23, 42], textColor: 255, halign: 'center' }, // Slate 900
+          columnStyles: { 0: { fontStyle: 'bold', halign: 'left', fillColor: [241, 245, 249] } },
+          didParseCell: function(data) {
+            // Re-create the UI colors inside the PDF cells
+            if (data.section === 'body' && data.column.index > 0) {
+              const status = data.cell.raw
+              if (status === 'Pass') { data.cell.styles.fillColor = [16, 185, 129]; data.cell.styles.textColor = 255; }
+              else if (status === 'Requested') { data.cell.styles.fillColor = [59, 130, 246]; data.cell.styles.textColor = 255; }
+              else if (status === 'Partial') { data.cell.styles.fillColor = [245, 158, 11]; data.cell.styles.textColor = 255; }
+              else if (status === 'Fail') { data.cell.styles.fillColor = [239, 68, 68]; data.cell.styles.textColor = 255; }
+              else { data.cell.styles.textColor = 150; } // 'Not Ready' gray text
+            }
+          }
+        })
+      }
+
+      // Download the file
+      const fileName = requestMode ? `Inspection_Request_${project?.name}.pdf` : `Matrix_Status_${project?.name}.pdf`
+      doc.save(fileName.replace(/\s+/g, '_'))
+
+      // --- AUTOMATIC STATUS UPDATE & RESET ---
+      if (requestMode) {
+        // Run database updates in parallel for all selected cells
+        const updates = selectedRequests.map(req => {
+          const [unit, phase] = req.split('|')
+          return supabase.from('project_inspections')
+            .update({ status: 'Requested' })
+            .eq('project_id', id)
+            .eq('unit_name', unit)
+            .eq('inspection_type', phase)
+        })
+        
+        await Promise.all(updates)
+        
+        // Clear UI state and fetch fresh data so cells instantly turn blue
+        setRequestMode(false)
+        setSelectedRequests([])
+        fetchData() 
+      }
+      
+    } catch (err) {
+      console.error("PDF Export Error:", err)
+      alert("Export failed. Please check the browser console for details.")
+    }
+    
+    setExporting(false)
   }
 
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Rendering Matrix...</div>
@@ -200,34 +285,23 @@ export default function InspectionMatrix() {
   const progressPercent = totalInspections === 0 ? 0 : Math.round((passedInspections / totalInspections) * 100)
 
   return (
-    <div className="max-w-[1800px] mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32 print:bg-white print:text-black">
-      
-      <style dangerouslySetInnerHTML={{__html: `
-        @media print {
-          @page { size: landscape; margin: 10mm; }
-          body { background: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          .print-hidden { display: none !important; }
-          .print-border { border-color: #cbd5e1 !important; }
-          .print-text { color: #0f172a !important; }
-          .print-bg-white { background-color: #ffffff !important; }
-          .print-bg-stripes { background-color: #f8fafc !important; }
-        }
-      `}} />
+    <div className="max-w-[1800px] mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
 
       {/* HEADER */}
-      <div className="mb-8 border-b-4 border-blue-600 pb-6 flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 print-border">
+      <div className="mb-8 border-b-4 border-blue-600 pb-6 flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6">
         <div>
-          <button onClick={() => router.push(`/projects/${id}`)} className="text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white flex items-center gap-1 transition-all print-hidden"><ChevronLeft size={12}/> War Room</button>
-          <h1 className="text-4xl font-black text-white print-text tracking-tighter uppercase italic leading-none">Inspection <span className="text-blue-500">Matrix</span></h1>
+          <button onClick={() => router.push(`/projects/${id}`)} className="text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white flex items-center gap-1 transition-all"><ChevronLeft size={12}/> War Room</button>
+          <h1 className="text-4xl font-black text-white tracking-tighter uppercase italic leading-none">Inspection <span className="text-blue-500">Matrix</span></h1>
           <p className="text-[11px] font-black text-slate-500 uppercase tracking-widest mt-2">{project?.name}</p>
         </div>
         
-        <div className="flex flex-wrap gap-3 print-hidden">
+        <div className="flex flex-wrap gap-3">
           {requestMode ? (
             <>
               <button onClick={() => { setRequestMode(false); setSelectedRequests([]); }} className="bg-slate-800 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase transition-all">Cancel</button>
-              <button onClick={handlePrint} disabled={selectedRequests.length === 0} className="bg-amber-500 text-slate-950 text-[10px] font-black px-6 py-4 rounded-2xl uppercase transition-all shadow-xl shadow-amber-900/20 flex items-center gap-2 disabled:opacity-50">
-                <Printer size={16}/> Print Selected Requests ({selectedRequests.length})
+              <button onClick={handleExportPDF} disabled={selectedRequests.length === 0 || exporting} className="bg-amber-500 text-slate-950 text-[10px] font-black px-6 py-4 rounded-2xl uppercase transition-all shadow-xl shadow-amber-900/20 flex items-center gap-2 disabled:opacity-50">
+                {exporting ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16}/>} 
+                Generate Request Form ({selectedRequests.length})
               </button>
             </>
           ) : (
@@ -238,8 +312,9 @@ export default function InspectionMatrix() {
                   <p className="text-sm font-black text-emerald-500">{progressPercent}%</p>
                 </div>
               </div>
-              <button onClick={handlePrint} className="bg-slate-800 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all flex items-center gap-2 shadow-xl">
-                <Printer size={14}/> Export Matrix
+              <button onClick={handleExportPDF} disabled={exporting} className="bg-slate-800 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all flex items-center gap-2 shadow-xl disabled:opacity-50">
+                {exporting ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14}/>} 
+                Export Matrix
               </button>
               <button onClick={() => setRequestMode(true)} className="bg-amber-600/10 text-amber-500 border border-amber-900/50 text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-amber-600 hover:text-white transition-all flex items-center gap-2 shadow-xl">
                 <Send size={14}/> Batch Request
@@ -253,30 +328,31 @@ export default function InspectionMatrix() {
       </div>
 
       {requestMode && (
-        <div className="bg-amber-500 text-slate-950 p-4 rounded-2xl mb-8 flex items-center justify-center gap-2 font-black uppercase text-xs tracking-widest shadow-xl print-hidden">
-          <AlertTriangle size={16} /> Tap cells to select inspections for municipal/ESA request
+        <div className="bg-amber-500 text-slate-950 p-4 rounded-2xl mb-8 flex items-center justify-center gap-2 font-black uppercase text-xs tracking-widest shadow-xl">
+          <AlertTriangle size={16} /> Select cells, then hit "Generate Request Form" for the City/ESA.
         </div>
       )}
 
       {/* MATRIX CANVAS */}
-      <div className="bg-slate-900 print-bg-white rounded-[32px] border border-slate-800 print-border shadow-2xl overflow-hidden print:overflow-visible">
-        <div className="overflow-x-auto custom-scrollbar max-h-[70vh] print:max-h-none print:overflow-visible">
+      <div className="bg-slate-900 rounded-[32px] border border-slate-800 shadow-2xl overflow-hidden">
+        
+        <div className="overflow-x-auto custom-scrollbar p-1 pb-6 bg-slate-950 w-full inline-block min-w-full">
           
           <table className="w-full text-left border-collapse">
-            <thead className="bg-slate-950 print-bg-stripes sticky top-0 z-10 shadow-sm border-b border-slate-800 print-border">
+            <thead className="bg-slate-950 sticky top-0 z-10 shadow-sm border-b border-slate-800">
               <tr>
-                <th className="p-5 font-black text-[10px] text-slate-500 uppercase tracking-widest border-r border-slate-800 print-border min-w-[150px] sticky left-0 bg-slate-950 print-bg-stripes z-20">
+                <th className="p-5 font-black text-[10px] text-slate-500 uppercase tracking-widest border-r border-slate-800 min-w-[150px] sticky left-0 bg-slate-950 z-20">
                   Unit / Lot
                 </th>
                 {INSPECTION_PHASES.map((phase, i) => (
-                  <th key={i} className="p-4 font-black text-[10px] text-slate-400 uppercase tracking-wider border-r border-slate-800 print-border min-w-[140px] text-center print-text">
+                  <th key={i} className="p-4 font-black text-[10px] text-slate-400 uppercase tracking-wider border-r border-slate-800 min-w-[140px] text-center">
                     {phase}
                   </th>
                 ))}
               </tr>
             </thead>
             
-            <tbody className="divide-y divide-slate-800/50 print-border">
+            <tbody className="divide-y divide-slate-800/50">
               {units.length === 0 && (
                 <tr>
                   <td colSpan={INSPECTION_PHASES.length + 1} className="p-12 text-center text-[10px] font-black uppercase tracking-widest text-slate-600">
@@ -286,30 +362,31 @@ export default function InspectionMatrix() {
               )}
               
               {units.map((unit) => (
-                <tr key={unit} className="hover:bg-slate-800/20 transition-colors print:hover:bg-transparent">
-                  <td className="p-5 font-black text-white print-text text-sm uppercase tracking-widest border-r border-slate-800 print-border sticky left-0 bg-slate-900 print-bg-white z-10">
+                <tr key={unit} className="hover:bg-slate-800/20 transition-colors">
+                  <td className="p-5 font-black text-white text-sm uppercase tracking-widest border-r border-slate-800 sticky left-0 bg-slate-900 z-10">
                     {unit}
                   </td>
                   
                   {INSPECTION_PHASES.map((phase, cIdx) => {
                     const record = getCellRecord(unit, phase)
                     const isSelected = selectedRequests.includes(`${unit}|${phase}`)
-                    
+                    const isDimmed = requestMode && !isSelected
+
                     return (
-                      <td key={cIdx} className="p-2 border-r border-slate-800 print-border align-middle">
+                      <td key={cIdx} className="p-2 border-r border-slate-800 align-middle">
                         <button 
                           onClick={() => handleCellClick(unit, phase)}
                           className={`relative w-full p-3 rounded-xl border transition-all text-center flex flex-col items-center justify-center gap-1 ${
                             isSelected ? 'bg-amber-500 text-slate-950 border-amber-400 ring-2 ring-amber-500 ring-offset-2 ring-offset-slate-900' :
                             STATUS_COLORS[record.status as keyof typeof STATUS_COLORS] || STATUS_COLORS['Not Ready']
-                          } ${requestMode ? 'cursor-pointer hover:scale-95' : 'hover:opacity-80'}`}
+                          } ${requestMode ? 'cursor-pointer hover:scale-95' : 'hover:opacity-80'} ${isDimmed ? 'opacity-20 grayscale' : ''}`}
                         >
-                          <span className="text-[9px] font-black uppercase tracking-widest print-text">
+                          <span className="text-[9px] font-black uppercase tracking-widest">
                             {isSelected ? 'SELECTED' : record.status}
                           </span>
                           
                           {record.document_url && !isSelected && (
-                            <Paperclip size={10} className="absolute top-1 right-1 opacity-60 print-hidden" />
+                            <Paperclip size={10} className="absolute top-1 right-1 opacity-60" />
                           )}
                         </button>
                       </td>
@@ -324,7 +401,7 @@ export default function InspectionMatrix() {
 
       {/* --- ADD UNIT MODAL --- */}
       {showAddUnit && (
-        <div className="fixed inset-0 bg-slate-950/90 z-[100] flex items-center justify-center p-4 backdrop-blur-md print-hidden">
+        <div className="fixed inset-0 bg-slate-950/90 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <form onSubmit={handleAddUnit} className="bg-slate-900 border-2 border-blue-600 p-8 rounded-[40px] max-w-md w-full space-y-6 shadow-2xl">
             <h2 className="text-2xl font-black text-white uppercase italic text-center">Add Unit to Matrix</h2>
             <input name="unit_name" required placeholder="Unit / Lot Number (e.g. Unit 101)" className="w-full p-5 bg-slate-950 border border-slate-800 rounded-xl font-bold text-white outline-none focus:border-blue-500 text-center text-xl uppercase" />
@@ -340,7 +417,7 @@ export default function InspectionMatrix() {
 
       {/* --- UPDATE STATUS & UPLOAD MODAL --- */}
       {activeCell && !requestMode && (
-        <div className="fixed inset-0 bg-slate-950/90 z-[100] flex items-center justify-center p-4 backdrop-blur-md print-hidden">
+        <div className="fixed inset-0 bg-slate-950/90 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <div className="bg-slate-900 border border-slate-800 p-8 rounded-[40px] max-w-md w-full space-y-6 shadow-2xl">
             
             <div className="text-center border-b border-slate-800 pb-4">

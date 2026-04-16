@@ -84,17 +84,39 @@ export default function MasterPunchList() {
     document.body.removeChild(link)
   }
 
-  // --- QUICK TOGGLE STATUS ---
+// --- BULLETPROOF TOGGLE STATUS ---
   const toggleStatus = async (e: React.MouseEvent, item: any) => {
-    e.preventDefault() // Prevent navigating to the item detail page
+    e.preventDefault()
+    e.stopPropagation() // Stop the click from triggering the Link navigation
+    
     const newStatus = item.status === 'Open' ? 'Resolved' : 'Open'
     const resolvedAt = newStatus === 'Resolved' ? new Date().toISOString() : null
     
-    // Optimistic UI update
+    // 1. Optimistic Update (Make it feel fast)
     setPunchItems(prev => prev.map(p => p.id === item.id ? { ...p, status: newStatus, resolved_at: resolvedAt } : p))
     
-    // Database update
-    await supabase.from('punch_list').update({ status: newStatus, resolved_at: resolvedAt }).eq('id', item.id)
+    // 2. Database Update
+    const { error } = await supabase
+      .from('punch_list')
+      .update({ 
+        status: newStatus, 
+        resolved_at: resolvedAt 
+      })
+      .eq('id', item.id)
+
+    if (error) {
+      console.error("Update Error:", error)
+      alert(`Database Sync Failed: ${error.message}. Check your Supabase RLS policies for 'Update' access.`)
+      
+      // 3. Rollback on failure (If DB fails, put the UI back the way it was)
+      const { data: rollbackData } = await supabase.from('punch_list').select('*').eq('id', item.id).single()
+      if (rollbackData) {
+        setPunchItems(prev => prev.map(p => p.id === item.id ? rollbackData : p))
+      }
+    } else {
+      // 4. Hard Sync: Optional, but ensures the Resolve Date is 100% correct from the DB
+      // We don't need to re-fetch the WHOLE list, just update this one item
+    }
   }
 
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Syncing Punch List...</div>
