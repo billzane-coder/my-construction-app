@@ -178,16 +178,48 @@ export default function EditDailyLog() {
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-40 print:bg-white print:text-black print:pb-0" id="print-area">
       
-      {/* 🖨️ THE "ANNIHILATOR" PRINT FIX */}
+{/* 🖨️ THE "ANNIHILATOR" PRINT FIX */}
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
           @page { margin: 0.5in; size: portrait; }
-          * { overflow: visible !important; height: auto !important; max-height: none !important; position: static !important; }
-          html, body, #__next, main { background: white !important; display: block !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
-          div[class*="bg-slate-9"], div[class*="bg-slate-8"] { background-color: white !important; border-color: #cbd5e1 !important; color: black !important; }
+          
+          /* 1. DESTROY ALL SCROLL TRAPS */
+          * {
+            overflow: visible !important;
+            height: auto !important;
+            max-height: none !important;
+          }
+
+          /* 2. FORCE FULL WIDTH ON PAPER (FIXES THE LEFT-ALIGNMENT BUG) */
+          html, body, #__next, main, #print-area {
+            background: white !important;
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+
+          /* 3. NUKE TAILWIND DARK MODE BOXES */
+          div[class*="bg-slate-9"], div[class*="bg-slate-8"] {
+            background-color: white !important;
+            border-color: #cbd5e1 !important;
+            color: black !important;
+          }
+
+          /* 4. HIDE NON-DOCUMENT UI */
           .print\\:hidden { display: none !important; }
-          .print\\:break-inside-avoid { page-break-inside: avoid !important; }
-          p, h1, h2, h3, h4, span, div, label { color: black !important; text-shadow: none !important; }
+
+          /* 5. PREVENT AWKWARD PAGE BREAKS */
+          .print\\:break-inside-avoid {
+             page-break-inside: avoid !important;
+          }
+
+          /* 6. FORCE TEXT TO BLACK */
+          p, h1, h2, h3, h4, span, div, label {
+            color: black !important;
+            text-shadow: none !important;
+          }
         }
       `}} />
 
