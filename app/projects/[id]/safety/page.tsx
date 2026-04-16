@@ -18,12 +18,11 @@ export default function SafetyHub() {
   
   const [project, setProject] = useState<any>(null)
   const [walks, setWalks] = useState<any[]>([])
+  const [contacts, setContacts] = useState<any[]>([]) // NEW: State for trades
   const [loading, setLoading] = useState(true)
   
-  // Search & Filtering State
   const [searchTerm, setSearchTerm] = useState('')
   
-  // Modal States
   const [selectedWalk, setSelectedWalk] = useState<any>(null)
   const [showNewWalkModal, setShowNewWalkModal] = useState(false)
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false)
@@ -33,9 +32,10 @@ export default function SafetyHub() {
     if (!id) return
     setLoading(true)
     try {
-      const [p, w] = await Promise.all([
+      const [p, w, c] = await Promise.all([
         supabase.from('projects').select('name').eq('id', id).single(),
-        supabase.from('project_safety_walks').select('*').eq('project_id', id).order('created_at', { ascending: false })
+        supabase.from('project_safety_walks').select('*').eq('project_id', id).order('created_at', { ascending: false }),
+        supabase.from('project_contacts').select('id, company, trade_role').eq('project_id', id).order('company') // NEW: Fetch Trades
       ])
       
       if (p.error) throw p.error
@@ -43,9 +43,10 @@ export default function SafetyHub() {
 
       setProject(p.data)
       setWalks(w.data || [])
+      setContacts(c.data || [])
     } catch (err: any) {
       console.error("Data fetch error:", err)
-      alert("Failed to load safety walks. Check console for details.")
+      alert("Failed to load data. Check console.")
     } finally {
       setLoading(false)
     }
@@ -53,7 +54,6 @@ export default function SafetyHub() {
 
   useEffect(() => { fetchData() }, [id])
 
-  // Filter Logic
   const filteredWalks = walks.filter(walk => {
     const searchLower = searchTerm.toLowerCase()
     return (
@@ -63,49 +63,107 @@ export default function SafetyHub() {
     )
   })
 
-  // --- FORM SUBMIT HANDLER ---
+  // --- AUTOMATED PDF & FILING LOGIC ---
   const handleCreateWalk = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsSubmitting(true);
     
     try {
       const fd = new FormData(e.currentTarget);
+      const contactId = fd.get('contact_id') as string;
       
+      // Determine the company name for the walk record
+      const selectedContact = contacts.find(c => c.id === contactId);
+      const companyName = selectedContact ? selectedContact.company : 'Site-Wide';
+
+      const walkType = fd.get('walk_type') as string;
+      const status = fd.get('status') as string;
+      const inspectorName = fd.get('inspector_name') as string;
+      const notes = fd.get('notes') as string;
+
       const payload = {
         project_id: id,
-        walk_type: fd.get('walk_type'),
-        trade_company: fd.get('trade_company'),
-        inspector_name: fd.get('inspector_name'),
-        status: fd.get('status'),
-        notes: fd.get('notes')
+        walk_type: walkType,
+        trade_company: companyName,
+        inspector_name: inspectorName,
+        status: status,
+        notes: notes
       };
 
-      console.log("Attempting to save walk:", payload);
-
-      const { data, error } = await supabase
+      // 1. Save the walk record
+      const { data: walkData, error: walkError } = await supabase
         .from('project_safety_walks')
         .insert([payload])
-        .select();
+        .select()
+        .single();
 
-      if (error) {
-        console.error("SUPABASE ERROR:", error.message, error.details);
-        alert(`Save failed: ${error.message}`);
-        return;
+      if (walkError) throw walkError;
+
+      // 2. If a specific trade was selected, auto-generate and vault the PDF
+      if (contactId) {
+        // Build a clean background PDF using jsPDF
+        const doc = new jsPDF();
+        doc.setFontSize(22);
+        doc.text(`Official Site Safety Report`, 20, 20);
+        
+        doc.setFontSize(12);
+        doc.setTextColor(100);
+        doc.text(`Project: ${project?.name || 'Site'}`, 20, 30);
+        doc.text(`Date: ${new Date().toLocaleDateString()}`, 20, 36);
+        
+        doc.setTextColor(0);
+        doc.text(`Audit Type: ${walkType}`, 20, 50);
+        doc.text(`Sub-Trade Inspected: ${companyName}`, 20, 56);
+        doc.text(`Inspector: ${inspectorName}`, 20, 62);
+        
+        doc.setFontSize(14);
+        doc.setTextColor(status === 'Pass' ? 0 : 200, status === 'Pass' ? 150 : 0, 0);
+        doc.text(`Status: ${status === 'Pass' ? 'Compliant' : 'Action Required / Deficiencies'}`, 20, 72);
+        
+        doc.setTextColor(0);
+        doc.setFontSize(12);
+        doc.text(`Findings & Notes:`, 20, 86);
+        doc.setFontSize(10);
+        doc.text(notes || 'No additional notes provided.', 20, 92, { maxWidth: 170 });
+
+        // Convert to Blob and prepare for upload
+        const pdfBlob = doc.output('blob');
+        const fileName = `SafetyWalk_${companyName.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+        const filePath = `${id}/trades/${contactId}/Safety/${fileName}`;
+
+        // Upload to Storage
+        const { error: uploadError } = await supabase.storage.from('project-files').upload(filePath, pdfBlob);
+        
+        if (!uploadError) {
+          // Get public URL and save to submittals
+          const { data: urlData } = supabase.storage.from('project-files').getPublicUrl(filePath);
+          
+          await supabase.from('project_submittals').insert([{
+            project_id: id, 
+            contact_id: contactId, 
+            title: `${walkType} Audit`, 
+            category: 'Safety', 
+            url: urlData.publicUrl, 
+            status: status === 'Pass' ? 'Approved' : 'Action Required'
+          }]);
+        } else {
+          console.error("Failed to upload auto-PDF to vault:", uploadError);
+          // We don't throw here, because the walk itself saved successfully
+        }
       }
 
-      console.log("Walk saved successfully!", data);
       setShowNewWalkModal(false);
       fetchData(); // Refresh the table
 
-    } catch (err) {
+    } catch (err: any) {
       console.error("Crash during save:", err);
-      alert("Application error before reaching database. Check console.");
+      alert(`Save failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsSubmitting(false);
     }
   }
 
-  // --- PDF GENERATION ENGINE ---
+  // --- MANUAL PDF GENERATION ENGINE (For the View Button) ---
   const handleExportPDF = async () => {
     const reportElement = document.getElementById('pdf-report')
     if (!reportElement) return
@@ -161,7 +219,7 @@ export default function SafetyHub() {
         </button>
       </div>
 
-      {/* TOOLBAR: Search & Filters */}
+      {/* TOOLBAR */}
       <div className="flex flex-col sm:flex-row gap-4 mb-6 animate-in fade-in duration-500">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
@@ -175,7 +233,7 @@ export default function SafetyHub() {
         </div>
       </div>
 
-      {/* ROBUST DATA TABLE */}
+      {/* DATA TABLE */}
       <div className="bg-slate-900 border border-slate-800 rounded-[40px] overflow-hidden shadow-2xl animate-in fade-in duration-700">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[800px]">
@@ -246,7 +304,7 @@ export default function SafetyHub() {
         </div>
       </div>
 
-      {/* --- NEW WALK MODAL --- */}
+      {/* --- UPDATED NEW WALK MODAL --- */}
       {showNewWalkModal && (
         <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md overflow-y-auto">
           <form onSubmit={handleCreateWalk} className="bg-slate-900 border-2 border-emerald-600 p-8 md:p-10 rounded-[56px] max-w-2xl w-full space-y-6 shadow-2xl my-8">
@@ -277,9 +335,18 @@ export default function SafetyHub() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              {/* NEW: DYNAMIC TRADE DROPDOWN */}
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Sub-Trade Inspected</label>
-                <input name="trade_company" placeholder="e.g. Apex Framing (Or 'Site-Wide')" required className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-emerald-500" />
+                <select name="contact_id" className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-emerald-500 appearance-none cursor-pointer">
+                  <option value="">Site-Wide (General)</option>
+                  {contacts.map(trade => (
+                    <option key={trade.id} value={trade.id}>
+                      {trade.company} ({trade.trade_role})
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="space-y-2">
@@ -303,27 +370,22 @@ export default function SafetyHub() {
                 Cancel
               </button>
               <button type="submit" disabled={isSubmitting} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-5 rounded-3xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-emerald-900/30 transition-all flex justify-center items-center gap-2 disabled:opacity-50">
-                <Save size={16} /> {isSubmitting ? 'Saving...' : 'Save Report'}
+                <Save size={16} /> {isSubmitting ? 'Saving & Filing...' : 'Save Report'}
               </button>
             </div>
           </form>
         </div>
       )}
 
-      {/* --- THE PDF EXPORT MODAL --- */}
+      {/* --- PDF VIEW MODAL --- */}
       {selectedWalk && (
         <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-sm overflow-y-auto">
           <div className="max-w-3xl w-full my-8 flex flex-col gap-4">
-            
             <div className="flex justify-between items-center bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-2xl">
               <button onClick={() => setSelectedWalk(null)} className="text-[10px] font-black uppercase text-slate-400 hover:text-white flex items-center gap-2 transition-all">
                 <X size={16} /> Close
               </button>
-              <button 
-                onClick={handleExportPDF} 
-                disabled={isGeneratingPDF}
-                className="bg-blue-600 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 transition-all flex items-center gap-2 disabled:opacity-50"
-              >
+              <button onClick={handleExportPDF} disabled={isGeneratingPDF} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 transition-all flex items-center gap-2 disabled:opacity-50">
                 <FileDown size={16} /> {isGeneratingPDF ? 'Generating...' : 'Export to PDF'}
               </button>
             </div>
@@ -385,7 +447,6 @@ export default function SafetyHub() {
                 </div>
               </div>
             </div>
-            
           </div>
         </div>
       )}
