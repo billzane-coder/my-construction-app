@@ -1,71 +1,77 @@
 'use client'
 
-export const dynamic = 'force-dynamic' 
+export const dynamic = 'force-dynamic'
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { 
-  ChevronLeft, Plus, Download, ShieldCheck, 
-  Loader2, CheckCircle2, AlertCircle, FileText, Trash2
+  ChevronLeft, Printer, Plus, Paperclip,
+  CheckCircle2, AlertTriangle, Clock, XCircle, Send, Loader2, Upload, FileText, Trash2
 } from 'lucide-react'
 
-// --- 1. UPDATED PHASE SEQUENCE ---
+// --- RESTORED & EXPANDED PHASES (Old names kept exact so your data returns!) ---
 const INSPECTION_PHASES = [
-  'Footings',
-  'Backfill',
-  'U/G Plumbing',
-  'U/G Insulation',
-  'Slab / Floor',
-  'Rough Framing',
-  'Air Barrier',
-  'Plumbing Rough',
-  'HVAC Rough',
-  'Electrical (ESA)',
-  'Insulation',
-  'Drywall',
-  'Final / Occupancy'
+  'Footing / Foundation',
+  'Backfill',               // NEW
+  'Underground Plumbing',
+  'Underground Insulation', // NEW
+  'Framing',                // Kept original name so your framing data returns
+  'Air Barrier',            // NEW
+  'Rough Plumbing',
+  'Rough HVAC',
+  'ESA Rough-In',
+  'Firestopping',
+  'Insulation / Vapor',
+  'Final Plumbing',
+  'Final HVAC',
+  'ESA Final',
+  'Occupancy'
 ]
 
-const STATUS_COLORS: Record<string, string> = {
-  'Pending': 'bg-slate-900 border-slate-800 text-slate-600',
-  'Requested': 'bg-blue-600 border-blue-500 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]',
-  'Partial': 'bg-amber-500 border-amber-400 text-white',
-  'Pass': 'bg-emerald-500 border-emerald-400 text-white',
-  'Fail': 'bg-red-600 border-red-500 text-white',
-  'N/A': 'bg-slate-950 border-slate-900 text-slate-700 line-through opacity-50' // --- 2. NEW N/A STATUS ---
+const STATUS_COLORS = {
+  'Not Ready': 'bg-slate-950 text-slate-600 border-slate-800',
+  'Requested': 'bg-blue-950/40 text-blue-500 border-blue-900/50',
+  'Partial': 'bg-amber-950/40 text-amber-500 border-amber-900/50',
+  'Fail': 'bg-red-950/40 text-red-500 border-red-900/50',
+  'Pass': 'bg-emerald-950/30 text-emerald-500 border-emerald-900/50',
+  'N/A': 'bg-slate-950/50 text-slate-700 line-through opacity-50 border-slate-900' // N/A STATUS
 }
+
+type CellData = { unit: string, phase: string, status: string, notes: string, document_url: string | null }
 
 export default function InspectionMatrix() {
   const { id } = useParams()
   const router = useRouter()
   
-  const [project, setProject] = useState<any>(null)
-  const [inspections, setInspections] = useState<any[]>([])
-  const [units, setUnits] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
-  
-  // Modal States
+  const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [project, setProject] = useState<any>(null)
+  
+  const [units, setUnits] = useState<string[]>([])
+  const [inspections, setInspections] = useState<any[]>([])
+
   const [requestMode, setRequestMode] = useState(false)
-  const [selectedRequests, setSelectedRequests] = useState<string[]>([])
-  const [activeCell, setActiveCell] = useState<{unit: string, phase: string, status: string} | null>(null)
+  const [selectedRequests, setSelectedRequests] = useState<string[]>([]) 
+  
+  const [showAddUnit, setShowAddUnit] = useState(false)
+  const [activeCell, setActiveCell] = useState<CellData | null>(null)
 
   const fetchData = async () => {
     if (!id) return
     setLoading(true)
     const [projData, insData] = await Promise.all([
-      supabase.from('projects').select('*').eq('id', id).single(),
+      supabase.from('projects').select('name, address').eq('id', id).single(),
       supabase.from('project_inspections').select('*').eq('project_id', id)
     ])
-
+    
     if (projData.data) setProject(projData.data)
+    
     if (insData.data) {
       setInspections(insData.data)
-      const uniqueUnits = Array.from(new Set(insData.data.map((i: any) => i.unit_name)))
-      // Custom sort to keep "Building/Overall" at the top if it exists
-      uniqueUnits.sort((a: string, b: string) => {
+      const uniqueUnits = Array.from(new Set(insData.data.map(i => i.unit_name))).sort((a: any, b: any) => {
         if (a.toLowerCase().includes('building') || a.toLowerCase().includes('overall')) return -1;
         if (b.toLowerCase().includes('building') || b.toLowerCase().includes('overall')) return 1;
         return a.localeCompare(b, undefined, { numeric: true });
@@ -77,64 +83,112 @@ export default function InspectionMatrix() {
 
   useEffect(() => { fetchData() }, [id])
 
-  const getCellRecord = (unit: string, phase: string) => {
-    return inspections.find(i => i.unit_name === unit && i.inspection_type === phase) || { status: 'Pending' }
-  }
-
-  const handleAddUnit = async () => {
-    const name = prompt('Enter Unit/Lot Name (e.g. "Lot 12" or "Building A - Exterior"):')
-    if (!name) return
-
+  const handleAddUnit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    const fd = new FormData(e.currentTarget)
+    const unitName = fd.get('unit_name') as string
+    
+    setSaving(true)
     const newRecords = INSPECTION_PHASES.map(phase => ({
       project_id: id,
-      unit_name: name,
+      unit_name: unitName,
       inspection_type: phase,
-      status: 'Pending'
+      status: 'Not Ready'
     }))
-
+    
     await supabase.from('project_inspections').insert(newRecords)
+    setShowAddUnit(false)
     fetchData()
+    setSaving(false)
   }
 
-  // --- 3. DELETE UNIT LOGIC ---
+  // --- DELETE LOT LOGIC ---
   const handleDeleteUnit = async (unitName: string) => {
-    if (!confirm(`Are you sure you want to completely delete "${unitName}"? This will erase all inspection records for this row.`)) return
-    
+    if (!confirm(`Delete "${unitName}"? This will erase all inspection records for this row.`)) return
     await supabase.from('project_inspections').delete().eq('project_id', id).eq('unit_name', unitName)
     fetchData()
   }
 
-  const handleStatusChange = async (newStatus: string) => {
+  const handleUpdateStatus = async (newStatus: string) => {
     if (!activeCell) return
-    const { unit, phase } = activeCell
+    setSaving(true)
     
-    // Optimistic UI update
-    setInspections(prev => prev.map(i => i.unit_name === unit && i.inspection_type === phase ? { ...i, status: newStatus } : i))
-    setActiveCell(null)
+    await supabase.from('project_inspections')
+      .update({ status: newStatus, notes: activeCell.notes })
+      .eq('project_id', id)
+      .eq('unit_name', activeCell.unit)
+      .eq('inspection_type', activeCell.phase)
+      
+    if (newStatus === 'Pass' || newStatus === 'Fail') {
+      const today = new Date().toISOString().split('T')[0]
+      const autoNote = `📋 INSPECTION ${newStatus.toUpperCase()}: ${activeCell.unit} - ${activeCell.phase} ${activeCell.notes ? `(${activeCell.notes})` : ''}`
 
-    // DB Update
-    const existing = inspections.find(i => i.unit_name === unit && i.inspection_type === phase)
-    if (existing?.id) {
-      await supabase.from('project_inspections').update({ status: newStatus }).eq('id', existing.id)
-    } else {
-      await supabase.from('project_inspections').insert([{ project_id: id, unit_name: unit, inspection_type: phase, status: newStatus }])
+      const { data: existingLog } = await supabase.from('daily_logs').select('id, work_performed').eq('project_id', id).eq('log_date', today).maybeSingle()
+
+      if (existingLog) {
+        const updatedNotes = existingLog.work_performed ? `${existingLog.work_performed}\n${autoNote}` : autoNote
+        await supabase.from('daily_logs').update({ work_performed: updatedNotes }).eq('id', existingLog.id)
+      } else {
+        await supabase.from('daily_logs').insert([{ project_id: id, log_date: today, work_performed: autoNote, status: 'Draft' }])
+      }
     }
+
+    setActiveCell(null)
+    fetchData()
+    setSaving(false)
   }
 
-  const toggleRequestSelection = (unit: string, phase: string) => {
-    const key = `${unit}|${phase}`
-    setSelectedRequests(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
+  const handleUploadSlip = async (file: File) => {
+    if (!activeCell) return
+    setUploading(true)
+    
+    const safeUnit = activeCell.unit.replace(/[^a-z0-9]/gi, '_').toLowerCase()
+    const safePhase = activeCell.phase.replace(/[^a-z0-9]/gi, '_').toLowerCase()
+    
+    const path = `${id}/inspections/${safeUnit}_${safePhase}_${Date.now()}.pdf`
+    const { error: sErr } = await supabase.storage.from('project-files').upload(path, file)
+    
+    if (!sErr) {
+      const { data: u } = supabase.storage.from('project-files').getPublicUrl(path)
+      await supabase.from('project_inspections').update({ document_url: u.publicUrl }).eq('project_id', id).eq('unit_name', activeCell.unit).eq('inspection_type', activeCell.phase)
+      setActiveCell({ ...activeCell, document_url: u.publicUrl })
+      fetchData() 
+    } else {
+      alert(`Upload failed: ${sErr.message}`)
+    }
+    setUploading(false)
   }
 
-  // --- 4. MASTER PDF EXPORTER WITH AUTO-ARCHIVE ---
+  const handleCellClick = (unit: string, phase: string) => {
+    if (requestMode) {
+      const key = `${unit}|${phase}`
+      setSelectedRequests(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
+      return
+    }
+
+    const record = inspections.find(i => i.unit_name === unit && i.inspection_type === phase)
+    setActiveCell({
+      unit, phase, 
+      status: record?.status || 'Not Ready', 
+      notes: record?.notes || '',
+      document_url: record?.document_url || null
+    })
+  }
+
+  const getCellRecord = (unit: string, phase: string) => {
+    return inspections.find(i => i.unit_name === unit && i.inspection_type === phase) || { status: 'Not Ready', document_url: null }
+  }
+
+  // --- MASTER PDF EXPORTER WITH AUTO-ARCHIVE ---
   const handleExportPDF = async () => {
     setExporting(true)
+    
     try {
       const { jsPDF } = await import('jspdf')
       const autoTable = (await import('jspdf-autotable')).default
+
       const doc = new jsPDF(requestMode ? 'portrait' : 'landscape')
 
-      // Header
       doc.setFontSize(22)
       doc.setTextColor(15, 23, 42)
       doc.setFont("helvetica", "bold")
@@ -145,28 +199,37 @@ export default function InspectionMatrix() {
       doc.setTextColor(100, 116, 139)
       doc.text(`Project: ${project?.name || 'N/A'}`, 14, 30)
       doc.text(`Address: ${project?.address || 'N/A'}`, 14, 35)
-      doc.text(`Date: ${new Date().toLocaleDateString()}`, 14, 40)
+      doc.text(`Date Generated: ${new Date().toLocaleDateString()}`, 14, 40)
+      doc.text(`Generated By: Site Superintendent`, 14, 45)
 
       if (requestMode) {
         const tableData = selectedRequests.map(req => {
           const [unit, phase] = req.split('|')
           return [unit, phase, "REQUESTED", ""]
         })
+
         autoTable(doc, {
           startY: 55,
-          head: [['Unit / Lot', 'Inspection Phase', 'Status', 'Inspector Sign-off']],
+          head: [['Unit / Lot', 'Inspection Phase', 'Status', 'Inspector Notes / Sign-off']],
           body: tableData,
           theme: 'grid',
-          headStyles: { fillColor: [59, 130, 246] },
-          bodyStyles: { minCellHeight: 15, valign: 'middle' }
+          headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold' },
+          bodyStyles: { minCellHeight: 15, valign: 'middle' },
+          columnStyles: { 0: { fontStyle: 'bold' }, 3: { cellWidth: 80 } }
         })
+
+        const finalY = (doc as any).lastAutoTable.finalY || 100
+        doc.setFontSize(10)
+        doc.text("Authorized Site Signature: ___________________________", 14, finalY + 30)
+        doc.text("Date: ________________", 120, finalY + 30)
+
       } else {
         const tableHead = ['Unit', ...INSPECTION_PHASES]
         const tableBody = units.map(unit => [unit, ...INSPECTION_PHASES.map(phase => getCellRecord(unit, phase).status)])
         autoTable(doc, {
-          startY: 50, head: [tableHead], body: tableBody, theme: 'grid',
+          startY: 55, head: [tableHead], body: tableBody, theme: 'grid',
           styles: { fontSize: 7, halign: 'center', valign: 'middle' },
-          headStyles: { fillColor: [15, 23, 42] },
+          headStyles: { fillColor: [15, 23, 42], textColor: 255 },
           didParseCell: (data) => {
             if (data.section === 'body' && data.column.index > 0) {
               const s = data.cell.raw
@@ -181,19 +244,19 @@ export default function InspectionMatrix() {
         })
       }
 
-      const fileName = requestMode ? `Request_${project?.name}.pdf` : `Matrix_${project?.name}.pdf`
+      const fileName = requestMode ? `Inspection_Request_${project?.name}.pdf` : `Matrix_Status_${project?.name}.pdf`
       doc.save(fileName.replace(/\s+/g, '_'))
 
-      // --- AUTO ARCHIVE MAGIC ---
+      // --- AUTO-ARCHIVE BATCH REQUESTS TO THE MATRIX CELLS ---
       if (requestMode && selectedRequests.length > 0) {
         const pdfBlob = doc.output('blob')
-        const storagePath = `${id}/requests/Inspection_Req_${Date.now()}.pdf`
+        const storagePath = `${id}/requests/Request_${Date.now()}.pdf`
         
         const { error: uploadError } = await supabase.storage.from('project-files').upload(storagePath, pdfBlob, { contentType: 'application/pdf' })
 
         if (!uploadError) {
           const { data: { publicUrl } } = supabase.storage.from('project-files').getPublicUrl(storagePath)
-          
+
           const updates = selectedRequests.map(req => {
             const [unit, phase] = req.split('|')
             return supabase.from('project_inspections')
@@ -205,51 +268,61 @@ export default function InspectionMatrix() {
           setRequestMode(false)
           setSelectedRequests([])
           fetchData()
+        } else {
+          console.error("Archive Failed:", uploadError)
         }
       }
-    } catch (err) { alert("PDF Export Error. Check console.") }
+      
+    } catch (err) {
+      console.error("PDF Export Error:", err)
+      alert("Export failed. Check console.")
+    }
+    
     setExporting(false)
   }
 
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Rendering Matrix...</div>
 
-  return (
-    <div className="p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
-      
-      {/* HEADER */}
-      <div className="mb-8 border-b-4 border-blue-600 pb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
-        <div>
-          <button onClick={() => router.push(`/projects/${id}`)} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white transition-all">
-            <ChevronLeft size={14} /> Back to War Room
-          </button>
-          <h1 className="text-5xl font-black text-white tracking-tighter uppercase italic leading-none">
-            Inspection <span className="text-blue-500">Matrix</span>
-          </h1>
-          <p className="text-[11px] font-black text-slate-500 uppercase tracking-widest mt-3 flex items-center gap-2">
-            <ShieldCheck size={14} className="text-blue-500" /> Municipal & ESA Tracking
-          </p>
-        </div>
+  const totalInspections = units.length * INSPECTION_PHASES.length
+  const passedInspections = inspections.filter(i => i.status === 'Pass').length
+  const progressPercent = totalInspections === 0 ? 0 : Math.round((passedInspections / totalInspections) * 100)
 
+  return (
+    <div className="max-w-[1800px] mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
+
+      <div className="mb-8 border-b-4 border-blue-600 pb-6 flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6">
+        <div>
+          <button onClick={() => router.push(`/projects/${id}`)} className="text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white flex items-center gap-1 transition-all"><ChevronLeft size={12}/> War Room</button>
+          <h1 className="text-4xl font-black text-white tracking-tighter uppercase italic leading-none">Inspection <span className="text-blue-500">Matrix</span></h1>
+          <p className="text-[11px] font-black text-slate-500 uppercase tracking-widest mt-2">{project?.name}</p>
+        </div>
+        
         <div className="flex flex-wrap gap-3">
           {requestMode ? (
             <>
-              <button onClick={() => { setRequestMode(false); setSelectedRequests([]); }} className="bg-slate-800 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all border border-slate-700">
-                Cancel
-              </button>
-              <button onClick={handleExportPDF} disabled={exporting || selectedRequests.length === 0} className="bg-blue-600 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-blue-500 transition-all flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-blue-900/20">
-                {exporting ? <Loader2 className="animate-spin" size={14}/> : <FileText size={14}/>} Generate & Archive Request
+              <button onClick={() => { setRequestMode(false); setSelectedRequests([]); }} className="bg-slate-800 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase transition-all">Cancel</button>
+              <button onClick={handleExportPDF} disabled={selectedRequests.length === 0 || exporting} className="bg-amber-500 text-slate-950 text-[10px] font-black px-6 py-4 rounded-2xl uppercase transition-all shadow-xl shadow-amber-900/20 flex items-center gap-2 disabled:opacity-50">
+                {exporting ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16}/>} 
+                Generate Request Form ({selectedRequests.length})
               </button>
             </>
           ) : (
             <>
-              <button onClick={handleExportPDF} disabled={exporting} className="bg-slate-800 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all border border-slate-700 flex items-center gap-2">
-                {exporting ? <Loader2 className="animate-spin" size={14}/> : <Download size={14}/>} Export Full Matrix
+              <div className="bg-slate-900 border border-slate-800 px-6 py-4 rounded-2xl flex items-center gap-4 mr-4">
+                <div className="text-right">
+                  <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Building Pass Rate</p>
+                  <p className="text-sm font-black text-emerald-500">{progressPercent}%</p>
+                </div>
+              </div>
+              <button onClick={handleExportPDF} disabled={exporting} className="bg-slate-800 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all flex items-center gap-2 shadow-xl disabled:opacity-50">
+                {exporting ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14}/>} 
+                Export Matrix
               </button>
-              <button onClick={() => setRequestMode(true)} className="bg-blue-600 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-blue-500 transition-all flex items-center gap-2 shadow-lg shadow-blue-900/20">
-                <FileText size={14}/> Create Batch Request
+              <button onClick={() => setRequestMode(true)} className="bg-amber-600/10 text-amber-500 border border-amber-900/50 text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-amber-600 hover:text-white transition-all flex items-center gap-2 shadow-xl">
+                <Send size={14}/> Batch Request
               </button>
-              <button onClick={handleAddUnit} className="bg-emerald-600 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-emerald-500 transition-all flex items-center gap-2 shadow-lg shadow-emerald-900/20">
-                <Plus size={14}/> Add Unit / Line
+              <button onClick={() => setShowAddUnit(true)} className="bg-blue-600 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-all flex items-center gap-2">
+                <Plus size={16}/> Add Unit/Lot
               </button>
             </>
           )}
@@ -257,103 +330,158 @@ export default function InspectionMatrix() {
       </div>
 
       {requestMode && (
-        <div className="bg-blue-950/30 border border-blue-900/50 p-4 rounded-2xl mb-6 flex items-center gap-4 text-blue-400 text-sm font-bold animate-in fade-in zoom-in-95">
-          <AlertCircle size={20} />
-          Tap cells to add them to your batch inspection request. A PDF will be generated and permanently linked to the selected lots.
+        <div className="bg-amber-500 text-slate-950 p-4 rounded-2xl mb-8 flex items-center justify-center gap-2 font-black uppercase text-xs tracking-widest shadow-xl">
+          <AlertTriangle size={16} /> Select cells, then hit "Generate Request Form" for the City/ESA.
         </div>
       )}
 
-      {/* MATRIX TABLE */}
-      <div className="overflow-x-auto bg-slate-900 rounded-[32px] border border-slate-800 shadow-2xl custom-scrollbar">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr>
-              <th className="p-6 border-b border-slate-800 bg-slate-950/50 sticky left-0 z-20 min-w-[200px] shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)]">
-                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Unit / Lot</span>
-              </th>
-              {INSPECTION_PHASES.map(phase => (
-                <th key={phase} className="p-4 border-b border-slate-800 bg-slate-950/50 whitespace-nowrap min-w-[140px]">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{phase}</span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {units.map((unit, rowIdx) => (
-              <tr key={unit} className="group hover:bg-slate-800/20 transition-colors">
-                {/* ROW HEADER WITH DELETE BUTTON */}
-                <td className="p-4 border-b border-slate-800/50 sticky left-0 z-10 bg-slate-900 group-hover:bg-slate-800 transition-colors shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)]">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-black text-white uppercase tracking-tight">{unit}</span>
-                    <button onClick={() => handleDeleteUnit(unit)} className="text-slate-600 hover:text-red-500 transition-colors p-2">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </td>
-                
-                {INSPECTION_PHASES.map(phase => {
-                  const record = getCellRecord(unit, phase)
-                  const isSelected = selectedRequests.includes(`${unit}|${phase}`)
-                  const hasDoc = !!record.document_url
-
-                  return (
-                    <td key={phase} className="p-2 border-b border-slate-800/50 relative">
-                      <button 
-                        onClick={() => requestMode ? toggleRequestSelection(unit, phase) : setActiveCell({unit, phase, status: record.status})}
-                        className={`w-full p-4 rounded-2xl border-2 transition-all flex flex-col items-center justify-center gap-1 ${
-                          requestMode 
-                            ? isSelected ? 'border-blue-500 bg-blue-500/20 shadow-[0_0_15px_rgba(37,99,235,0.3)]' : 'border-slate-800 bg-slate-950 opacity-50 hover:opacity-100 hover:border-blue-500/50'
-                            : `${STATUS_COLORS[record.status]} hover:scale-105 active:scale-95`
-                        }`}
-                      >
-                        <span className="text-[10px] font-black uppercase tracking-widest">{requestMode && isSelected ? 'Selected' : record.status}</span>
-                      </button>
-                      
-                      {/* Document Indicator */}
-                      {!requestMode && hasDoc && (
-                        <a href={record.document_url} target="_blank" rel="noreferrer" className="absolute top-0 right-0 -mt-1 -mr-1 w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center border-2 border-slate-900 text-white shadow-lg hover:scale-110 transition-all z-10" title="View Request / Slip">
-                          <FileText size={10} />
-                        </a>
-                      )}
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
-            {units.length === 0 && (
+      <div className="bg-slate-900 rounded-[32px] border border-slate-800 shadow-2xl overflow-hidden">
+        <div className="overflow-x-auto custom-scrollbar p-1 pb-6 bg-slate-950 w-full inline-block min-w-full">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-slate-950 sticky top-0 z-10 shadow-sm border-b border-slate-800">
               <tr>
-                <td colSpan={INSPECTION_PHASES.length + 1} className="p-20 text-center text-slate-600 font-black uppercase tracking-widest text-[10px]">
-                  No units added. Tap "Add Unit / Line" to start your matrix.
-                </td>
+                {/* 1. MOBILE RESPONSIVE TH WIDTH */}
+                <th className="p-3 md:p-5 font-black text-[10px] text-slate-500 uppercase tracking-widest border-r border-slate-800 min-w-[90px] max-w-[110px] md:min-w-[150px] md:max-w-none sticky left-0 bg-slate-950 z-20">
+                  Unit / Lot
+                </th>
+                {INSPECTION_PHASES.map((phase, i) => (
+                  <th key={i} className="p-4 font-black text-[10px] text-slate-400 uppercase tracking-wider border-r border-slate-800 min-w-[140px] text-center">
+                    {phase}
+                  </th>
+                ))}
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            
+            <tbody className="divide-y divide-slate-800/50">
+              {units.length === 0 && (
+                <tr>
+                  <td colSpan={INSPECTION_PHASES.length + 1} className="p-12 text-center text-[10px] font-black uppercase tracking-widest text-slate-600">
+                    No units added to matrix.
+                  </td>
+                </tr>
+              )}
+              
+              {units.map((unit) => (
+                <tr key={unit} className="hover:bg-slate-800/20 transition-colors group">
+                  {/* 2. MOBILE RESPONSIVE TD WIDTH */}
+                  <td className="p-3 md:p-5 font-black text-white text-xs md:text-sm uppercase tracking-widest border-r border-slate-800 sticky left-0 bg-slate-900 z-10 shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)] min-w-[90px] max-w-[110px] md:min-w-[150px] md:max-w-none break-words">
+                    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2">
+                      <span className="whitespace-normal leading-tight">{unit}</span>
+                      <button onClick={() => handleDeleteUnit(unit)} className="text-slate-600 hover:text-red-500 opacity-100 md:opacity-0 group-hover:opacity-100 transition-all p-1 md:p-2 -ml-1 md:ml-0">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </td>
+                  
+                  {INSPECTION_PHASES.map((phase, cIdx) => {
+                    const record = getCellRecord(unit, phase)
+                    const isSelected = selectedRequests.includes(`${unit}|${phase}`)
+                    const isDimmed = requestMode && !isSelected
+
+                    return (
+                      <td key={cIdx} className="p-2 border-r border-slate-800 align-middle">
+                        <button 
+                          onClick={() => handleCellClick(unit, phase)}
+                          className={`relative w-full p-3 rounded-xl border transition-all text-center flex flex-col items-center justify-center gap-1 ${
+                            isSelected ? 'bg-amber-500 text-slate-950 border-amber-400 ring-2 ring-amber-500 ring-offset-2 ring-offset-slate-900' :
+                            STATUS_COLORS[record.status as keyof typeof STATUS_COLORS] || STATUS_COLORS['Not Ready']
+                          } ${requestMode ? 'cursor-pointer hover:scale-95' : 'hover:opacity-80'} ${isDimmed ? 'opacity-20 grayscale' : ''}`}
+                        >
+                          <span className="text-[9px] font-black uppercase tracking-widest">
+                            {isSelected ? 'SELECTED' : record.status}
+                          </span>
+                          
+                          {record.document_url && !isSelected && (
+                            <Paperclip size={10} className="absolute top-1 right-1 opacity-60" />
+                          )}
+                        </button>
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* --- 5. STATUS SELECTOR MODAL --- */}
-      {activeCell && (
-        <div className="fixed inset-0 bg-slate-950/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setActiveCell(null)}>
-          <div className="bg-slate-900 border border-slate-700 p-6 rounded-[32px] shadow-2xl max-w-sm w-full" onClick={e => e.stopPropagation()}>
-            <h3 className="text-center text-xs font-black uppercase tracking-widest text-slate-400 mb-6">Update Status:<br/><span className="text-white text-lg">{activeCell.phase}</span></h3>
+      {/* --- ADD UNIT MODAL --- */}
+      {showAddUnit && (
+        <div className="fixed inset-0 bg-slate-950/90 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
+          <form onSubmit={handleAddUnit} className="bg-slate-900 border-2 border-blue-600 p-8 rounded-[40px] max-w-md w-full space-y-6 shadow-2xl">
+            <h2 className="text-2xl font-black text-white uppercase italic text-center">Add Unit to Matrix</h2>
+            <input name="unit_name" required placeholder="Unit / Lot Number (e.g. Unit 101)" className="w-full p-5 bg-slate-950 border border-slate-800 rounded-xl font-bold text-white outline-none focus:border-blue-500 text-center text-xl uppercase" />
+            <div className="flex gap-4 pt-4">
+              <button type="button" onClick={() => setShowAddUnit(false)} className="flex-1 bg-slate-800 py-4 rounded-2xl font-black text-white uppercase text-[10px]">Cancel</button>
+              <button type="submit" disabled={saving} className="flex-1 bg-blue-600 py-4 rounded-2xl font-black text-white uppercase text-[10px] disabled:opacity-50 flex justify-center items-center gap-2">
+                {saving ? <Loader2 size={14} className="animate-spin"/> : <Plus size={14}/>} Add Row
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* --- RESTORED STATUS & UPLOAD MODAL --- */}
+      {activeCell && !requestMode && (
+        <div className="fixed inset-0 bg-slate-950/90 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="bg-slate-900 border border-slate-800 p-8 rounded-[40px] max-w-md w-full space-y-6 shadow-2xl">
+            
+            <div className="text-center border-b border-slate-800 pb-4">
+              <h2 className="text-2xl font-black text-white uppercase italic leading-none">{activeCell.unit}</h2>
+              <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest mt-2">{activeCell.phase}</p>
+            </div>
+            
+            <textarea 
+              value={activeCell.notes} 
+              onChange={e => setActiveCell({...activeCell, notes: e.target.value})}
+              placeholder="Inspector notes or deficiencies..." 
+              className="w-full h-24 bg-slate-950 border border-slate-800 p-4 rounded-xl font-medium text-white outline-none resize-none" 
+            />
+
             <div className="grid grid-cols-2 gap-3">
-              <button onClick={() => handleStatusChange('Requested')} className="p-4 rounded-xl font-black uppercase text-[10px] bg-blue-600 text-white">Requested</button>
-              <button onClick={() => handleStatusChange('Pass')} className="p-4 rounded-xl font-black uppercase text-[10px] bg-emerald-500 text-white">Pass</button>
-              <button onClick={() => handleStatusChange('Partial')} className="p-4 rounded-xl font-black uppercase text-[10px] bg-amber-500 text-white">Partial</button>
-              <button onClick={() => handleStatusChange('Fail')} className="p-4 rounded-xl font-black uppercase text-[10px] bg-red-600 text-white">Fail</button>
-              <button onClick={() => handleStatusChange('Pending')} className="p-4 rounded-xl font-black uppercase text-[10px] bg-slate-800 text-slate-400">Pending</button>
-              <button onClick={() => handleStatusChange('N/A')} className="p-4 rounded-xl font-black uppercase text-[10px] bg-slate-950 text-slate-600 border border-slate-800">N/A</button>
+              <button onClick={() => handleUpdateStatus('Requested')} className="p-4 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 bg-blue-950/40 text-blue-500 border border-blue-900/50 hover:bg-blue-900/50 transition-colors"><Clock size={14}/> Requested</button>
+              <button onClick={() => handleUpdateStatus('Partial')} className="p-4 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 bg-amber-950/40 text-amber-500 border border-amber-900/50 hover:bg-amber-900/50 transition-colors"><AlertTriangle size={14}/> Partial</button>
+              <button onClick={() => handleUpdateStatus('Pass')} className="p-4 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 bg-emerald-950/30 text-emerald-500 border border-emerald-900/50 hover:bg-emerald-900/50 transition-colors"><CheckCircle2 size={14}/> Pass</button>
+              <button onClick={() => handleUpdateStatus('Fail')} className="p-4 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 bg-red-950/40 text-red-500 border border-red-900/50 hover:bg-red-900/50 transition-colors"><XCircle size={14}/> Fail</button>
+            </div>
+
+            {/* N/A Button */}
+            <button onClick={() => handleUpdateStatus('N/A')} className="w-full p-4 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 bg-slate-950 text-slate-500 border border-slate-800 hover:bg-slate-800 transition-colors">Mark as N/A (Not Applicable)</button>
+
+            <div className="border-t border-slate-800 pt-6">
+              <div className="flex justify-between items-center mb-4">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><FileText size={14} className="text-blue-500"/> Official Slip</p>
+                <label className="bg-slate-800 text-white text-[9px] font-black px-4 py-2 rounded-xl uppercase cursor-pointer hover:bg-slate-700 transition-all flex items-center gap-2">
+                  {uploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12}/>} Upload Slip
+                  <input type="file" accept=".pdf,image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if(f) handleUploadSlip(f) }} />
+                </label>
+              </div>
+
+              {activeCell.document_url ? (
+                <a href={activeCell.document_url} target="_blank" rel="noreferrer" className="block w-full bg-blue-950/30 border border-blue-900/50 text-blue-400 text-center py-4 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-900/50 transition-all">
+                  View Attached Document
+                </a>
+              ) : (
+                <div className="p-6 border-2 border-dashed border-slate-800 rounded-xl text-center">
+                  <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest">No paperwork attached</p>
+                </div>
+              )}
+            </div>
+
+            <div className="pt-4 flex gap-4">
+              <button onClick={() => setActiveCell(null)} className="flex-1 bg-slate-800 py-4 rounded-2xl font-black text-white uppercase text-[10px]">Close</button>
+              <button onClick={() => handleUpdateStatus('Not Ready')} className="flex-1 bg-slate-950 border border-slate-800 text-slate-500 py-4 rounded-2xl font-black uppercase text-[10px] hover:bg-slate-800 transition-colors">Clear Cell</button>
             </div>
           </div>
         </div>
       )}
 
-      <style dangerouslySetInnerHTML={{__html: `
+      <style jsx global>{`
         .custom-scrollbar::-webkit-scrollbar { height: 12px; width: 12px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #020617; border-radius: 20px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 20px; border: 3px solid #020617; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #020617; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; border: 3px solid #020617; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #3b82f6; }
-      `}} />
+      `}</style>
     </div>
   )
 }
