@@ -14,7 +14,7 @@ import {
 const MOCK_HOLDBACK_DATA = [
   { id: 'h1', trade: 'Solid Foundations Ltd.', totalContract: 50000, retained: 5000, status: 'Eligible', publishedDate: '2026-02-10', daysRemaining: 0 },
   { id: 'h2', trade: 'ABC Framing Co.', totalContract: 100000, retained: 10000, status: 'Locked', publishedDate: '2026-04-01', daysRemaining: 45 },
-  { id: 'h3', trade: 'Rooted Plumbing', totalContract: 45000, retained: 4500, status: 'Locked', publishedDate: null, daysRemaining: null },
+  { id: 'h3', trade: 'Rooted Plumbing', totalContract: 45000, retained: 4500, status: 'Locked', publishedDate: null, daysRemaining: null }, // This null was the culprit
   { id: 'h4', trade: 'High Voltage Electric', totalContract: 40000, retained: 4000, status: 'Released', publishedDate: '2025-12-01', daysRemaining: 0 },
 ]
 
@@ -121,11 +121,13 @@ export default function HoldbackLedger() {
                       {item.status === 'Locked' && (
                         <div className="flex flex-col gap-1">
                           <div className="flex justify-between text-[9px] font-black uppercase text-amber-500 mb-1">
-                            <span>{item.daysRemaining} Days Left</span>
-                            <span>{Math.round(((60 - item.daysRemaining) / 60) * 100)}%</span>
+                            {/* FIXED: Added ?? 60 to handle null daysRemaining */}
+                            <span>{item.daysRemaining ?? 60} Days Left</span>
+                            <span>{Math.round(((60 - (item.daysRemaining ?? 60)) / 60) * 100)}%</span>
                           </div>
                           <div className="w-48 bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800">
-                            <div className="bg-amber-500 h-full" style={{ width: `${((60 - item.daysRemaining) / 60) * 100}%` }} />
+                            {/* FIXED: Added ?? 60 to style calculation */}
+                            <div className="bg-amber-500 h-full" style={{ width: `${((60 - (item.daysRemaining ?? 60)) / 60) * 100}%` }} />
                           </div>
                         </div>
                       )}
