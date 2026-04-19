@@ -68,7 +68,13 @@ export default function ProjectWarRoom() {
 
     sovLines?.forEach(line => {
       committed += Number(line.scheduled_value || 0)
-      if (line.change_order_id && line.change_orders?.status === 'Approved') {
+      
+      // FIXED: Handle Supabase relationship array typing
+      const changeOrder = Array.isArray(line.change_orders) 
+        ? line.change_orders[0] 
+        : line.change_orders;
+
+      if (line.change_order_id && changeOrder?.status === 'Approved') {
         approvedChanges += Number(line.scheduled_value || 0)
       }
     })
