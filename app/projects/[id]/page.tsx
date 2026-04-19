@@ -10,7 +10,8 @@ import {
   Plus, Users, HardHat, Building2, FileCheck, ShieldCheck, 
   FileText, Phone, Mail, ChevronLeft, Loader2, MessageSquare,
   Settings2, Save, X, ExternalLink, ClipboardList, FileQuestion, 
-  Images, Inbox, ClipboardCheck, Calendar, Activity, BookOpen, UserCog
+  Images, Inbox, ClipboardCheck, Calendar, Activity, BookOpen, UserCog,
+  Landmark, DollarSign, TrendingUp, TrendingDown
 } from 'lucide-react'
 
 export default function ProjectWarRoom() {
@@ -28,24 +29,64 @@ export default function ProjectWarRoom() {
   const [rfiCount, setRfiCount] = useState(0)
   const [manpowerTotal, setManpowerTotal] = useState(0)
   const [inspectionProgress, setInspectionProgress] = useState(0)
+  
+  // LIVE Financial Summary State
+  const [budgetVariance, setBudgetVariance] = useState({ value: 0, isOver: false })
 
   const fetchData = async () => {
     if (!id) return
     setLoading(true)
-    const [p, manual, logs, punch, rfis, inspections] = await Promise.all([
+
+    // 1. Fetch Core Project Data
+    const [p, manual, logs, punch, rfis, inspections, costCodesRes, contractsRes] = await Promise.all([
       supabase.from('projects').select('*').eq('id', id).single(),
       supabase.from('project_photos').select('*').eq('project_id', id),
       supabase.from('daily_logs').select('*').eq('project_id', id).order('log_date', { ascending: false }),
       supabase.from('punch_list').select('id, status').eq('project_id', id),
       supabase.from('rfis').select('id, status').eq('project_id', id).eq('status', 'Open'),
-      supabase.from('project_inspections').select('status, unit_name').eq('project_id', id)
+      supabase.from('project_inspections').select('status, unit_name').eq('project_id', id),
+      // Financial Endpoints
+      supabase.from('project_cost_codes').select('original_budget').eq('project_id', id),
+      supabase.from('project_contracts').select('id, status').eq('project_id', id)
     ])
+
+    // --- LIVE FINANCIAL ENGINE ---
+    const originalBudget = costCodesRes.data?.reduce((sum, code) => sum + Number(code.original_budget || 0), 0) || 0
+    
+    const activeContracts = contractsRes.data?.filter(c => c.status === 'Active' || c.status === 'Completed') || []
+    const activeContractIds = activeContracts.map(c => c.id)
+    const queryIds = activeContractIds.length > 0 ? activeContractIds : ['00000000-0000-0000-0000-000000000000']
+
+    // Fetch SOVs & COs for active contracts
+    const { data: sovLines } = await supabase
+      .from('sov_line_items')
+      .select('scheduled_value, change_order_id, change_orders(status)')
+      .in('contract_id', queryIds)
+
+    let committed = 0
+    let approvedChanges = 0
+
+    sovLines?.forEach(line => {
+      committed += Number(line.scheduled_value || 0)
+      if (line.change_order_id && line.change_orders?.status === 'Approved') {
+        approvedChanges += Number(line.scheduled_value || 0)
+      }
+    })
+
+    const revisedBudget = originalBudget + approvedChanges
+    const variance = revisedBudget - committed
+
+    setBudgetVariance({
+      value: Math.abs(variance),
+      isOver: variance < 0
+    })
+    // -----------------------------
 
     setProject(p.data)
     setPunchCount(punch.data?.filter(i => i.status === 'Open').length || 0)
     setLogCount(logs.data?.length || 0)
     setRfiCount(rfis.data?.length || 0) 
-    
+
     if (logs.data && logs.data[0]) {
       const log = logs.data[0]
       const counts = (log.manpower || "").match(/\d+/g)
@@ -96,7 +137,15 @@ export default function ProjectWarRoom() {
           <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest mt-3 flex items-center gap-2">📍 {project?.address || project?.location}</p>
         </div>
         
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 w-full xl:w-auto">
+        {/* TOP STATS BAR (NOW LIVE) */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 w-full xl:w-auto">
+          <StatCard 
+            label="Budget" 
+            value={budgetVariance.isOver ? `-$${budgetVariance.value.toLocaleString()}` : `+$${budgetVariance.value.toLocaleString()}`} 
+            icon={budgetVariance.isOver ? <TrendingDown size={16}/> : <TrendingUp size={16}/>} 
+            color={budgetVariance.isOver ? "text-red-500" : "text-emerald-500"} 
+            href={`/projects/${id}/financials`} 
+          />
           <StatCard label="Manpower" value={`${manpowerTotal} Active`} icon={<Users size={16}/>} color="text-blue-500" />
           <StatCard label="Inspections" value={`${inspectionProgress}%`} icon={<ClipboardCheck size={16}/>} color="text-emerald-500" href={`/projects/${id}/matrix`} />
           <StatCard label="Punch" value={punchCount} icon={<ClipboardList size={16}/>} color="text-red-500" href={`/projects/${id}/punchlist`} />
@@ -105,8 +154,9 @@ export default function ProjectWarRoom() {
         </div>
       </div>
 
-      {/* MODULE GRID (Expanded to 8 Buttons) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-12">
+      {/* MODULE GRID */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4 mb-12">
+        <ModuleLink title="Financials" href={`/projects/${id}/financials`} icon={<Landmark size={20}/>} color="bg-emerald-600" />
         <ModuleLink title="Plans" href={`/projects/${id}/plans`} icon={<BookOpen size={20}/>} color="bg-blue-600" />
         <ModuleLink title="Matrix" href={`/projects/${id}/matrix`} icon={<Activity size={20}/>} color="bg-indigo-600" />
         <ModuleLink title="Trades" href={`/projects/${id}/trades`} icon={<UserCog size={20}/>} color="bg-emerald-600" />
@@ -117,7 +167,7 @@ export default function ProjectWarRoom() {
         <ModuleLink title="Safety Hub" href={`/projects/${id}/safety`} icon={<ShieldCheck size={20}/>} color="bg-orange-600" />
       </div>
 
-      {/* STATIC SITE STREAM (No more tabs) */}
+      {/* SITE STREAM */}
       <div className="space-y-8 animate-in fade-in duration-500">
         <div className="flex justify-between items-center bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 shadow-xl">
           <h3 className="text-2xl font-black uppercase italic tracking-tighter">Site <span className="text-blue-500">Stream</span></h3>
@@ -150,7 +200,7 @@ export default function ProjectWarRoom() {
 
 function StatCard({ label, value, icon, color, href }: any) {
   const Card = (
-    <div className={`flex items-center gap-3 bg-slate-900 border border-slate-800 p-4 rounded-3xl hover:bg-slate-800 transition-all shadow-xl cursor-pointer`}>
+    <div className={`flex items-center gap-3 bg-slate-900 border border-slate-800 p-4 rounded-3xl hover:bg-slate-800 transition-all shadow-xl cursor-pointer h-full`}>
       <div className={`${color}`}>{icon}</div>
       <div>
         <p className="text-[8px] font-black text-slate-500 uppercase">{label}</p>
@@ -164,7 +214,7 @@ function StatCard({ label, value, icon, color, href }: any) {
 function ModuleLink({ title, href, icon, color }: any) {
   return (
     <Link href={href} className="group">
-      <div className={`p-4 rounded-3xl ${color} flex flex-col items-center justify-center gap-2 shadow-xl hover:scale-105 transition-all text-white border-b-4 border-black/20`}>
+      <div className={`p-4 rounded-3xl ${color} flex flex-col items-center justify-center gap-2 shadow-xl hover:scale-105 transition-all text-white border-b-4 border-black/20 h-full`}>
         {icon}
         <span className="text-[10px] font-black uppercase tracking-widest">{title}</span>
       </div>

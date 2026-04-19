@@ -109,34 +109,54 @@ export default function InspectionMatrix() {
     fetchData()
   }
 
-  const handleUpdateStatus = async (newStatus: string) => {
+const handleUpdateStatus = async (newStatus: string) => {
     if (!activeCell) return
     setSaving(true)
     
-    const { error } = await supabase.from('project_inspections')
-      .update({ status: newStatus, notes: activeCell.notes })
-      .eq('project_id', id)
-      .eq('unit_name', activeCell.unit)
-      .eq('inspection_type', activeCell.phase)
+    // 1. Check if this specific cell already has a database row
+    const existingRecord = inspections.find(
+      i => i.unit_name === activeCell.unit && i.inspection_type === activeCell.phase
+    )
 
-    // ERROR CATCHER: Alerts if Supabase rejects the new status/phase due to an ENUM constraint
-    if (error) {
-      alert(`Save Failed: ${error.message}\n\nPlease change 'inspection_type' to TEXT in your Supabase table settings.`)
+    let actionError = null;
+
+    // 2. If it exists, UPDATE it. If it's a "Ghost Row", INSERT it.
+    if (existingRecord?.id) {
+      const { error } = await supabase.from('project_inspections')
+        .update({ status: newStatus, notes: activeCell.notes })
+        .eq('id', existingRecord.id)
+      actionError = error
+    } else {
+      const { error } = await supabase.from('project_inspections')
+        .insert([{ 
+          project_id: id, 
+          unit_name: activeCell.unit, 
+          inspection_type: activeCell.phase, 
+          status: newStatus, 
+          notes: activeCell.notes 
+        }])
+      actionError = error
+    }
+
+    if (actionError) {
+      alert(`Save Failed: ${actionError.message}`)
       setSaving(false)
       return
     }
       
+    // 3. Auto-Log Generation (with Timezone Fix)
     if (newStatus === 'Pass' || newStatus === 'Fail') {
-      const today = new Date().toISOString().split('T')[0]
+      const offset = new Date().getTimezoneOffset() * 60000
+      const localToday = new Date(Date.now() - offset).toISOString().split('T')[0]
       const autoNote = `📋 INSPECTION ${newStatus.toUpperCase()}: ${activeCell.unit} - ${activeCell.phase} ${activeCell.notes ? `(${activeCell.notes})` : ''}`
 
-      const { data: existingLog } = await supabase.from('daily_logs').select('id, work_performed').eq('project_id', id).eq('log_date', today).maybeSingle()
+      const { data: existingLog } = await supabase.from('daily_logs').select('id, work_performed').eq('project_id', id).eq('log_date', localToday).maybeSingle()
 
       if (existingLog) {
         const updatedNotes = existingLog.work_performed ? `${existingLog.work_performed}\n${autoNote}` : autoNote
         await supabase.from('daily_logs').update({ work_performed: updatedNotes }).eq('id', existingLog.id)
       } else {
-        await supabase.from('daily_logs').insert([{ project_id: id, log_date: today, work_performed: autoNote, status: 'Draft' }])
+        await supabase.from('daily_logs').insert([{ project_id: id, log_date: localToday, work_performed: autoNote, status: 'Draft' }])
       }
     }
 

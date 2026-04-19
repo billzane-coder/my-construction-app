@@ -7,7 +7,8 @@ import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import { 
   ChevronLeft, Plus, Settings2, Save, X, ExternalLink, 
-  FileCheck, ShieldCheck, FileText, Inbox, UserCog 
+  FileCheck, ShieldCheck, FileText, Inbox, UserCog,
+  Landmark, DollarSign, ArrowRight
 } from 'lucide-react'
 
 export default function TradeHub() {
@@ -44,9 +45,7 @@ export default function TradeHub() {
 
   const handleUpdateContact = async (e: React.FormEvent) => {
     e.preventDefault()
-    // Ensure the 'name' column stays synced with the company name if edited
     const updatedPayload = { ...editingContact, name: editingContact.company }
-    
     const { error } = await supabase.from('project_contacts').update(updatedPayload).eq('id', editingContact.id)
     if (!error) { setEditingContact(null); fetchData(); }
   }
@@ -89,8 +88,35 @@ export default function TradeHub() {
         </button>
       </div>
 
-      {/* TRADE LIST */}
       <div className="grid grid-cols-1 gap-12 animate-in fade-in duration-500">
+        
+        {/* 💰 FINANCIAL COMMAND CENTER CARD */}
+        <div 
+          onClick={() => router.push(`/projects/${id}/financials`)}
+          className="bg-slate-900 border-2 border-emerald-500/20 p-10 rounded-[56px] hover:border-emerald-500 hover:bg-emerald-950/10 transition-all cursor-pointer group relative overflow-hidden shadow-2xl"
+        >
+          <div className="absolute right-[-20px] top-[-20px] text-emerald-500/5 group-hover:text-emerald-500/10 transition-colors">
+            <DollarSign size={200} />
+          </div>
+          
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
+            <div className="flex items-center gap-6">
+              <div className="bg-emerald-600 w-20 h-20 rounded-[28px] flex items-center justify-center text-white shadow-xl shadow-emerald-900/40">
+                <Landmark size={36} />
+              </div>
+              <div>
+                <h3 className="text-3xl font-black text-white uppercase italic tracking-tight">Project Financials</h3>
+                <p className="text-slate-500 text-xs font-bold uppercase tracking-[0.2em] mt-1 group-hover:text-emerald-400 transition-colors">Budget • Contracts • Monthly Draws</p>
+              </div>
+            </div>
+            
+            <div className="bg-slate-950 px-8 py-4 rounded-2xl border border-slate-800 flex items-center gap-4 text-emerald-500 font-black text-xs uppercase tracking-widest group-hover:bg-emerald-600 group-hover:text-white transition-all">
+              Manage Money <ArrowRight size={18} />
+            </div>
+          </div>
+        </div>
+
+        {/* TRADE LIST */}
         {contacts.map(trade => (
           <div key={trade.id} className="bg-slate-900 rounded-[48px] border border-slate-800 shadow-2xl overflow-hidden flex flex-col">
             
@@ -171,14 +197,11 @@ export default function TradeHub() {
         <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
           <form onSubmit={async (e) => {
             e.preventDefault(); 
-            
             try {
               const fd = new FormData(e.currentTarget);
-              
-              // 1. Build the payload WITH the required 'name' field
               const payload = { 
                 project_id: id, 
-                name: fd.get('company'), // <-- FIXED: Satisfies Supabase NOT NULL constraint
+                name: fd.get('company'), 
                 company: fd.get('company'), 
                 trade_role: fd.get('trade_role'), 
                 foreman_name: fd.get('foreman_name'), 
@@ -187,29 +210,14 @@ export default function TradeHub() {
                 office_phone: fd.get('office_phone'), 
                 email: fd.get('email')
               };
-
-              console.log("Attempting to save payload:", payload);
-
-              // 2. Fire the insert
-              const { data, error } = await supabase
-                .from('project_contacts')
-                .insert([payload])
-                .select(); 
-
-              // 3. Handle the response
+              const { error } = await supabase.from('project_contacts').insert([payload]);
               if (error) {
-                console.error("SUPABASE ERROR:", error.message, error.details, error.hint);
                 alert(`Save failed: ${error.message}`); 
                 return; 
               }
-
-              // Success
-              console.log("Save successful!", data);
               setShowContactModal(false); 
               fetchData();
-
             } catch (err) {
-              console.error("Total crash during save:", err);
               alert("Something broke before reaching Supabase. Check console.");
             }
           }} className="bg-slate-900 border-2 border-emerald-600 p-10 rounded-[56px] max-w-2xl w-full space-y-6 shadow-2xl overflow-y-auto max-h-[90vh]">
