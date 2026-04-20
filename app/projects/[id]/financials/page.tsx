@@ -29,7 +29,7 @@ export default function FinancialMaster() {
     // 1. Fetch All Codes
     let { data: codes } = await supabase.from('project_cost_codes').select('*').eq('project_id', id).order('code')
     
-    // 2. Fetch Contracts and SOVs for Commitment calculations
+    // 2. Fetch Contracts and SOVs for formal Commitment calculations
     const { data: contracts } = await supabase
       .from('project_contracts')
       .select('id, status, cost_code_id, project_contacts!project_contracts_contact_id_fkey(company)')
@@ -43,7 +43,7 @@ export default function FinancialMaster() {
       .in('contract_id', activeIds.length ? activeIds : ['00000000-0000-0000-0000-000000000000'])
 
     const aggregated = codes?.map(code => {
-      let committed = 0, changes = 0, trades = new Set<string>()
+      let contract_committed = 0, changes = 0, trades = new Set<string>()
       const matchingContracts = contracts?.filter(c => c.cost_code_id === code.id) || []
       
       matchingContracts.forEach(c => {
@@ -55,17 +55,21 @@ export default function FinancialMaster() {
             linesForContract.forEach(line => {
                const isBaseLine = !line.change_order_id;
                const isApprovedCO = line.change_order_id && line.change_orders?.status === 'Approved';
-               if (isBaseLine || isApprovedCO) committed += Number(line.scheduled_value || 0)
+               if (isBaseLine || isApprovedCO) contract_committed += Number(line.scheduled_value || 0)
                if (isApprovedCO) changes += Number(line.scheduled_value || 0)
             })
          }
       })
       
+      const manual_commitment = Number(code.manual_commitment || 0)
+      
       return { 
         ...code, 
         original: Number(code.original_budget || 0), 
         changes, 
-        committed, 
+        manual_commitment,
+        contract_committed,
+        committed: manual_commitment + contract_committed, // The true total commitment for this specific line
         trade: Array.from(trades).join(', ') || '-' 
       }
     }) || []
@@ -85,9 +89,10 @@ export default function FinancialMaster() {
 
   const handleSaveCell = async (rowId: string) => {
     if (!editingCell) return
-    const updateData = editingCell.field === 'original_budget' 
-      ? { original_budget: parseFloat(editingCell.value) || 0 } 
+    const updateData = (editingCell.field === 'original_budget' || editingCell.field === 'manual_commitment')
+      ? { [editingCell.field]: parseFloat(editingCell.value) || 0 } 
       : { [editingCell.field]: editingCell.value }
+      
     await supabase.from('project_cost_codes').update(updateData).eq('id', rowId)
     setEditingCell(null)
     fetchData(true) 
@@ -124,6 +129,9 @@ export default function FinancialMaster() {
       const display_original = p.original + myChildren.reduce((sum, child) => sum + child.original, 0)
       const display_committed = p.committed + myChildren.reduce((sum, child) => sum + child.committed, 0)
       const display_changes = p.changes + myChildren.reduce((sum, child) => sum + child.changes, 0)
+      
+      // For the UI label, we check if the parent or any child has formal contracts
+      const has_contracts = p.contract_committed > 0 || myChildren.some(child => child.contract_committed > 0)
 
       const total = display_committed 
       const revised = display_original + display_changes 
@@ -135,7 +143,8 @@ export default function FinancialMaster() {
         depth: 0, 
         display_original, 
         display_committed, 
-        display_changes, 
+        display_changes,
+        has_contracts,
         revised, 
         total, 
         variance, 
@@ -153,7 +162,8 @@ export default function FinancialMaster() {
             depth: 1, 
             display_original: child.original, 
             display_committed: child.committed, 
-            display_changes: child.changes, 
+            display_changes: child.changes,
+            has_contracts: child.contract_committed > 0,
             revised: cRevised, 
             total: cTotal, 
             variance: cVariance, 
@@ -243,16 +253,44 @@ export default function FinancialMaster() {
                       <td className="p-6 text-slate-500 text-[10px] uppercase truncate max-w-[120px]">{row.trade}</td>
                       
                       <td className="p-6 text-right">
-                        {row.display_committed > 0 ? (
+                        {row.display_committed > 0 && row.display_original === 0 ? (
                            <div className="flex items-center justify-end gap-2 text-slate-500 text-xs font-bold"><Lock size={10} className="text-emerald-500" /> {formatMoney(row.display_original)}</div>
                         ) : editingCell?.id === row.id && editingCell?.field === 'original_budget' ? (
                           <input type="number" autoFocus className="bg-slate-950 border border-emerald-500 p-1.5 rounded text-right text-emerald-400 text-xs outline-none w-24" value={editingCell?.value || ''} onChange={e => setEditingCell(prev => prev ? { ...prev, value: e.target.value } : null)} onBlur={() => handleSaveCell(row.id)} />
                         ) : (
-                          <span className="cursor-pointer text-slate-400 text-xs" onClick={() => setEditingCell({ id: row.id, field: 'original_budget', value: row.original.toString() })}>{formatMoney(row.display_original)}</span>
+                          <span className="cursor-pointer text-slate-400 text-xs hover:text-white transition-colors" onClick={() => setEditingCell({ id: row.id, field: 'original_budget', value: row.original.toString() })}>{formatMoney(row.display_original)}</span>
                         )}
                       </td>
                       
-                      <td className="p-6 text-right text-xs font-bold text-slate-300 border-l border-slate-800/50">{formatMoney(row.display_committed)}</td>
+                      {/* EDITABLE COMMITTED COST CELL */}
+                      <td className="p-6 text-right border-l border-slate-800/50">
+                        {editingCell?.id === row.id && editingCell?.field === 'manual_commitment' ? (
+                          <input 
+                            type="number" 
+                            autoFocus 
+                            placeholder="Direct Cost"
+                            className="bg-slate-950 border border-blue-500 p-1.5 rounded text-right text-slate-300 text-xs font-bold outline-none w-24" 
+                            value={editingCell?.value || ''} 
+                            onChange={e => setEditingCell(prev => prev ? { ...prev, value: e.target.value } : null)} 
+                            onBlur={() => handleSaveCell(row.id)} 
+                          />
+                        ) : (
+                          <div 
+                            className="flex flex-col items-end cursor-pointer group" 
+                            onClick={() => setEditingCell({ id: row.id, field: 'manual_commitment', value: row.manual_commitment?.toString() || '0' })}
+                          >
+                            <span className="text-slate-300 text-xs font-bold group-hover:text-blue-400 transition-colors">
+                              {formatMoney(row.display_committed)}
+                            </span>
+                            {row.has_contracts && (
+                              <span className="text-[8px] text-slate-600 font-black uppercase mt-0.5 group-hover:text-blue-500/50 transition-colors">
+                                Includes SOVs
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </td>
+
                       <td className="p-6 text-right text-xs text-amber-500 border-l border-slate-800/50">{row.display_changes > 0 ? `+${formatMoney(row.display_changes)}` : '-'}</td>
                       <td className="p-6 text-right text-xs bg-blue-950/10 text-blue-400 border-l border-blue-900/30 font-black">{formatMoney(row.total)}</td>
                       <td className={`p-6 text-right text-xs font-black border-l border-slate-800/50 ${row.isOverBudget ? 'text-red-500' : 'text-emerald-500'}`}>{formatMoney(Math.abs(row.variance))}</td>
