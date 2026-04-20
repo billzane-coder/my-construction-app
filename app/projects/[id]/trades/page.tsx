@@ -99,7 +99,7 @@ export default function UnifiedTradesHub() {
       // 3. Sync to Master Directory Cabinet
       const { error: globalError } = await supabase.from('subcontractors').update({
         trade_type: cleanPayload.trade_role,
-        primary_contact: cleanPayload.office_name, 
+        // primary_contact: cleanPayload.office_name, // Removed to prevent schema caching error
         office_phone: cleanPayload.office_phone,
         email: cleanPayload.email,
         phone: cleanPayload.foreman_phone 
@@ -145,7 +145,7 @@ export default function UnifiedTradesHub() {
         await supabase.from('subcontractors').insert([{
           company_name: payload.company,
           trade_type: payload.trade_role,
-          primary_contact: payload.office_name,
+          // primary_contact: payload.office_name, // Removed to prevent schema caching error
           office_phone: payload.office_phone,
           email: payload.email,
           phone: payload.foreman_phone
@@ -432,6 +432,11 @@ export default function UnifiedTradesHub() {
                         <Plus size={16} className="text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
                       </button>
                     ))}
+                  </div>
+                )}
+                {masterSearch && filteredMaster.length === 0 && (
+                  <div className="absolute top-full mt-2 w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-center text-slate-500 text-xs font-black uppercase">
+                    No exact match found. Type below to create new.
                   </div>
                 )}
               </div>
