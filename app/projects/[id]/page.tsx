@@ -11,7 +11,7 @@ import {
   FileText, Phone, Mail, ChevronLeft, Loader2, MessageSquare,
   Settings2, Save, X, ExternalLink, ClipboardList, FileQuestion, 
   Images, Inbox, ClipboardCheck, Calendar, Activity, BookOpen, UserCog,
-  Landmark, DollarSign, TrendingUp, TrendingDown
+  Landmark, DollarSign, TrendingUp, TrendingDown, FileSignature
 } from 'lucide-react'
 
 export default function ProjectWarRoom() {
@@ -30,14 +30,12 @@ export default function ProjectWarRoom() {
   const [manpowerTotal, setManpowerTotal] = useState(0)
   const [inspectionProgress, setInspectionProgress] = useState(0)
   
-  // LIVE Financial Summary State
   const [budgetVariance, setBudgetVariance] = useState({ value: 0, isOver: false })
 
   const fetchData = async () => {
     if (!id) return
     setLoading(true)
 
-    // 1. Fetch Core Project Data
     const [p, manual, logs, punch, rfis, inspections, costCodesRes, contractsRes] = await Promise.all([
       supabase.from('projects').select('*').eq('id', id).single(),
       supabase.from('project_photos').select('*').eq('project_id', id),
@@ -45,19 +43,15 @@ export default function ProjectWarRoom() {
       supabase.from('punch_list').select('id, status').eq('project_id', id),
       supabase.from('rfis').select('id, status').eq('project_id', id).eq('status', 'Open'),
       supabase.from('project_inspections').select('status, unit_name').eq('project_id', id),
-      // Financial Endpoints
       supabase.from('project_cost_codes').select('original_budget').eq('project_id', id),
       supabase.from('project_contracts').select('id, status').eq('project_id', id)
     ])
 
-    // --- LIVE FINANCIAL ENGINE ---
     const originalBudget = costCodesRes.data?.reduce((sum, code) => sum + Number(code.original_budget || 0), 0) || 0
-    
     const activeContracts = contractsRes.data?.filter(c => c.status === 'Active' || c.status === 'Completed') || []
     const activeContractIds = activeContracts.map(c => c.id)
     const queryIds = activeContractIds.length > 0 ? activeContractIds : ['00000000-0000-0000-0000-000000000000']
 
-    // Fetch SOVs & COs for active contracts
     const { data: sovLines } = await supabase
       .from('sov_line_items')
       .select('scheduled_value, change_order_id, change_orders(status)')
@@ -68,12 +62,7 @@ export default function ProjectWarRoom() {
 
     sovLines?.forEach(line => {
       committed += Number(line.scheduled_value || 0)
-      
-      // FIXED: Handle Supabase relationship array typing
-      const changeOrder = Array.isArray(line.change_orders) 
-        ? line.change_orders[0] 
-        : line.change_orders;
-
+      const changeOrder = Array.isArray(line.change_orders) ? line.change_orders[0] : line.change_orders;
       if (line.change_order_id && changeOrder?.status === 'Approved') {
         approvedChanges += Number(line.scheduled_value || 0)
       }
@@ -82,25 +71,20 @@ export default function ProjectWarRoom() {
     const revisedBudget = originalBudget + approvedChanges
     const variance = revisedBudget - committed
 
-    setBudgetVariance({
-      value: Math.abs(variance),
-      isOver: variance < 0
-    })
-    // -----------------------------
-
+    setBudgetVariance({ value: Math.abs(variance), isOver: variance < 0 })
     setProject(p.data)
     setPunchCount(punch.data?.filter(i => i.status === 'Open').length || 0)
     setLogCount(logs.data?.length || 0)
     setRfiCount(rfis.data?.length || 0) 
 
-    if (logs.data && logs.data[0]) {
+    if (logs.data?.[0]) {
       const log = logs.data[0]
       const counts = (log.manpower || "").match(/\d+/g)
       setManpowerTotal(counts ? counts.reduce((acc: number, cur: string) => acc + parseInt(cur), 0) : 0)
     }
 
-    if (inspections.data && inspections.data.length > 0) {
-      const passed = inspections.data.filter(i => i.status === 'Pass').length
+if (inspections.data && inspections.data.length > 0) {
+      const passed = inspections.data.filter((i: any) => i.status === 'Pass').length
       setInspectionProgress(Math.round((passed / inspections.data.length) * 100))
     }
 
@@ -135,7 +119,6 @@ export default function ProjectWarRoom() {
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
       
-      {/* HEADER SECTION */}
       <div className="mb-8 border-b-4 border-blue-600 pb-8 flex flex-col xl:flex-row justify-between items-start xl:items-end gap-8">
         <div className="space-y-1">
           <button onClick={() => router.push('/projects')} className="text-[10px] font-black uppercase text-slate-500 mb-2 hover:text-white flex items-center gap-1 transition-all"><ChevronLeft size={12}/> Portfolio</button>
@@ -143,15 +126,8 @@ export default function ProjectWarRoom() {
           <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest mt-3 flex items-center gap-2">📍 {project?.address || project?.location}</p>
         </div>
         
-        {/* TOP STATS BAR (NOW LIVE) */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 w-full xl:w-auto">
-          <StatCard 
-            label="Budget" 
-            value={budgetVariance.isOver ? `-$${budgetVariance.value.toLocaleString()}` : `+$${budgetVariance.value.toLocaleString()}`} 
-            icon={budgetVariance.isOver ? <TrendingDown size={16}/> : <TrendingUp size={16}/>} 
-            color={budgetVariance.isOver ? "text-red-500" : "text-emerald-500"} 
-            href={`/projects/${id}/financials`} 
-          />
+          <StatCard label="Budget" value={budgetVariance.isOver ? `-$${budgetVariance.value.toLocaleString()}` : `+$${budgetVariance.value.toLocaleString()}`} icon={budgetVariance.isOver ? <TrendingDown size={16}/> : <TrendingUp size={16}/>} color={budgetVariance.isOver ? "text-red-500" : "text-emerald-500"} href={`/projects/${id}/financials`} />
           <StatCard label="Manpower" value={`${manpowerTotal} Active`} icon={<Users size={16}/>} color="text-blue-500" />
           <StatCard label="Inspections" value={`${inspectionProgress}%`} icon={<ClipboardCheck size={16}/>} color="text-emerald-500" href={`/projects/${id}/matrix`} />
           <StatCard label="Punch" value={punchCount} icon={<ClipboardList size={16}/>} color="text-red-500" href={`/projects/${id}/punchlist`} />
@@ -160,21 +136,22 @@ export default function ProjectWarRoom() {
         </div>
       </div>
 
-      {/* MODULE GRID */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4 mb-12">
-        <ModuleLink title="Financials" href={`/projects/${id}/financials`} icon={<Landmark size={20}/>} color="bg-emerald-600" />
-        <ModuleLink title="Plans" href={`/projects/${id}/plans`} icon={<BookOpen size={20}/>} color="bg-blue-600" />
+      {/* --- MODULE GRID (CLEANED UP: DRAWS REMOVED) --- */}
+      <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-4 mb-12">
+        <ModuleLink title="Financials" href={`/projects/${id}/financials`} icon={<Landmark size={20}/>} color="bg-amber-600" />
+        <ModuleLink title="Bidding" href={`/projects/${id}/bidding`} icon={<FileSignature size={20}/>} color="bg-emerald-600" />
+        <ModuleLink title="Trades" href={`/projects/${id}/trades`} icon={<UserCog size={20}/>} color="bg-blue-600" />
+        <ModuleLink title="Plans" href={`/projects/${id}/plans`} icon={<BookOpen size={20}/>} color="bg-slate-700" />
         <ModuleLink title="Matrix" href={`/projects/${id}/matrix`} icon={<Activity size={20}/>} color="bg-indigo-600" />
-        <ModuleLink title="Trades" href={`/projects/${id}/trades`} icon={<UserCog size={20}/>} color="bg-emerald-600" />
         <ModuleLink title="Logs" href={`/projects/${id}/logs`} icon={<FileText size={20}/>} color="bg-teal-600" />
         <ModuleLink title="Punch" href={`/projects/${id}/punchlist`} icon={<ClipboardList size={20}/>} color="bg-red-600" />
-        <ModuleLink title="Schedule" href={`/projects/${id}/schedule`} icon={<Calendar size={20}/>} color="bg-purple-600" />
+        <ModuleLink title="Schedule" href={`/projects/${id}/schedule`} icon={<Calendar size={20}/>} color="bg-fuchsia-600" />
         <ModuleLink title="Submittals" href={`/projects/${id}/submittals`} icon={<FileCheck size={20}/>} color="bg-pink-600" />
         <ModuleLink title="Safety Hub" href={`/projects/${id}/safety`} icon={<ShieldCheck size={20}/>} color="bg-orange-600" />
       </div>
 
       {/* SITE STREAM */}
-      <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="space-y-8">
         <div className="flex justify-between items-center bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 shadow-xl">
           <h3 className="text-2xl font-black uppercase italic tracking-tighter">Site <span className="text-blue-500">Stream</span></h3>
           <label className="bg-blue-600 text-white text-[10px] font-black px-8 py-4 rounded-2xl uppercase cursor-pointer hover:bg-blue-500 transition-all shadow-lg flex items-center gap-2">
@@ -192,21 +169,15 @@ export default function ProjectWarRoom() {
               </div>
             </div>
           ))}
-          {allPhotos.length === 0 && (
-            <div className="col-span-full text-center py-20 border-2 border-dashed border-slate-800 rounded-[32px] text-slate-600 font-black uppercase text-[10px] tracking-widest">No visual data recorded yet.</div>
-          )}
         </div>
       </div>
-
     </div>
   )
 }
 
-// --- HELPER COMPONENTS ---
-
 function StatCard({ label, value, icon, color, href }: any) {
   const Card = (
-    <div className={`flex items-center gap-3 bg-slate-900 border border-slate-800 p-4 rounded-3xl hover:bg-slate-800 transition-all shadow-xl cursor-pointer h-full`}>
+    <div className={`flex items-center gap-3 bg-slate-900 border border-slate-800 p-4 rounded-3xl hover:bg-slate-800 transition-all shadow-xl h-full`}>
       <div className={`${color}`}>{icon}</div>
       <div>
         <p className="text-[8px] font-black text-slate-500 uppercase">{label}</p>
@@ -219,7 +190,7 @@ function StatCard({ label, value, icon, color, href }: any) {
 
 function ModuleLink({ title, href, icon, color }: any) {
   return (
-    <Link href={href} className="group">
+    <Link href={href} className="group h-full block">
       <div className={`p-4 rounded-3xl ${color} flex flex-col items-center justify-center gap-2 shadow-xl hover:scale-105 transition-all text-white border-b-4 border-black/20 h-full`}>
         {icon}
         <span className="text-[10px] font-black uppercase tracking-widest">{title}</span>

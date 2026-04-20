@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Lock, HardHat, ShieldCheck, ChevronRight } from 'lucide-react';
+import { Lock, HardHat, ShieldCheck, ChevronRight, Globe } from 'lucide-react';
 
 export default function Home() {
   const [betaKey, setBetaKey] = useState('');
@@ -14,9 +14,7 @@ export default function Home() {
     e.preventDefault();
     setIsProcessing(true);
 
-    // Deployment Key Check
     if (betaKey.toLowerCase() === 'ontario2026') {
-      // Redirect to the new Project Portfolio we built
       router.push('/projects');
     } else {
       setIsError(true);
@@ -26,8 +24,19 @@ export default function Home() {
   };
 
   return (
-    <main className="h-screen bg-slate-950 flex items-center justify-center p-6 text-center font-sans overflow-hidden">
+    <main className="h-screen bg-slate-950 flex items-center justify-center p-6 text-center font-sans overflow-hidden relative">
       
+      {/* --- ADDED DIRECTORY LINK --- */}
+      <nav className="absolute top-8 right-8 z-50">
+        <button 
+          onClick={() => router.push('/directory')}
+          className="flex items-center gap-2 px-4 py-2 bg-slate-900/50 border border-slate-800 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-emerald-500 hover:border-emerald-500/50 transition-all group"
+        >
+          <Globe size={14} className="group-hover:animate-spin-slow" />
+          Master Directory
+        </button>
+      </nav>
+
       {/* Background Depth Effects */}
       <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-[140px] pointer-events-none" />
       <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-900/10 rounded-full blur-[140px] pointer-events-none" />
@@ -96,7 +105,6 @@ export default function Home() {
         </div>
       </form>
 
-      {/* Shake UI Logic */}
       <style jsx global>{`
         @keyframes shake {
           0%, 100% { transform: translateX(0); }

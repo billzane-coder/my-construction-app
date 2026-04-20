@@ -1,108 +1,76 @@
-'use client'
-import { useState } from 'react'
-import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+"use client";
 
-export default function Navigation() {
-  const [isOpen, setIsOpen] = useState(false)
-  const pathname = usePathname()
+import React from 'react';
+import { useRouter, useParams } from 'next/navigation';
+import { 
+  HardHat, 
+  Globe, 
+  Users, 
+  LayoutDashboard,
+  Terminal,        
+  ClipboardList,   
+  CheckSquare      
+} from 'lucide-react';
 
-  // 1. FIELD-READY LOGIC: Hide nav on reports and high-res drawing tools
-  const isToolActive = pathname?.includes('/report') || 
-                       pathname?.includes('/viewer/') || 
-                       pathname?.includes('/photos/')
-
-  if (isToolActive) return null
-
-  // 2. MASTER NAV LINKS
-  const links = [
-    { name: 'Projects', href: '/projects' },       // Global Portfolio
-    { name: 'Command Center', href: '/dashboard' },
-    { name: 'Phase Audits', href: '/inspections' },
-    { name: 'Punch Manager', href: '/punchlist' },
-    { name: 'Trade Portal', href: '/portal' },
-    { name: 'Daily Logs', href: '/logs' },
-  ]
+export default function TopNav() {
+  const router = useRouter();
+  const { id } = useParams(); 
 
   return (
-    <nav className="bg-slate-950 border-b border-slate-800 sticky top-0 z-50 print:hidden shadow-2xl">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-16">
-          
-          {/* BRANDING */}
-          <div className="flex items-center">
-            <Link href="/projects" className="flex-shrink-0 flex items-center gap-2" onClick={() => setIsOpen(false)}>
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-black italic shadow-lg shadow-blue-900/40">
-                QA
-              </div>
-              <span className="text-white font-black italic tracking-tight uppercase text-sm">
-                Site<span className="text-blue-500">Master</span>
-              </span>
-            </Link>
-          </div>
-
-          {/* DESKTOP TABS */}
-          <div className="hidden md:flex items-center space-x-1">
-            {links.map((link) => {
-              const isActive = pathname?.startsWith(link.href)
-              return (
-                <Link
-                  key={link.name}
-                  href={link.href}
-                  className={`text-[9px] font-black uppercase tracking-[0.2em] px-4 py-2 rounded-full transition-all hover:text-white ${
-                    isActive 
-                      ? 'text-blue-400 bg-blue-500/5 shadow-inner' 
-                      : 'text-slate-500'
-                  }`}
-                >
-                  {link.name}
-                </Link>
-              )
-            })}
-          </div>
-
-          {/* MOBILE TOGGLE */}
-          <div className="flex items-center md:hidden">
-            <button
-              onClick={() => setIsOpen(!isOpen)}
-              className="text-slate-400 hover:text-white p-2 focus:outline-none"
-            >
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                {isOpen ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                )}
-              </svg>
-            </button>
-          </div>
+    <nav className="sticky top-0 left-0 right-0 h-16 bg-slate-950/90 backdrop-blur-md border-b border-slate-800 z-[200] px-4 md:px-8 flex items-center justify-between shadow-xl">
+      
+      {/* Branding */}
+      <div onClick={() => router.push('/projects')} className="flex items-center gap-3 cursor-pointer group shrink-0">
+        <div className="bg-blue-600 p-2 rounded-lg group-hover:bg-blue-500 transition-colors">
+          <HardHat size={18} className="text-white" />
         </div>
+        <span className="font-black uppercase italic tracking-tighter text-lg text-white hidden md:block">
+          SITEMASTER<span className="text-blue-500">QA</span>
+        </span>
       </div>
 
-      {/* MOBILE MENU */}
-      {isOpen && (
-        <div className="md:hidden bg-slate-900 border-b border-slate-800 w-full shadow-2xl animate-in slide-in-from-top duration-300">
-          <div className="px-4 pt-2 pb-6 space-y-1">
-            {links.map((link) => {
-              const isActive = pathname?.startsWith(link.href)
-              return (
-                <Link
-                  key={link.name}
-                  href={link.href}
-                  onClick={() => setIsOpen(false)}
-                  className={`block px-5 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                    isActive 
-                      ? 'bg-blue-600 text-white shadow-lg' 
-                      : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                  }`}
-                >
-                  {link.name}
-                </Link>
-              )
-            })}
-          </div>
+      {/* Navigation */}
+      <div className="flex items-center gap-3 md:gap-6 overflow-x-auto no-scrollbar">
+        
+        {/* Global Buttons */}
+        <button onClick={() => router.push('/command-center')} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-white transition-all whitespace-nowrap">
+          <Terminal size={14} /> <span className="hidden lg:inline">Command Center</span>
+        </button>
+
+        <button onClick={() => router.push('/projects')} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-white transition-all whitespace-nowrap">
+          <LayoutDashboard size={14} /> <span className="hidden lg:inline">Portfolio</span>
+        </button>
+
+        <button onClick={() => router.push('/logs')} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-white transition-all whitespace-nowrap">
+          <ClipboardList size={14} /> <span className="hidden lg:inline">Daily Logs</span>
+        </button>
+
+        <button onClick={() => router.push('/punch')} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-white transition-all whitespace-nowrap">
+          <CheckSquare size={14} /> <span className="hidden lg:inline">Global Punch</span>
+        </button>
+
+        <button onClick={() => router.push('/directory')} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-blue-500 transition-all whitespace-nowrap">
+          <Globe size={14} className="text-blue-500" /> <span className="hidden lg:inline">Directory</span>
+        </button>
+
+        {/* Project Context Button */}
+        {id && (
+          <>
+            <div className="h-6 w-[1px] bg-slate-800 mx-1 hidden md:block shrink-0" />
+            <button 
+              onClick={() => router.push(`/projects/${id}/trades`)}
+              className="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-blue-600/10 border border-blue-500/20 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] text-blue-400 hover:bg-blue-600 hover:text-white transition-all whitespace-nowrap shrink-0"
+            >
+              <Users size={14} /> <span className="hidden sm:inline">Site File</span>
+            </button>
+          </>
+        )}
+        
+        {/* User Profile */}
+        <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-[10px] font-black text-slate-400 ml-1 shrink-0">
+          BZ
         </div>
-      )}
+      </div>
     </nav>
-  )
+  );
 }
