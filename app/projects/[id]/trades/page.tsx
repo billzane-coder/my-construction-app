@@ -80,10 +80,9 @@ export default function UnifiedTradesHub() {
     setProcessing(true);
 
     try {
-      // 1. Strip out the attached 'contract' object so Supabase doesn't reject the save
       const cleanPayload = {
         company: editingContact.company,
-        name: editingContact.company, // Fallback for legacy name column
+        name: editingContact.company,
         trade_role: editingContact.trade_role,
         foreman_name: editingContact.foreman_name,
         foreman_phone: editingContact.foreman_phone,
@@ -92,14 +91,11 @@ export default function UnifiedTradesHub() {
         email: editingContact.email
       };
       
-      // 2. Save to Project Cabinet
       const { error: projectError } = await supabase.from('project_contacts').update(cleanPayload).eq('id', editingContact.id);
       if (projectError) throw new Error("Project Save Error: " + projectError.message);
       
-      // 3. Sync to Master Directory Cabinet
       const { error: globalError } = await supabase.from('subcontractors').update({
         trade_type: cleanPayload.trade_role,
-        // primary_contact: cleanPayload.office_name, // Removed to prevent schema caching error
         office_phone: cleanPayload.office_phone,
         email: cleanPayload.email,
         phone: cleanPayload.foreman_phone 
@@ -133,19 +129,15 @@ export default function UnifiedTradesHub() {
         email: newTrade.email
       };
       
-      // 1. Save to Current Project
       const { error } = await supabase.from('project_contacts').insert([payload]);
       if (error) throw error;
 
-      // 2. Check if they exist in the Master Directory
       const existing = globalSubs.find(s => s.company_name.toLowerCase() === payload.company.toLowerCase());
       
-      // 3. If brand new, push to Global Rolodex
       if (!existing) {
         await supabase.from('subcontractors').insert([{
           company_name: payload.company,
           trade_type: payload.trade_role,
-          // primary_contact: payload.office_name, // Removed to prevent schema caching error
           office_phone: payload.office_phone,
           email: payload.email,
           phone: payload.foreman_phone
@@ -170,9 +162,9 @@ export default function UnifiedTradesHub() {
       office_name: sub.primary_contact || '',
       office_phone: sub.office_phone || '',
       email: sub.email || '',
-      foreman_phone: sub.phone || '' // Pulls global direct phone down to foreman slot to start
+      foreman_phone: sub.phone || '' 
     });
-    setMasterSearch(''); // Closes dropdown
+    setMasterSearch(''); 
   }
 
   const handleUploadDoc = async (file: File, contactId: string, category: string, title: string) => {
