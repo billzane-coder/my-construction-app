@@ -111,24 +111,54 @@ export default function FinancialMaster() {
     if (error) alert("Line is locked to an active contract."); else fetchData()
   }
 
-  // --- HIERARCHY LOGIC ---
+  // --- HIERARCHY & ROLL-UP LOGIC ---
   const organizedData = useMemo(() => {
     const parents = costCodes.filter(c => !c.parent_id)
     const children = costCodes.filter(c => c.parent_id)
 
     const final: any[] = []
     parents.forEach(p => {
-      const total = p.committed 
-      const revised = p.original + p.changes 
-      const variance = revised - total
-      final.push({ ...p, depth: 0, revised, total, variance, isOverBudget: variance < 0 })
+      const myChildren = children.filter(c => c.parent_id === p.id)
+      
+      // Calculate Rolled-Up Totals (Parent direct value + All Children direct values)
+      const display_original = p.original + myChildren.reduce((sum, child) => sum + child.original, 0)
+      const display_committed = p.committed + myChildren.reduce((sum, child) => sum + child.committed, 0)
+      const display_changes = p.changes + myChildren.reduce((sum, child) => sum + child.changes, 0)
 
+      const total = display_committed 
+      const revised = display_original + display_changes 
+      const variance = revised - total
+
+      // Push Parent
+      final.push({ 
+        ...p, 
+        depth: 0, 
+        display_original, 
+        display_committed, 
+        display_changes, 
+        revised, 
+        total, 
+        variance, 
+        isOverBudget: variance < 0 
+      })
+
+      // Push Children (if expanded)
       if (expandedRows.has(p.id)) {
-        children.filter(c => c.parent_id === p.id).forEach(child => {
+        myChildren.forEach(child => {
           const cTotal = child.committed 
           const cRevised = child.original + child.changes 
           const cVariance = cRevised - cTotal
-          final.push({ ...child, depth: 1, revised: cRevised, total: cTotal, variance: cVariance, isOverBudget: cVariance < 0 })
+          final.push({ 
+            ...child, 
+            depth: 1, 
+            display_original: child.original, 
+            display_committed: child.committed, 
+            display_changes: child.changes, 
+            revised: cRevised, 
+            total: cTotal, 
+            variance: cVariance, 
+            isOverBudget: cVariance < 0 
+          })
         })
       }
     })
@@ -190,7 +220,7 @@ export default function FinancialMaster() {
                       <td className="p-6">
                         <div className="flex items-center gap-3">
                           {row.depth === 0 && (
-                            <button onClick={() => toggleRow(row.id)} className="text-slate-500 hover:text-white transition-colors">
+                            <button onClick={() => toggleRow(row.id)} className={`text-slate-500 hover:text-white transition-colors ${!hasChildren && 'opacity-30 pointer-events-none'}`}>
                               {isExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
                             </button>
                           )}
@@ -213,17 +243,17 @@ export default function FinancialMaster() {
                       <td className="p-6 text-slate-500 text-[10px] uppercase truncate max-w-[120px]">{row.trade}</td>
                       
                       <td className="p-6 text-right">
-                        {row.committed > 0 ? (
-                           <div className="flex items-center justify-end gap-2 text-slate-500 text-xs font-bold"><Lock size={10} className="text-emerald-500" /> {formatMoney(row.original)}</div>
+                        {row.display_committed > 0 ? (
+                           <div className="flex items-center justify-end gap-2 text-slate-500 text-xs font-bold"><Lock size={10} className="text-emerald-500" /> {formatMoney(row.display_original)}</div>
                         ) : editingCell?.id === row.id && editingCell?.field === 'original_budget' ? (
                           <input type="number" autoFocus className="bg-slate-950 border border-emerald-500 p-1.5 rounded text-right text-emerald-400 text-xs outline-none w-24" value={editingCell?.value || ''} onChange={e => setEditingCell(prev => prev ? { ...prev, value: e.target.value } : null)} onBlur={() => handleSaveCell(row.id)} />
                         ) : (
-                          <span className="cursor-pointer text-slate-400 text-xs" onClick={() => setEditingCell({ id: row.id, field: 'original_budget', value: row.original.toString() })}>{formatMoney(row.original)}</span>
+                          <span className="cursor-pointer text-slate-400 text-xs" onClick={() => setEditingCell({ id: row.id, field: 'original_budget', value: row.original.toString() })}>{formatMoney(row.display_original)}</span>
                         )}
                       </td>
                       
-                      <td className="p-6 text-right text-xs font-bold text-slate-300 border-l border-slate-800/50">{formatMoney(row.committed)}</td>
-                      <td className="p-6 text-right text-xs text-amber-500 border-l border-slate-800/50">{row.changes > 0 ? `+${formatMoney(row.changes)}` : '-'}</td>
+                      <td className="p-6 text-right text-xs font-bold text-slate-300 border-l border-slate-800/50">{formatMoney(row.display_committed)}</td>
+                      <td className="p-6 text-right text-xs text-amber-500 border-l border-slate-800/50">{row.display_changes > 0 ? `+${formatMoney(row.display_changes)}` : '-'}</td>
                       <td className="p-6 text-right text-xs bg-blue-950/10 text-blue-400 border-l border-blue-900/30 font-black">{formatMoney(row.total)}</td>
                       <td className={`p-6 text-right text-xs font-black border-l border-slate-800/50 ${row.isOverBudget ? 'text-red-500' : 'text-emerald-500'}`}>{formatMoney(Math.abs(row.variance))}</td>
                       
