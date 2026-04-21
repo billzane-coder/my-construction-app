@@ -16,7 +16,7 @@ const compressImage = (file: File): Promise<File> => {
       img.src = event.target?.result as string
       img.onload = () => {
         const canvas = document.createElement('canvas')
-        const MAX_WIDTH = 1200 // Compresses massive iPhone photos perfectly
+        const MAX_WIDTH = 1200 
         const MAX_HEIGHT = 1200
         let width = img.width
         let height = img.height
@@ -42,7 +42,7 @@ const compressImage = (file: File): Promise<File> => {
             }
           },
           'image/jpeg',
-          0.7 // 70% Quality (Huge file size reduction, no visible loss on PDFs)
+          0.7 
         )
       }
     }
@@ -111,7 +111,6 @@ export default function EditDailyLog() {
     return contacts.filter(c => tradeCounts[c.id] > 0).map(c => `${tradeCounts[c.id]} ${c.company} (${c.trade_role})`).join(', ')
   }
 
-  // --- 📸 COMPRESSED UPLOAD LOGIC ---
   const handlePhotoUpload = async (file: File) => {
     setUploading(true)
     try {
@@ -136,7 +135,7 @@ export default function EditDailyLog() {
     const payload = {
       log_date: date, weather, work_performed: workPerformed,
       manpower: getManpowerString(), status: isFinal ? 'Final' : 'Draft',
-      signature: isFinal ? signature : signature, photo_urls: photos
+      signature: signature, photo_urls: photos
     }
     const { error } = await supabase.from('daily_logs').update(payload).eq('id', logid)
     if (!error) {
@@ -146,7 +145,6 @@ export default function EditDailyLog() {
     setSaving(false)
   }
 
-  // --- 🔓 UNLOCK LOGIC ---
   const handleUnlock = async () => {
     if (!confirm("Are you sure you want to unlock this log for editing?")) return
     setSaving(true)
@@ -178,44 +176,49 @@ export default function EditDailyLog() {
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-40 print:bg-white print:text-black print:pb-0" id="print-area">
       
-{/* 🖨️ THE "ANNIHILATOR" PRINT FIX */}
+      {/* 🖨️ UPDATED EXPORT PDF FIX */}
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
           @page { margin: 0.5in; size: portrait; }
           
-          /* 1. DESTROY ALL SCROLL TRAPS */
-          * {
-            overflow: visible !important;
-            height: auto !important;
-            max-height: none !important;
-          }
-
-          /* 2. FORCE FULL WIDTH ON PAPER (FIXES THE LEFT-ALIGNMENT BUG) */
+          /* 1. PREVENT SCROLL CUTOFF */
+          * { overflow: visible !important; }
           html, body, #__next, main, #print-area {
             background: white !important;
-            display: block !important;
+            height: auto !important;
             width: 100% !important;
-            max-width: 100% !important;
             margin: 0 !important;
             padding: 0 !important;
           }
 
-          /* 3. NUKE TAILWIND DARK MODE BOXES */
+          /* 2. RESTRAIN GIANT PHOTOS (CRITICAL FIX) */
+          .aspect-square {
+            height: 180px !important; /* Hard limit for the grid box */
+            width: 180px !important;
+            overflow: hidden !important;
+            display: block !important;
+            page-break-inside: avoid !important;
+          }
+          
+          .aspect-square img {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover !important;
+          }
+
+          /* 3. GRID ADJUSTMENT FOR PAPER */
+          .grid {
+            display: grid !important;
+            gap: 10px !important;
+          }
+
+          /* 4. CLEANUP UI */
+          .print\\:hidden { display: none !important; }
           div[class*="bg-slate-9"], div[class*="bg-slate-8"] {
             background-color: white !important;
-            border-color: #cbd5e1 !important;
+            border-color: #e2e8f0 !important;
             color: black !important;
           }
-
-          /* 4. HIDE NON-DOCUMENT UI */
-          .print\\:hidden { display: none !important; }
-
-          /* 5. PREVENT AWKWARD PAGE BREAKS */
-          .print\\:break-inside-avoid {
-             page-break-inside: avoid !important;
-          }
-
-          /* 6. FORCE TEXT TO BLACK */
           p, h1, h2, h3, h4, span, div, label {
             color: black !important;
             text-shadow: none !important;
@@ -223,7 +226,7 @@ export default function EditDailyLog() {
         }
       `}} />
 
-      {/* 🖨️ FORMAL PDF HEADER (Hidden on Screen) */}
+      {/* PDF HEADER */}
       <div className="hidden print:block border-b-2 border-black pb-4 mb-8 mt-2">
         <div className="flex justify-between items-end">
           <div>
@@ -239,7 +242,6 @@ export default function EditDailyLog() {
         </div>
       </div>
 
-      {/* 💻 APP UI HEADER (Hidden on Print) */}
       <div className="mb-8 border-b-4 border-blue-600 pb-6 flex justify-between items-end print:hidden">
         <div>
           <button onClick={() => router.back()} className="text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white flex items-center gap-1"><ChevronLeft size={12}/> Back to Archive</button>
@@ -257,18 +259,14 @@ export default function EditDailyLog() {
       </div>
 
       <div className="space-y-6 print:space-y-6">
-        
-        {/* WEATHER */}
-        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-slate-300 print:rounded-2xl print:p-5 print:break-inside-avoid">
+        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-slate-300 print:rounded-2xl print:p-5">
           <label className="flex items-center text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 gap-2 print:text-black print:mb-1"><CloudRain size={14} className="text-blue-500 print:hidden"/> Site Weather</label>
           <input value={weather} onChange={(e) => setWeather(e.target.value)} disabled={status === 'Final'} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl font-bold text-white outline-none disabled:opacity-50 print:hidden" />
           <div className="hidden print:block text-black font-semibold text-sm">{weather || 'No weather recorded.'}</div>
         </div>
 
-        {/* MANPOWER */}
-        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-slate-300 print:rounded-2xl print:p-5 print:break-inside-avoid">
+        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-slate-300 print:rounded-2xl print:p-5">
           <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4 print:text-black print:mb-1"><HardHat size={14} className="text-blue-500 print:hidden"/> Manpower Headcount</label>
-          
           <div className="print:hidden">
             {status === 'Draft' ? (
               <div className="space-y-3">
@@ -284,28 +282,18 @@ export default function EditDailyLog() {
                 ))}
               </div>
             ) : (
-              <div className="bg-slate-950 border border-slate-800 p-5 rounded-2xl font-bold text-white">
-                {getManpowerString() || "No workers reported."}
-              </div>
+              <div className="bg-slate-950 border border-slate-800 p-5 rounded-2xl font-bold text-white">{getManpowerString() || "No workers reported."}</div>
             )}
           </div>
-          
-          <div className="hidden print:block text-black font-semibold text-sm leading-relaxed">
-            {getManpowerString() || "No workers reported on site today."}
-          </div>
+          <div className="hidden print:block text-black font-semibold text-sm leading-relaxed">{getManpowerString() || "No workers reported on site today."}</div>
         </div>
 
-        {/* WORK PERFORMED */}
-        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-slate-300 print:rounded-2xl print:p-5 print:break-inside-avoid">
+        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-slate-300 print:rounded-2xl print:p-5">
           <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 print:text-black print:mb-1"><Clock size={14} className="text-blue-500 print:hidden"/> Work Performed</label>
           <textarea value={workPerformed} onChange={(e) => setWorkPerformed(e.target.value)} disabled={status === 'Final'} className="w-full h-40 bg-slate-950 border border-slate-800 p-5 rounded-2xl font-bold text-white outline-none resize-none disabled:opacity-50 print:hidden" />
-          
-          <div className="hidden print:block text-black font-medium text-sm whitespace-pre-wrap leading-relaxed">
-            {workPerformed || 'No work recorded.'}
-          </div>
+          <div className="hidden print:block text-black font-medium text-sm whitespace-pre-wrap leading-relaxed">{workPerformed || 'No work recorded.'}</div>
         </div>
 
-        {/* SITE VISUALS */}
         <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-none print:p-0">
           <div className="flex justify-between items-center mb-4 print:border-b print:border-slate-300 print:pb-2 print:mb-4">
             <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2 print:text-black"><Images size={14} className="text-blue-500 print:hidden"/> Site Visuals</label>
@@ -316,7 +304,6 @@ export default function EditDailyLog() {
               </label>
             )}
           </div>
-          
           {photos.length > 0 ? (
             <div className="grid grid-cols-2 md:grid-cols-4 print:grid-cols-3 gap-4">
               {photos.map((url, i) => (
@@ -327,25 +314,20 @@ export default function EditDailyLog() {
               ))}
             </div>
           ) : (
-            <div className="hidden print:block text-slate-400 text-xs font-bold uppercase tracking-widest italic">No photos attached to this report.</div>
+            <div className="hidden print:block text-slate-400 text-xs font-bold uppercase tracking-widest italic">No photos attached.</div>
           )}
         </div>
 
-        {/* SIGNATURE */}
-        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-none print:p-0 print:mt-12 print:break-inside-avoid">
+        <div className="bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 print:bg-white print:border-none print:p-0 print:mt-12">
           <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2 print:hidden"><FileCheck size={14} className="text-blue-500"/> Superintendent Signature</label>
           <input value={signature} onChange={(e) => setSignature(e.target.value)} disabled={status === 'Final'} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl font-black italic text-white outline-none disabled:opacity-50 print:hidden" />
-          
           <div className="hidden print:flex flex-col w-72 mt-8">
-             <div className="border-b border-black pb-2 px-2 min-h-[2rem]">
-               <span className="font-black italic text-xl text-black">{signature}</span>
-             </div>
+             <div className="border-b border-black pb-2 px-2 min-h-[2rem]"><span className="font-black italic text-xl text-black">{signature}</span></div>
              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-2 print:text-black">Authorized Site Superintendent</span>
           </div>
         </div>
       </div>
 
-      {/* FOOTER ACTIONS */}
       <div className="fixed bottom-0 left-0 w-full bg-slate-950/90 border-t border-slate-800 p-4 backdrop-blur-md z-50 print:hidden">
         <div className="max-w-4xl mx-auto flex gap-4">
           {status === 'Draft' ? (

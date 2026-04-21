@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { FinancialHeader } from '../../page'
 import { ChevronLeft, ChevronRight, FileStack, ShieldCheck, DollarSign, Download, Loader2, CheckCircle2, AlertCircle, UploadCloud, FileText, Save, Plus, Trash2 } from 'lucide-react'
 
 export default function BankPackageGenerator() {
@@ -75,7 +76,6 @@ export default function BankPackageGenerator() {
   const goPrev = () => { if (hasPrev) loadDrawData(allDraws[currentIndex - 1]) }
   const goNext = () => { if (hasNext) loadDrawData(allDraws[currentIndex + 1]) }
 
-  // NEW: Update the period inline
   const handleUpdatePeriod = async () => {
     if (!activeDraw) return;
     await supabase.from('project_draws').update({ period: activeDraw.period }).eq('id', activeDraw.id);
@@ -168,11 +168,13 @@ export default function BankPackageGenerator() {
   if (loading) return <div className="min-h-screen bg-slate-950 flex justify-center items-center"><Loader2 className="animate-spin text-blue-500" size={48} /></div>
 
   return (
-    <div className="max-w-6xl mx-auto p-6 md:p-12 bg-slate-950 min-h-screen text-slate-100">
-      <button onClick={() => router.push(`/projects/${id}/financials`)} className="text-[10px] font-black uppercase text-slate-500 mb-8 hover:text-white flex items-center gap-1 transition-all"><ChevronLeft size={12}/> Master Budget</button>
+    <div className="w-full bg-slate-950 min-h-screen p-6 md:p-12 text-slate-100 pb-32">
+      
+      {/* INTEGRATED THE GLOBAL HEADER HERE */}
+      <FinancialHeader id={id as string} active="bank" />
       
       {/* HEADER & TIME MACHINE NAV */}
-      <div className="flex flex-col items-center justify-center text-center mb-12">
+      <div className="flex flex-col items-center justify-center text-center mb-12 mt-8">
         <div className="w-24 h-24 bg-blue-900/30 border-4 border-blue-600 rounded-[32px] flex items-center justify-center text-blue-500 mb-6 shadow-2xl shadow-blue-900/40">
           <FileStack size={48} />
         </div>
@@ -183,7 +185,6 @@ export default function BankPackageGenerator() {
           
           <div className="text-center min-w-[140px]">
             <p className="text-lg font-black text-blue-400 uppercase tracking-tighter leading-none mb-1">Draw #{activeDraw?.draw_number}</p>
-            {/* UPDATED: Editable Input Field for the Period */}
             <input 
               value={activeDraw?.period || ''} 
               onChange={(e) => setActiveDraw({...activeDraw, period: e.target.value})}
