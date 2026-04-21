@@ -74,13 +74,14 @@ export default function TenderPortal() {
     setLoading(false)
   }
 
-  // --- DOWNLOAD FIX ---
-  // If files were downloading at 23kb, it was likely a CORS error on a fetch blob.
-  // We'll use a direct window open for maximum reliability across browsers.
+// --- BULLETPROOF DOWNLOAD FIX ---
   const handleDownload = (url: string) => {
-    window.open(url, '_blank');
+    // Attempting to force a blob download often fails due to CORS on public buckets.
+    // Opening in a new tab allows the browser's native PDF viewer to handle it perfectly.
+    if (!url) return alert("File link is broken.")
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
-
+  
   // --- REVISION TRACKING UPLOAD ---
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
