@@ -9,7 +9,7 @@ import {
   FileText, CheckCircle2, Globe, Clock, 
   Download, Loader2, HardHat, ShieldCheck, 
   AlertCircle, Info, DollarSign, Calendar, Send,
-  UploadCloud, FileCheck, X, XCircle, RefreshCw
+  UploadCloud, FileCheck, X, XCircle, RefreshCw, Lock
 } from 'lucide-react'
 
 export default function TenderPortal() {
@@ -288,18 +288,22 @@ export default function TenderPortal() {
                     ) : (
                         <div className="space-y-8">
                             
-                            {/* RSVP BAR - Only shows when first invited */}
+                            {/* RSVP BAR WITH EXPLICIT INSTRUCTIONS */}
                             {invite.status === 'Invited' && (
-                                <div className="bg-blue-950/20 border border-blue-900/50 p-6 rounded-3xl text-center animate-in fade-in slide-in-from-top-2">
-                                    <p className="text-blue-400 font-bold text-sm mb-6">Will you be submitting a quote?</p>
+                                <div className="bg-blue-950/20 border border-blue-900/50 p-6 rounded-3xl text-center animate-in fade-in slide-in-from-top-2 relative z-10">
+                                    <Lock size={32} className="text-blue-500 mx-auto mb-3 opacity-50" />
+                                    <p className="text-blue-400 font-bold text-sm mb-1">Will you be submitting a quote?</p>
+                                    <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-6 border-b border-blue-900/30 pb-6">Please select an option below to unlock the submission form.</p>
+                                    
                                     <div className="flex gap-4">
-                                        <button onClick={() => handleRSVP('Bidding')} disabled={submitting} className="flex-1 bg-blue-600 text-white py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 shadow-lg transition-all">Intend to Bid</button>
-                                        <button onClick={() => handleRSVP('Declined')} disabled={submitting} className="flex-1 bg-slate-950 border border-slate-800 text-slate-500 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-red-950 hover:text-red-500 hover:border-red-900 transition-all">Decline</button>
+                                        <button onClick={() => handleRSVP('Bidding')} disabled={submitting} className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 shadow-lg transition-all active:scale-95">Intend to Bid</button>
+                                        <button onClick={() => handleRSVP('Declined')} disabled={submitting} className="flex-1 bg-slate-950 border border-slate-800 text-slate-500 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-red-950 hover:text-red-500 hover:border-red-900 transition-all active:scale-95">Decline</button>
                                     </div>
                                 </div>
                             )}
 
-                            <form onSubmit={handleSubmitBid} className={`space-y-8 transition-all ${invite.status === 'Invited' ? 'opacity-40 grayscale pointer-events-none' : 'opacity-100'}`}>
+                            {/* LOCKED SUBMISSION FORM */}
+                            <form onSubmit={handleSubmitBid} className={`space-y-8 transition-all duration-500 ${invite.status === 'Invited' ? 'opacity-40 grayscale pointer-events-none blur-[1px]' : 'opacity-100'}`}>
                                 
                                 {/* QUOTE UPLOAD WITH REVISION TRACKING */}
                                 <div className="space-y-3">
