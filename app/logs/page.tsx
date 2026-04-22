@@ -127,7 +127,6 @@ export default function GlobalLogArchive() {
             </div>
           ) : (
             filteredLogs.map(log => (
-              // This links directly into the specific project's log archive so you see the context
               <Link href={`/projects/${log.project_id}/logs`} key={log.id} className="block group">
                 <div className={`bg-slate-900 p-6 md:p-8 rounded-[32px] border transition-all shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6 hover:scale-[1.01] ${
                   log.status === 'Draft' ? 'border-amber-900/50 hover:border-amber-500' : 'border-slate-800 hover:border-blue-500'
@@ -148,7 +147,10 @@ export default function GlobalLogArchive() {
                     
                     <h3 className="text-2xl font-black uppercase italic tracking-tighter text-white flex items-center gap-3">
                       <Calendar className="text-slate-500" size={24}/>
-                      {new Date(log.log_date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                      {/* FIX: Appended T12:00:00 and forced timezone */}
+                      {log.log_date 
+                        ? new Date(log.log_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'America/Toronto' })
+                        : 'No Date'}
                     </h3>
                   </div>
 

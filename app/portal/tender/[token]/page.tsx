@@ -9,7 +9,7 @@ import {
   FileText, CheckCircle2, Globe, Clock, 
   Download, Loader2, HardHat, ShieldCheck, 
   AlertCircle, Info, DollarSign, Calendar, Send,
-  UploadCloud, FileCheck, X
+  UploadCloud, FileCheck, X, XCircle, RefreshCw
 } from 'lucide-react'
 
 export default function TenderPortal() {
@@ -74,12 +74,36 @@ export default function TenderPortal() {
     setLoading(false)
   }
 
-// --- BULLETPROOF DOWNLOAD FIX ---
-  const handleDownload = (url: string) => {
-    // Attempting to force a blob download often fails due to CORS on public buckets.
-    // Opening in a new tab allows the browser's native PDF viewer to handle it perfectly.
-    if (!url) return alert("File link is broken.")
-    window.open(url, '_blank', 'noopener,noreferrer')
+  // --- SMART DOWNLOAD FIX ---
+  const handleDownload = (plan: any) => {
+    let fileLink = plan.file_url || plan.url || plan.file_path
+
+    if (!fileLink) {
+      return alert("File link is missing or broken.")
+    }
+
+    if (!fileLink.startsWith('http')) {
+      const { data } = supabase.storage.from('project-files').getPublicUrl(fileLink)
+      fileLink = data.publicUrl
+    }
+
+    window.open(fileLink, '_blank', 'noopener,noreferrer')
+  }
+
+  // --- RSVP ENGINE ---
+  const handleRSVP = async (newStatus: 'Bidding' | 'Declined') => {
+    setSubmitting(true)
+    const { error } = await supabase
+      .from('bid_invitations')
+      .update({ status: newStatus })
+      .eq('id', invite.id)
+
+    if (error) {
+      alert(`Error updating status: ${error.message}`)
+    } else {
+      setInvite((prev: any) => ({ ...prev, status: newStatus }))
+    }
+    setSubmitting(false)
   }
   
   // --- REVISION TRACKING UPLOAD ---
@@ -102,7 +126,6 @@ export default function TenderPortal() {
         .from('project-files')
         .getPublicUrl(filePath)
 
-      // Get existing history and append
       const currentHistory = Array.isArray(invite.proposal_history) ? invite.proposal_history : []
       const newVersion = {
         url: publicUrl,
@@ -112,7 +135,6 @@ export default function TenderPortal() {
       }
       const updatedHistory = [...currentHistory, newVersion]
 
-      // Update Local and Database immediately
       setBidData(prev => ({ ...prev, proposal_link: publicUrl }))
       
       const { error: dbErr } = await supabase
@@ -152,6 +174,7 @@ export default function TenderPortal() {
       alert(`Error: ${error.message}`)
     } else {
       alert("SUCCESS: Your tender has been submitted.")
+      setInvite((prev: any) => ({ ...prev, status: 'Submitted' }))
       fetchPortalData()
     }
     setSubmitting(false)
@@ -225,8 +248,9 @@ export default function TenderPortal() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         {plans.map(plan => (
                             <button 
-                              key={plan.id} 
-                              onClick={() => handleDownload(plan.url)}
+                              key={plan.id}
+                              type="button" 
+                              onClick={() => handleDownload(plan)}
                               className="flex items-center justify-between p-6 bg-slate-900 border border-slate-800 rounded-[32px] group hover:border-blue-500 transition-all text-left"
                             >
                                 <div className="min-w-0 pr-4">
@@ -252,83 +276,119 @@ export default function TenderPortal() {
                             <p className="font-black uppercase tracking-tighter text-2xl text-emerald-400 leading-none">Awarded</p>
                             <p className="text-slate-400 text-[10px] font-bold uppercase mt-4 tracking-widest leading-relaxed">You have been selected for this project.<br/>Check your contract portal for next steps.</p>
                         </div>
-                    ) : (
-                        <form onSubmit={handleSubmitBid} className="space-y-8">
-                            
-                            {/* QUOTE UPLOAD WITH REVISION TRACKING */}
-                            <div className="space-y-3">
-                              <label className="text-[10px] font-black uppercase text-slate-500 ml-1 tracking-[0.2em]">1. Proposal Document (PDF)</label>
-                              {bidData.proposal_link ? (
-                                <div className="w-full bg-emerald-950/20 border-2 border-emerald-500/30 p-5 rounded-3xl flex items-center justify-between animate-in slide-in-from-top-2">
-                                  <div className="flex items-center gap-3">
-                                    <FileCheck className="text-emerald-500" size={24}/>
-                                    <div>
-                                      <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Quote Stored (v{invite.proposal_history?.length || 1})</p>
-                                      <p className="text-[8px] font-bold text-slate-500 uppercase truncate max-w-[150px]">{bidData.proposal_link.split('/').pop()?.slice(0,20)}...</p>
-                                    </div>
-                                  </div>
-                                  <button type="button" onClick={() => setBidData({...bidData, proposal_link: ''})} className="bg-slate-950 p-2 rounded-lg text-slate-500 hover:text-white"><X size={14}/></button>
-                                </div>
-                              ) : (
-                                <div className="relative h-32 w-full bg-slate-950 border-2 border-dashed border-slate-700 hover:border-emerald-500/50 rounded-3xl flex flex-col items-center justify-center gap-3 transition-all cursor-pointer group">
-                                  {uploadingFile ? <Loader2 className="animate-spin text-emerald-500" size={28} /> : (
-                                    <>
-                                      <UploadCloud className="text-slate-700 group-hover:text-emerald-500 transition-colors" size={40}/>
-                                      <div className="text-center">
-                                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest group-hover:text-white transition-colors">Click to upload official quote</p>
-                                        <p className="text-[8px] font-black text-slate-700 uppercase mt-1">PDF Format Only • Max 10MB</p>
-                                      </div>
-                                    </>
-                                  )}
-                                  <input type="file" accept=".pdf" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
-                                </div>
-                              )}
-                            </div>
-
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-black uppercase text-slate-500 ml-1 tracking-[0.2em]">2. Total Lump Sum ($)</label>
-                                <div className="relative">
-                                    <DollarSign size={24} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600"/>
-                                    <input 
-                                        required type="number" step="0.01"
-                                        value={bidData.amount} onChange={e => setBidData({...bidData, amount: e.target.value})}
-                                        placeholder="0.00" 
-                                        className="w-full bg-slate-950 border-2 border-slate-800 p-6 pl-14 rounded-3xl font-black text-4xl text-emerald-400 outline-none focus:border-emerald-500 shadow-inner" 
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-black uppercase text-slate-500 ml-1 tracking-[0.2em]">3. Duration (Work Days)</label>
-                                <div className="relative">
-                                    <Calendar size={20} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600"/>
-                                    <input 
-                                        required type="number"
-                                        value={bidData.days} onChange={e => setBidData({...bidData, days: e.target.value})}
-                                        placeholder="Est. total days" 
-                                        className="w-full bg-slate-950 border-2 border-slate-800 p-6 pl-14 rounded-3xl font-black text-xl text-white outline-none focus:border-emerald-500 shadow-inner" 
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-black uppercase text-slate-500 ml-1 tracking-[0.2em]">4. Clarifications / Notes</label>
-                                <textarea 
-                                    rows={4}
-                                    value={bidData.notes} onChange={e => setBidData({...bidData, notes: e.target.value})}
-                                    placeholder="List exclusions or specific assumptions..." 
-                                    className="w-full bg-slate-950 border-2 border-slate-800 p-6 rounded-3xl font-bold text-sm text-slate-300 outline-none focus:border-emerald-500 resize-none shadow-inner" 
-                                />
-                            </div>
-
-                            <button 
-                                disabled={submitting || uploadingFile}
-                                className="w-full bg-emerald-600 text-white py-8 rounded-[32px] font-black uppercase tracking-[0.2em] hover:bg-emerald-500 transition-all flex items-center justify-center gap-4 shadow-2xl active:scale-95 disabled:opacity-50"
-                            >
-                                {submitting ? <Loader2 className="animate-spin" size={28}/> : <><Send size={20}/> Submit Tender</>}
+                    ) : invite.status === 'Declined' ? (
+                        <div className="bg-red-500/10 border-2 border-red-500/20 p-10 rounded-[32px] text-center">
+                            <XCircle size={56} className="text-red-500 mx-auto mb-4"/>
+                            <p className="font-black uppercase tracking-tighter text-2xl text-red-400 leading-none">Declined</p>
+                            <p className="text-slate-400 text-[10px] font-bold uppercase mt-4 tracking-widest leading-relaxed">You have opted out of bidding on this project.</p>
+                            <button onClick={() => handleRSVP('Bidding')} disabled={submitting} className="mt-8 text-[10px] font-black uppercase text-blue-500 hover:text-white transition-all flex items-center justify-center gap-2 mx-auto disabled:opacity-50">
+                              {submitting ? <Loader2 size={14} className="animate-spin"/> : <RefreshCw size={14}/>} Change Mind & Bid
                             </button>
-                            <p className="text-center text-[8px] font-black uppercase text-slate-700 tracking-widest mt-4">Encrypted Channel: ConstructWarRoom AES-256</p>
-                        </form>
+                        </div>
+                    ) : (
+                        <div className="space-y-8">
+                            
+                            {/* RSVP BAR - Only shows when first invited */}
+                            {invite.status === 'Invited' && (
+                                <div className="bg-blue-950/20 border border-blue-900/50 p-6 rounded-3xl text-center animate-in fade-in slide-in-from-top-2">
+                                    <p className="text-blue-400 font-bold text-sm mb-6">Will you be submitting a quote?</p>
+                                    <div className="flex gap-4">
+                                        <button onClick={() => handleRSVP('Bidding')} disabled={submitting} className="flex-1 bg-blue-600 text-white py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 shadow-lg transition-all">Intend to Bid</button>
+                                        <button onClick={() => handleRSVP('Declined')} disabled={submitting} className="flex-1 bg-slate-950 border border-slate-800 text-slate-500 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-red-950 hover:text-red-500 hover:border-red-900 transition-all">Decline</button>
+                                    </div>
+                                </div>
+                            )}
+
+                            <form onSubmit={handleSubmitBid} className={`space-y-8 transition-all ${invite.status === 'Invited' ? 'opacity-40 grayscale pointer-events-none' : 'opacity-100'}`}>
+                                
+                                {/* QUOTE UPLOAD WITH REVISION TRACKING */}
+                                <div className="space-y-3">
+                                  <label className="text-[10px] font-black uppercase text-slate-500 ml-1 tracking-[0.2em]">1. Proposal Document (PDF)</label>
+                                  {bidData.proposal_link ? (
+                                    <div className="w-full bg-emerald-950/20 border-2 border-emerald-500/30 p-5 rounded-3xl flex items-center justify-between animate-in slide-in-from-top-2">
+                                      <div className="flex items-center gap-3">
+                                        <FileCheck className="text-emerald-500" size={24}/>
+                                        <div>
+                                          <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Quote Stored (v{invite.proposal_history?.length || 1})</p>
+                                          <p className="text-[8px] font-bold text-slate-500 uppercase truncate max-w-[150px]">{bidData.proposal_link.split('/').pop()?.slice(0,20)}...</p>
+                                        </div>
+                                      </div>
+                                      <button type="button" onClick={() => setBidData({...bidData, proposal_link: ''})} className="bg-slate-950 p-2 rounded-lg text-slate-500 hover:text-white"><X size={14}/></button>
+                                    </div>
+                                  ) : (
+                                    <div className="relative h-32 w-full bg-slate-950 border-2 border-dashed border-slate-700 hover:border-emerald-500/50 rounded-3xl flex flex-col items-center justify-center gap-3 transition-all cursor-pointer group">
+                                      {uploadingFile ? <Loader2 className="animate-spin text-emerald-500" size={28} /> : (
+                                        <>
+                                          <UploadCloud className="text-slate-700 group-hover:text-emerald-500 transition-colors" size={40}/>
+                                          <div className="text-center">
+                                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest group-hover:text-white transition-colors">Click to upload official quote</p>
+                                            <p className="text-[8px] font-black text-slate-700 uppercase mt-1">PDF Format Only • Max 10MB</p>
+                                          </div>
+                                        </>
+                                      )}
+                                      <input type="file" accept=".pdf" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase text-slate-500 ml-1 tracking-[0.2em]">2. Total Lump Sum ($)</label>
+                                    <div className="relative">
+                                        <DollarSign size={24} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600"/>
+                                        <input 
+                                            required type="number" step="0.01"
+                                            value={bidData.amount} onChange={e => setBidData({...bidData, amount: e.target.value})}
+                                            placeholder="0.00" 
+                                            className="w-full bg-slate-950 border-2 border-slate-800 p-6 pl-14 rounded-3xl font-black text-4xl text-emerald-400 outline-none focus:border-emerald-500 shadow-inner" 
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase text-slate-500 ml-1 tracking-[0.2em]">3. Duration (Work Days)</label>
+                                    <div className="relative">
+                                        <Calendar size={20} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600"/>
+                                        <input 
+                                            required type="number"
+                                            value={bidData.days} onChange={e => setBidData({...bidData, days: e.target.value})}
+                                            placeholder="Est. total days" 
+                                            className="w-full bg-slate-950 border-2 border-slate-800 p-6 pl-14 rounded-3xl font-black text-xl text-white outline-none focus:border-emerald-500 shadow-inner" 
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase text-slate-500 ml-1 tracking-[0.2em]">4. Clarifications / Notes</label>
+                                    <textarea 
+                                        rows={4}
+                                        value={bidData.notes} onChange={e => setBidData({...bidData, notes: e.target.value})}
+                                        placeholder="List exclusions or specific assumptions..." 
+                                        className="w-full bg-slate-950 border-2 border-slate-800 p-6 rounded-3xl font-bold text-sm text-slate-300 outline-none focus:border-emerald-500 resize-none shadow-inner" 
+                                    />
+                                </div>
+
+                                <button 
+                                    disabled={submitting || uploadingFile}
+                                    className="w-full bg-emerald-600 text-white py-8 rounded-[32px] font-black uppercase tracking-[0.2em] hover:bg-emerald-500 transition-all flex items-center justify-center gap-4 shadow-2xl active:scale-95 disabled:opacity-50"
+                                >
+                                    {submitting ? <Loader2 className="animate-spin" size={28}/> : <><Send size={20}/> Submit Tender</>}
+                                </button>
+
+                                {/* OPT-OUT BUTTON ONCE ACTIVE */}
+                                {(invite.status === 'Bidding' || invite.status === 'Submitted') && (
+                                  <button 
+                                    type="button" 
+                                    onClick={() => handleRSVP('Declined')} 
+                                    disabled={submitting} 
+                                    className="w-full text-center text-[9px] font-black uppercase text-slate-600 hover:text-red-500 transition-colors mt-6"
+                                  >
+                                    Decline Project
+                                  </button>
+                                )}
+
+                                <p className="text-center text-[8px] font-black uppercase text-slate-700 tracking-widest mt-4">Encrypted Channel: ConstructWarRoom AES-256</p>
+                            </form>
+                        </div>
                     )}
                 </div>
             </div>

@@ -83,11 +83,35 @@ export default function EditDailyLog() {
       if (cts.data && log.data) {
         setContacts(cts.data)
         setDate(log.data.log_date)
-        setWeather(log.data.weather || '')
         setWorkPerformed(log.data.work_performed || '')
         setSignature(log.data.signature || '')
         setStatus(log.data.status || 'Draft')
         setPhotos(log.data.photo_urls || [])
+        
+        // --- 🌤️ AUTO-POPULATE WEATHER ---
+        let loadedWeather = log.data.weather || ''
+        if (!loadedWeather && log.data.log_date) {
+          try {
+            const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=44.3894&longitude=-79.6903&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=America%2FToronto&start_date=${log.data.log_date}&end_date=${log.data.log_date}`)
+            const wData = await res.json()
+            if (wData?.daily) {
+              const max = wData.daily.temperature_2m_max[0]
+              const min = wData.daily.temperature_2m_min[0]
+              const code = wData.daily.weathercode[0]
+              
+              // Map WMO codes to readable text
+              const conditions: Record<number, string> = { 
+                0:'Clear', 1:'Mainly Clear', 2:'Partly Cloudy', 3:'Overcast', 45:'Fog', 
+                51:'Light Drizzle', 61:'Light Rain', 63:'Rain', 71:'Light Snow', 73:'Snow', 95:'Thunderstorm' 
+              }
+              const condDesc = conditions[code] || 'Mixed Conditions'
+              loadedWeather = `${condDesc}, High ${Math.round(max)}°C / Low ${Math.round(min)}°C`
+            }
+          } catch (e) {
+            console.error("Weather fetch failed:", e)
+          }
+        }
+        setWeather(loadedWeather)
         
         const initial: Record<string, number> = {}
         const savedManpower = log.data.manpower || ''
@@ -181,19 +205,36 @@ export default function EditDailyLog() {
         @media print {
           @page { margin: 0.5in; size: portrait; }
           
-          /* 1. PREVENT SCROLL CUTOFF */
-          * { overflow: visible !important; }
-          html, body, #__next, main, #print-area {
-            background: white !important;
-            height: auto !important;
+          /* 1. HIDE GLOBAL LAYOUT NAVIGATIONS */
+          body * {
+            visibility: hidden;
+          }
+          
+          /* 2. REVEAL ONLY THE REPORT */
+          #print-area, #print-area * {
+            visibility: visible;
+          }
+          
+          /* 3. ANCHOR REPORT TO TOP LEFT OF PAPER */
+          #print-area {
+            position: absolute;
+            left: 0;
+            top: 0;
             width: 100% !important;
             margin: 0 !important;
             padding: 0 !important;
           }
 
-          /* 2. RESTRAIN GIANT PHOTOS (CRITICAL FIX) */
+          /* 4. PREVENT SCROLL CUTOFF */
+          * { overflow: visible !important; }
+          html, body, #__next, main {
+            background: white !important;
+            height: auto !important;
+          }
+
+          /* 5. RESTRAIN GIANT PHOTOS */
           .aspect-square {
-            height: 180px !important; /* Hard limit for the grid box */
+            height: 180px !important; 
             width: 180px !important;
             overflow: hidden !important;
             display: block !important;
@@ -206,13 +247,12 @@ export default function EditDailyLog() {
             object-fit: cover !important;
           }
 
-          /* 3. GRID ADJUSTMENT FOR PAPER */
           .grid {
             display: grid !important;
             gap: 10px !important;
           }
 
-          /* 4. CLEANUP UI */
+          /* 6. CLEANUP UI */
           .print\\:hidden { display: none !important; }
           div[class*="bg-slate-9"], div[class*="bg-slate-8"] {
             background-color: white !important;

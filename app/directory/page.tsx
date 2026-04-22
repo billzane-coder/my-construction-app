@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { 
   Search, ChevronLeft, Phone, Mail, UserCheck, HardHat, 
-  Globe, Plus, X, Edit3, Building2, User, Save, StickyNote, Briefcase
+  Globe, Plus, X, Edit3, Building2, User, Save, StickyNote, Briefcase, Trash2
 } from 'lucide-react'
 
 export default function MasterDirectory() {
@@ -64,6 +64,20 @@ export default function MasterDirectory() {
 
     setIsModalOpen(false)
     fetchSubs()
+  }
+
+  // Delete Subcontractor
+  const handleDeleteSub = async (e: React.MouseEvent, id: string, name: string) => {
+    e.stopPropagation() // Prevent the card click event from opening the modal
+    if (!window.confirm(`Permanently delete ${name} from the master directory?`)) return
+    
+    const { error } = await supabase.from('subcontractors').delete().eq('id', id)
+    
+    if (error) {
+      alert("Failed to delete trade: " + error.message)
+    } else {
+      setSubs(prev => prev.filter(s => s.id !== id))
+    }
   }
 
   const filtered = subs.filter(s => 
@@ -127,8 +141,18 @@ export default function MasterDirectory() {
                 <h3 className="text-xl md:text-2xl font-black text-white uppercase tracking-tight leading-tight truncate pr-2">{sub.company_name}</h3>
                 <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mt-1 truncate">{sub.trade_type || 'General Contractor'}</p>
               </div>
-              <div className="bg-slate-800 p-3 rounded-2xl group-hover:text-blue-50 transition-colors shadow-lg shrink-0">
-                <Building2 size={20} className="group-hover:text-blue-500 transition-colors" />
+              
+              <div className="flex gap-2">
+                <button 
+                  onClick={(e) => handleDeleteSub(e, sub.id, sub.company_name)}
+                  className="bg-slate-800 p-3 rounded-2xl text-slate-600 hover:text-red-500 hover:bg-red-500/10 transition-colors shadow-lg shrink-0 opacity-0 group-hover:opacity-100"
+                  title="Delete Trade"
+                >
+                  <Trash2 size={20} />
+                </button>
+                <div className="bg-slate-800 p-3 rounded-2xl group-hover:text-blue-50 transition-colors shadow-lg shrink-0">
+                  <Building2 size={20} className="group-hover:text-blue-500 transition-colors" />
+                </div>
               </div>
             </div>
             

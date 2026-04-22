@@ -8,7 +8,8 @@ import { useParams, useRouter } from 'next/navigation'
 import dynamicImport from 'next/dynamic'
 import { 
   ZoomIn, ZoomOut, Maximize, Link as LinkIcon, 
-  Paperclip, ChevronLeft, ChevronRight, Layers, Plus, Trash2
+  Paperclip, ChevronLeft, ChevronRight, Layers, Plus, Trash2,
+  Download, Loader2
 } from 'lucide-react'
 
 // PDF Styles
@@ -44,6 +45,7 @@ export default function ProPlanViewer() {
   const [activeTool, setActiveTool] = useState<Tool>('select')
   const [viewMode, setViewMode] = useState<'clean' | 'marked'>('marked')
   const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState(false) // Export state
   
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [interaction, setInteraction] = useState<Interaction>(null)
@@ -183,6 +185,51 @@ export default function ProPlanViewer() {
     setSelectedId(null)
   }
 
+  // --- EXPORT ENGINE (Fixed for Next.js 404 network crashes) ---
+  const handleExportView = async () => {
+    setExporting(true)
+    try {
+      const htmlToImage = await import('html-to-image')
+      const { jsPDF } = await import('jspdf')
+      
+      const element = document.getElementById('viewport-area')
+      if (!element) throw new Error("Viewport not found")
+
+      // Unselect any active markup so bounding boxes don't print
+      setSelectedId(null)
+
+      // Give React 100ms to clear the selection box before snapping
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const imgData = await htmlToImage.toJpeg(element, {
+        quality: 0.9,
+        pixelRatio: 3, 
+        backgroundColor: '#1e293b',
+        skipFonts: true, // FIX: Stops the 404 crash on Next.js dynamic fonts
+        filter: (node) => {
+          // FIX: Stop it from trying to fetch external Next.js resource links
+          if (node?.tagName === 'LINK' || node?.tagName === 'SCRIPT') return false;
+          return true;
+        }
+      })
+      
+      // Match PDF dimensions to the exact aspect ratio of the user's screen
+      const rect = element.getBoundingClientRect()
+      const pdf = new jsPDF({
+        orientation: rect.width > rect.height ? 'landscape' : 'portrait',
+        unit: 'px',
+        format: [rect.width, rect.height]
+      })
+
+      pdf.addImage(imgData, 'JPEG', 0, 0, rect.width, rect.height)
+      pdf.save(`Plan_Markup_${plan?.sheet_number || 'Export'}_${Date.now()}.pdf`)
+    } catch (err) {
+      console.error(err)
+      alert("Failed to export view.")
+    }
+    setExporting(false)
+  }
+
   const canPan = viewMode === 'clean' || (activeTool === 'select' && !interaction)
 
   if (loading) return <div className="h-screen bg-slate-950 flex items-center justify-center font-black text-blue-500 animate-pulse uppercase tracking-[0.3em] italic">Opening Vault...</div>
@@ -245,11 +292,21 @@ export default function ProPlanViewer() {
             <option value="marked" className="bg-slate-900">Show Markups</option>
             <option value="clean" className="bg-slate-900">Hide Markups</option>
           </select>
+          
+          {/* EXPORT BUTTON */}
+          <button 
+            onClick={handleExportView} 
+            disabled={exporting} 
+            className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-black text-[10px] uppercase rounded-xl transition-all flex items-center gap-2 shadow-lg disabled:opacity-50"
+          >
+            {exporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14}/>}
+            {exporting ? 'Rendering...' : 'Export View'}
+          </button>
         </div>
       </div>
 
-      {/* VIEWPORT AREA */}
-      <div className="flex-1 relative overflow-hidden bg-slate-800">
+      {/* VIEWPORT AREA - Note the ID added here for html-to-image to target */}
+      <div className="flex-1 relative overflow-hidden bg-slate-800" id="viewport-area">
         <TransformWrapper
           initialScale={1} 
           minScale={0.3} 

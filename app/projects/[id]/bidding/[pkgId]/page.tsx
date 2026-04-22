@@ -88,8 +88,15 @@ export default function BidMatrix() {
   }
 
   const handleUpdateBid = async (inviteId: string, field: string, value: any) => {
-    setBidders(prev => prev.map(b => b.id === inviteId ? { ...b, [field]: value } : b))
-    await supabase.from('bid_invitations').update({ [field]: value, status: 'Submitted' }).eq('id', inviteId)
+    const updates: any = { [field]: value }
+    
+    // Auto-flip to Submitted ONLY if they are entering price, days, or notes manually
+    if (['submitted_amount', 'schedule_impact_days', 'trade_notes'].includes(field) && value !== '') {
+      updates.status = 'Submitted'
+    }
+
+    setBidders(prev => prev.map(b => b.id === inviteId ? { ...b, ...updates } : b))
+    await supabase.from('bid_invitations').update(updates).eq('id', inviteId)
   }
 
   const handleUploadProposal = async (inviteId: string, file: File, currentHistory: any[]) => {
@@ -285,8 +292,28 @@ export default function BidMatrix() {
                     <div className="flex justify-between items-start">
                       <div>
                         <h4 className="font-black text-white text-lg truncate uppercase leading-tight">{bidder.subcontractor?.company_name || 'Trade'}</h4>
-                        <span className={`text-[8px] font-black uppercase ${isWinner ? 'text-emerald-500' : 'text-slate-500'}`}>{bidder.status}</span>
+                        
+                        {/* MANUAL STATUS DROPDOWN (Always Visible) */}
+                        <select
+                          value={bidder.status || 'Invited'}
+                          disabled={isWinner}
+                          onChange={(e) => handleUpdateBid(bidder.id, 'status', e.target.value)}
+                          className={`mt-1 text-[9px] font-black uppercase tracking-widest bg-transparent border-b border-dashed outline-none cursor-pointer pb-0.5
+                            ${bidder.status === 'Awarded' || bidder.status === 'Submitted' ? 'text-emerald-500 border-emerald-900/50' :
+                              bidder.status === 'Bidding' ? 'text-blue-500 border-blue-900/50' :
+                              bidder.status === 'Declined' ? 'text-red-500 border-red-900/50' :
+                              'text-slate-500 border-slate-700'
+                            }
+                          `}
+                        >
+                          <option value="Invited" className="bg-slate-900 text-slate-500">Invited</option>
+                          <option value="Bidding" className="bg-slate-900 text-blue-500">Bidding</option>
+                          <option value="Submitted" className="bg-slate-900 text-emerald-500">Submitted</option>
+                          <option value="Declined" className="bg-slate-900 text-red-500">Declined</option>
+                          <option value="Awarded" className="bg-slate-900 text-emerald-400" disabled>Awarded</option>
+                        </select>
                       </div>
+                      
                       <div className="flex gap-1">
                         <button onClick={() => copyMagicLink(bidder.token)} className="p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-400 hover:text-white" title="Copy Magic Link"><LinkIcon size={12}/></button>
                         <a href={generateMailto(bidder)} className="p-2 bg-blue-950/30 border border-blue-900/50 rounded-lg text-blue-400 hover:text-white" title="Draft Email"><Mail size={12}/></a>
@@ -326,17 +353,17 @@ export default function BidMatrix() {
                       <label className="text-[8px] font-black uppercase text-slate-500 mb-1 block">Contract Price ($)</label>
                       <div className="relative">
                         <DollarSign size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"/>
-                        <input type="number" value={bidder.submitted_amount || ''} onChange={(e) => handleUpdateBid(bidder.id, 'submitted_amount', e.target.value)} className="w-full bg-slate-950 border border-slate-700 pl-8 p-3 rounded-xl font-black text-emerald-400 outline-none focus:border-emerald-500 transition-all" />
+                        <input type="number" value={bidder.submitted_amount || ''} onChange={(e) => handleUpdateBid(bidder.id, 'submitted_amount', e.target.value)} className="w-full bg-slate-950 border border-slate-800 pl-8 p-3 rounded-xl font-black text-emerald-400 outline-none focus:border-emerald-500 transition-all shadow-inner" />
                       </div>
                     </div>
                     <div>
                       <label className="text-[8px] font-black uppercase text-slate-500 mb-1 block">Lead Time (Days)</label>
                       <div className="relative">
                         <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"/>
-                        <input type="number" value={bidder.schedule_impact_days || ''} onChange={(e) => handleUpdateBid(bidder.id, 'schedule_impact_days', e.target.value)} className="w-full bg-slate-950 border border-slate-700 pl-8 p-3 rounded-xl font-bold text-white outline-none focus:border-emerald-500 transition-all" />
+                        <input type="number" value={bidder.schedule_impact_days || ''} onChange={(e) => handleUpdateBid(bidder.id, 'schedule_impact_days', e.target.value)} className="w-full bg-slate-950 border border-slate-800 pl-8 p-3 rounded-xl font-bold text-white outline-none focus:border-emerald-500 transition-all shadow-inner" />
                       </div>
                     </div>
-                    <textarea value={bidder.trade_notes || ''} onChange={(e) => handleUpdateBid(bidder.id, 'trade_notes', e.target.value)} placeholder="Leveling notes..." className="w-full h-40 bg-slate-950 border border-slate-800 p-4 rounded-xl text-xs text-slate-300 font-medium resize-none outline-none focus:border-slate-700 transition-all" />
+                    <textarea value={bidder.trade_notes || ''} onChange={(e) => handleUpdateBid(bidder.id, 'trade_notes', e.target.value)} placeholder="Leveling notes..." className="w-full h-40 bg-slate-950 border border-slate-800 p-4 rounded-xl text-xs text-slate-300 font-medium resize-none outline-none focus:border-slate-700 transition-all shadow-inner" />
                   </div>
 
                   <div className="p-6 border-t border-slate-800 bg-slate-900 mt-auto">

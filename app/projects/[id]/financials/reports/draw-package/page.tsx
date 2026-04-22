@@ -21,6 +21,7 @@ export default function BankPackageGenerator() {
   const [activeDraw, setActiveDraw] = useState<any>(null)
   
   const [stats, setStats] = useState({ totalClaimed: 0, holdback: 0, netPayment: 0, invoiceCount: 0 })
+  const [invoiceLinks, setInvoiceLinks] = useState<string[]>([]) // ADDED: State to hold actual invoice URLs
   
   const [companyName, setCompanyName] = useState("")
   const [projectName, setProjectName] = useState("")
@@ -44,8 +45,11 @@ export default function BankPackageGenerator() {
     const retainage = gross * 0.10 
     const net = gross - retainage
 
-    const invoices = lines?.filter(l => l.invoice_link !== null) || []
-    setStats({ totalClaimed: gross, holdback: retainage, netPayment: net, invoiceCount: invoices.length })
+    // ADDED: Actually extract and save the links so the PDF generator can use them
+    const validInvoices = lines?.filter(l => l.invoice_link !== null).map(l => l.invoice_link) || []
+    setInvoiceLinks(validInvoices)
+    
+    setStats({ totalClaimed: gross, holdback: retainage, netPayment: net, invoiceCount: validInvoices.length })
   }
 
   const fetchData = async () => {
@@ -134,11 +138,24 @@ export default function BankPackageGenerator() {
         }
       }
 
+      // ADDED: Attachments structure is now properly sent to the backend
       const payload = { 
         projectId: id, 
         drawNumber: activeDraw.draw_number, 
         companyName, projectName, lenderName, lenderAddress,     
-        drawData: { period: activeDraw.period, totalCompleted: stats.totalClaimed, current: stats.totalClaimed, previous: 0, holdback: stats.holdback, net: stats.netPayment }
+        drawData: { 
+          period: activeDraw.period, 
+          totalCompleted: stats.totalClaimed, 
+          current: stats.totalClaimed, 
+          previous: 0, 
+          holdback: stats.holdback, 
+          net: stats.netPayment 
+        },
+        attachments: {
+          statDec: finalStatDecLink || null,
+          invoices: invoiceLinks,
+          extraDocs: extraDocs.map(doc => doc.file_link || doc.url).filter(Boolean)
+        }
       }
 
       const response = await fetch('/api/export-draw', {

@@ -85,7 +85,12 @@ export default function LogDetail() {
           </div>
           <div className="text-right">
             <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest mb-1">Field Date</p>
-            <p className="text-lg font-bold text-white print:text-slate-900">{new Date(log.created_at).toLocaleDateString('en-CA', { dateStyle: 'long' })}</p>
+            <p className="text-lg font-bold text-white print:text-slate-900">
+              {log.log_date 
+                ? new Date(log.log_date + 'T12:00:00').toLocaleDateString('en-CA', { dateStyle: 'long', timeZone: 'America/Toronto' }) 
+                : new Date(log.created_at).toLocaleDateString('en-CA', { dateStyle: 'long', timeZone: 'America/Toronto' })
+              }
+            </p>
           </div>
         </div>
 
@@ -170,7 +175,7 @@ export default function LogDetail() {
             <div className="bg-slate-900 p-8 rounded-[40px] border border-slate-800">
               <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">Log Timestamp</h3>
               <p className="text-sm font-bold text-slate-300">
-                {new Date(log.site_incidents.created_at).toLocaleString('en-CA', { dateStyle: 'long', timeStyle: 'short' })}
+                {new Date(log.site_incidents.created_at).toLocaleString('en-CA', { dateStyle: 'long', timeStyle: 'short', timeZone: 'America/Toronto' })}
               </p>
             </div>
           </div>

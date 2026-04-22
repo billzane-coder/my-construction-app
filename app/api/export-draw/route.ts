@@ -14,8 +14,9 @@ const supabase = createClient(
 export async function POST(request: Request) {
   try {
     const data = await request.json();
-    // NEW: Pulling the lender data from the payload
-    const { projectId, drawNumber, companyName, projectName, lenderName, lenderAddress } = data;
+    
+    // FETCH ATTACHMENTS FROM PAYLOAD (Fixing the disconnect)
+    const { projectId, drawNumber, companyName, projectName, lenderName, lenderAddress, attachments } = data;
 
     let { data: drawRec } = await supabase.from('project_draws').select('*').eq('project_id', projectId).eq('draw_number', drawNumber).maybeSingle();
     if (!drawRec) {
@@ -75,7 +76,6 @@ export async function POST(request: Request) {
     
     const displayCompany = companyName || 'PRECISION BUILDERS LTD.';
     const displayProject = projectName || `Project ID: ${projectId.substring(0, 8)}`;
-    // Fallbacks if not set
     const displayLenderName = lenderName || 'Lender Name TBD';
     const displayLenderAddress = lenderAddress || 'Lender Address TBD';
 
@@ -92,13 +92,11 @@ export async function POST(request: Request) {
     
     doc.setTextColor(0, 0, 0);
 
-    // NEW LAYOUT: Left Column (Lender Info)
     doc.setFontSize(10).setFont('helvetica', 'bold').text('TO (LENDER):', 15, 48);
     doc.setFont('helvetica', 'normal');
     doc.text(displayLenderName, 15, 55);
     doc.text(displayLenderAddress, 15, 61);
 
-    // NEW LAYOUT: Right Column (Project Info shifted to x=110)
     doc.setFontSize(10).setFont('helvetica', 'bold').text('PROJECT DETAILS:', 110, 48);
     doc.setFont('helvetica', 'normal');
     doc.text(`Project: ${displayProject}`, 110, 55);
@@ -209,47 +207,31 @@ export async function POST(request: Request) {
     const coverSheetBuffer = doc.output('arraybuffer');
 
     // ==========================================
-    // PHASE 3: STITCHING 
+    // PHASE 3: ROBUST STITCHING ENGINE
     // ==========================================
     const finalPdf = await PDFDocument.create();
     const coverDoc = await PDFDocument.load(coverSheetBuffer);
     const coverPages = await finalPdf.copyPages(coverDoc, coverDoc.getPageIndices());
     coverPages.forEach(p => finalPdf.addPage(p));
 
-    if (drawRec?.stat_dec_link && typeof drawRec.stat_dec_link === 'string' && drawRec.stat_dec_link.startsWith('http')) {
-        try {
-            const res = await fetch(drawRec.stat_dec_link);
-            if (res.ok) {
-                const bytes = await res.arrayBuffer();
-                const lowerLink = drawRec.stat_dec_link.toLowerCase();
-                
-                if (lowerLink.includes('.jpg') || lowerLink.includes('.jpeg') || lowerLink.includes('.png')) {
-                    const image = lowerLink.includes('.png') ? await finalPdf.embedPng(bytes) : await finalPdf.embedJpg(bytes);
-                    const page = finalPdf.addPage();
-                    const { width, height } = page.getSize();
-                    const dims = image.scaleToFit(width - 40, height - 40);
-                    page.drawImage(image, { x: width / 2 - dims.width / 2, y: height / 2 - dims.height / 2, width: dims.width, height: dims.height });
-                } else {
-                    const externalPdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
-                    const pages = await finalPdf.copyPages(externalPdf, externalPdf.getPageIndices());
-                    pages.forEach(p => finalPdf.addPage(p));
-                }
-            }
-        } catch (e) { console.error("Skipping corrupted Stat Dec"); }
-    }
+    // A helper to safely download and embed any file type
+    const embedFile = async (link: string | null | undefined) => {
+        if (!link || typeof link !== 'string') return;
+        
+        let finalUrl = link;
+        
+        // Fix the "Missing HTTP" Path Trap
+        if (!finalUrl.startsWith('http')) {
+            const { data } = supabase.storage.from('project_documents').getPublicUrl(finalUrl);
+            finalUrl = data.publicUrl;
+        }
 
-    const allExternalLinks = [
-        ...new Set((currentDrawLines || []).map((d: any) => d.invoice_link).filter(Boolean)),
-        ...(extraDocs || []).map((d: any) => d.file_link).filter(Boolean)
-    ];
-
-    for (const link of allExternalLinks) {
         try {
-            if (typeof link !== 'string' || !link.startsWith('http')) continue;
-            const res = await fetch(link);
-            if (!res.ok) continue;
+            const res = await fetch(finalUrl);
+            if (!res.ok) return; // Fails gracefully, doesn't crash the server
+            
             const bytes = await res.arrayBuffer();
-            const lowerLink = link.toLowerCase();
+            const lowerLink = finalUrl.toLowerCase();
             
             if (lowerLink.includes('.jpg') || lowerLink.includes('.jpeg') || lowerLink.includes('.png')) {
                 const image = lowerLink.includes('.png') ? await finalPdf.embedPng(bytes) : await finalPdf.embedJpg(bytes);
@@ -258,18 +240,42 @@ export async function POST(request: Request) {
                 const dims = image.scaleToFit(width - 40, height - 40);
                 page.drawImage(image, { x: width / 2 - dims.width / 2, y: height / 2 - dims.height / 2, width: dims.width, height: dims.height });
             } else {
+                // Assume PDF for everything else
                 const externalPdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
                 const pages = await finalPdf.copyPages(externalPdf, externalPdf.getPageIndices());
                 pages.forEach(p => finalPdf.addPage(p));
             }
-        } catch (e) { console.error(`Skipping broken file: ${link}`); }
+        } catch (e) {
+            console.error(`Skipping broken attachment: ${finalUrl}`);
+        }
+    };
+
+    // Gather links with fallback to database if the payload fails
+    const statDecLink = attachments?.statDec || drawRec?.stat_dec_link;
+    const invoiceLinks = attachments?.invoices || (currentDrawLines || []).map((d: any) => d.invoice_link);
+    const extraLinks = attachments?.extraDocs || (extraDocs || []).map((d: any) => d.file_link || d.url || d.file_url);
+
+    // 1. Embed Stat Dec
+    await embedFile(statDecLink);
+
+    // 2. Embed Invoices (Deduplicated)
+    for (const link of new Set(invoiceLinks.filter(Boolean))) {
+        await embedFile(link as string);
+    }
+
+    // 3. Embed Extra Documents (Deduplicated)
+    for (const link of new Set(extraLinks.filter(Boolean))) {
+        await embedFile(link as string);
     }
 
     const finalPdfBytes = await finalPdf.save();
     
     return new Response(finalPdfBytes as any, {
         status: 200,
-        headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="Lender_Draw_Package_${drawRec.draw_number}.pdf"` }
+        headers: { 
+            'Content-Type': 'application/pdf', 
+            'Content-Disposition': `attachment; filename="Lender_Draw_Package_${drawRec.draw_number}.pdf"` 
+        }
     });
 
   } catch (error: any) {

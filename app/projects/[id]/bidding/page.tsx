@@ -294,6 +294,15 @@ export default function BidManager() {
 
   const handleEditExisting = (pkg: any) => {
     setEditingPackageId(pkg.id)
+    
+    // Safely parse linked_plans just in case it was stored oddly
+    let parsedPlans = [];
+    if (Array.isArray(pkg.linked_plans)) {
+        parsedPlans = pkg.linked_plans;
+    } else if (typeof pkg.linked_plans === 'string') {
+        try { parsedPlans = JSON.parse(pkg.linked_plans); } catch(e) {}
+    }
+
     setFormData({
       division_code: pkg.division_code || '',
       category: pkg.category || '',
@@ -302,7 +311,7 @@ export default function BidManager() {
       inclusions: pkg.inclusions || [''],
       exclusions: pkg.exclusions || [''],
       due_date: pkg.due_date ? pkg.due_date.slice(0, 16) : '',
-      linked_plans: Array.isArray(pkg.linked_plans) ? pkg.linked_plans : []
+      linked_plans: parsedPlans
     })
     setShowModal(true)
   }
@@ -311,6 +320,19 @@ export default function BidManager() {
     if (!window.confirm(`Delete "${pkgTitle}"?`)) return
     await supabase.from('bid_packages').delete().eq('id', pkgId)
     await fetchData()
+  }
+
+  // --- DELETE FROM MASTER LIBRARY ---
+  const handleDeleteTemplate = async (e: React.MouseEvent, templateId: string, title: string) => {
+    e.stopPropagation() 
+    if (!window.confirm(`Permanently delete "${title}" from the Master Library?`)) return
+    
+    const { error } = await supabase.from('master_scope_templates').delete().eq('id', templateId)
+    if (error) {
+      alert(`Error deleting template: ${error.message}`)
+    } else {
+      setMasterTemplates(prev => prev.filter(t => t.id !== templateId))
+    }
   }
 
   const handleSave = async (toLibrary = false) => {
@@ -325,14 +347,32 @@ export default function BidManager() {
     }
 
     if (toLibrary) {
-      await supabase.from('master_scope_templates').insert([baseData])
-      alert("Saved to Master Library!")
+      const { data, error } = await supabase.from('master_scope_templates').insert([baseData]).select()
+      if (error) {
+        alert(`Failed to save to Master Library: ${error.message}`)
+      } else if (data && data.length > 0) {
+        setMasterTemplates(prev => [...prev, data[0]])
+        alert("Saved to Master Library!")
+      }
     } else {
-      const projectData = { ...baseData, project_id: id, status: 'Draft', linked_plans: formData.linked_plans || [], due_date: formData.due_date ? new Date(formData.due_date).toISOString() : null }
-      editingPackageId 
+      const projectData = { 
+        ...baseData, 
+        project_id: id, 
+        status: 'Draft', 
+        linked_plans: formData.linked_plans || [], 
+        due_date: formData.due_date ? new Date(formData.due_date).toISOString() : null 
+      }
+
+      const { error } = editingPackageId 
         ? await supabase.from('bid_packages').update(projectData).eq('id', editingPackageId)
         : await supabase.from('bid_packages').insert([projectData])
-      setShowModal(false); await fetchData()
+      
+      if (error) {
+        alert(`Failed to save to project: ${error.message}`)
+      } else {
+        setShowModal(false); 
+        await fetchData()
+      }
     }
     setSaving(false)
   }
@@ -378,26 +418,58 @@ export default function BidManager() {
         <div className="space-y-12">
           {Object.entries(groupedPackages).sort().map(([div, items]: any) => (
             <div key={div} className="space-y-6">
-              <div className="flex items-center gap-4 border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-4 border-b border-slate-800 pb-4 group/header">
                 <div className="bg-emerald-600 text-white font-black px-4 py-1 rounded-lg text-sm">Div {div}</div>
                 <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white">{divisionMap[div] || 'Custom Specialty'}</h2>
+                <button onClick={() => startSubItem(div)} className="p-1.5 bg-slate-900 border border-slate-800 rounded-md text-slate-500 hover:text-white transition-all opacity-0 group-hover/header:opacity-100" title="Add Sub-Item"><Plus size={14}/></button>
                 <div className="flex-1 h-[1px] bg-slate-800" />
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {items.map((pkg: any) => (
-                  <div key={pkg.id} className="bg-slate-900 border border-slate-800 rounded-[32px] p-6 hover:border-emerald-500/50 transition-all flex flex-col shadow-2xl relative group">
-                    <div className="flex justify-between items-start mb-4">
-                      <span className="text-slate-500 font-black text-[9px] uppercase tracking-widest">{pkg.category}</span>
-                      <div className="flex gap-2">
-                        <button onClick={() => handleEditExisting(pkg)} className="text-slate-600 hover:text-white"><Edit3 size={16}/></button>
-                        <button onClick={() => handleDeletePackage(pkg.id, pkg.title)} className="text-slate-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={16}/></button>
+                {items.map((pkg: any) => {
+                  
+                  // --- BIDDING NOTIFICATION LOGIC ---
+                  const submittedCount = pkg.bid_invitations?.filter((i:any) => i.status === 'Submitted' || i.status === 'Awarded').length || 0;
+                  const activeBidders = pkg.bid_invitations?.filter((i:any) => i.status === 'Bidding').length || 0;
+
+                  return (
+                    <div key={pkg.id} className="bg-slate-900 border border-slate-800 rounded-[32px] p-6 hover:border-emerald-500/50 transition-all flex flex-col shadow-2xl relative group">
+                      
+                      <div className="flex justify-between items-start mb-4">
+                        <span className="text-slate-500 font-black text-[9px] uppercase tracking-widest">{pkg.category}</span>
+                        <div className="flex gap-2">
+                          <button onClick={() => handleEditExisting(pkg)} className="text-slate-600 hover:text-white"><Edit3 size={16}/></button>
+                          <button onClick={() => handleDeletePackage(pkg.id, pkg.title)} className="text-slate-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={16}/></button>
+                        </div>
                       </div>
+                      
+                      <h3 className="text-xl font-black text-white mb-3 uppercase italic truncate">{pkg.title}</h3>
+                      
+                      {/* DYNAMIC NOTIFICATION BADGES */}
+                      {submittedCount > 0 ? (
+                        <div className="bg-emerald-950/30 border border-emerald-900/50 text-emerald-500 px-3 py-1.5 rounded-lg w-fit flex items-center gap-2 mb-4 shadow-lg shadow-emerald-900/20">
+                          <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                          </span>
+                          <span className="text-[9px] font-black uppercase tracking-widest">{submittedCount} Quote{submittedCount > 1 ? 's' : ''} Received</span>
+                        </div>
+                      ) : activeBidders > 0 ? (
+                        <div className="bg-blue-950/30 border border-blue-900/50 text-blue-500 px-3 py-1.5 rounded-lg w-fit flex items-center gap-2 mb-4">
+                          <Clock size={10} />
+                          <span className="text-[9px] font-black uppercase tracking-widest">{activeBidders} Trade{activeBidders > 1 ? 's' : ''} Drafting</span>
+                        </div>
+                      ) : (
+                        <div className="h-8 mb-4"></div> // Spacer so layout doesn't jump
+                      )}
+
+                      <p className="text-xs text-slate-400 line-clamp-2 mb-6 font-bold">{pkg.base_scope}</p>
+                      
+                      <button onClick={() => router.push(`/projects/${id}/bidding/${pkg.id}`)} className="mt-auto w-full bg-slate-950 border border-slate-800 text-white font-black text-[10px] uppercase py-3 rounded-xl hover:bg-emerald-600 transition-all flex items-center justify-center gap-2 italic">
+                        Open Bid Matrix <ArrowRight size={14}/>
+                      </button>
                     </div>
-                    <h3 className="text-xl font-black text-white mb-2 uppercase italic truncate">{pkg.title}</h3>
-                    <p className="text-xs text-slate-400 line-clamp-2 mb-6 font-bold">{pkg.base_scope}</p>
-                    <button onClick={() => router.push(`/projects/${id}/bidding/${pkg.id}`)} className="mt-auto w-full bg-slate-950 border border-slate-800 text-white font-black text-[10px] uppercase py-3 rounded-xl hover:bg-emerald-600 transition-all flex items-center justify-center gap-2 italic">Open Bid Matrix <ArrowRight size={14}/></button>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           ))}
@@ -406,71 +478,95 @@ export default function BidManager() {
 
       {/* THE MAIN ENGINEER MODAL - FIXED HEADER/FOOTER SCROLLING FIX */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[9999] flex items-center justify-center p-0 md:p-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-none md:rounded-[40px] w-full max-w-7xl h-full md:h-[95vh] flex flex-col shadow-2xl overflow-hidden relative">
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[100] flex items-center justify-center p-0 md:p-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-none md:rounded-[40px] w-full max-w-6xl h-full md:h-[95vh] flex flex-col shadow-2xl overflow-hidden relative">
             
-            {/* LOCKED MODAL HEADER */}
-            <div className="p-6 md:p-8 border-b border-slate-800 flex justify-between items-center bg-slate-950/90 shrink-0 z-50">
+            {/* FIXED MODAL HEADER */}
+            <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-950/90 backdrop-blur-md shrink-0 z-30">
                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-emerald-600/20 rounded-xl flex items-center justify-center text-emerald-500 shadow-lg"><FileSignature size={20}/></div>
+                  <div className="w-10 h-10 bg-emerald-600/20 rounded-xl flex items-center justify-center text-emerald-500"><FileSignature size={20}/></div>
                   <div>
-                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-white leading-none">Drafting Tender Scope</h2>
+                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-white leading-none">Drafting Scope</h2>
                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1">{formData.title || 'New Package'}</p>
                   </div>
                </div>
-               <button onClick={() => setShowModal(false)} className="bg-slate-800 p-2 rounded-full text-slate-400 hover:text-white transition-colors"><X size={20}/></button>
+               <button onClick={() => setShowModal(false)} className="bg-slate-800 p-2 rounded-full text-slate-400 hover:text-white"><X size={20}/></button>
             </div>
 
-            <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
+            {/* MIN-H-0 REQUIRED TO ALLOW THE INNER DIVS TO SCROLL */}
+            <div className="flex-1 flex overflow-hidden min-h-0">
               
-              {/* SIDEBAR WITH PLUS BUTTONS */}
-              <div className="hidden lg:block w-80 border-r border-slate-800 bg-slate-950 overflow-y-auto p-6 custom-scrollbar shrink-0">
-                <p className="text-[10px] font-black uppercase text-slate-500 mb-6 tracking-widest flex items-center gap-2"><Database size={12}/> Master Library</p>
-                <div className="space-y-3 pb-20">
-                  {Object.keys(libraryTree).sort().map(div => (
-                    <div key={div} className="space-y-1">
-                      <div className="flex items-center gap-1 group">
-                        <button onClick={() => toggleDiv(div)} className="flex-1 flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-emerald-400 transition-all">
-                          <div className="flex flex-col items-start text-left">
-                             <span className="text-[9px] font-black uppercase text-emerald-500">Div {div}</span>
-                             <span className="text-[10px] font-bold uppercase truncate max-w-[110px]">{divisionMap[div] || 'Specialties'}</span>
-                          </div>
-                          {expandedDivs.includes(div) ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
-                        </button>
-                        {/* PLUS BUTTON BESIDE DIVISION */}
-                        <button 
-                          onClick={() => startSubItem(div)}
-                          title="New Sub-Item"
-                          className="p-3 bg-slate-900 border border-slate-800 rounded-xl text-slate-600 hover:text-white hover:bg-emerald-600 transition-all opacity-0 group-hover:opacity-100"
-                        >
-                          <Plus size={14}/>
-                        </button>
-                      </div>
-
-                      {expandedDivs.includes(div) && (
-                        <div className="pl-3 space-y-4 pt-3 pb-2 border-l border-slate-800 ml-4 animate-in slide-in-from-top-2 duration-200">
-                          {Object.keys(libraryTree[div]).map(cat => (
-                            <div key={cat} className="space-y-1">
-                              <p className="text-[8px] font-black text-slate-600 uppercase pl-2 mb-1">{cat}</p>
-                              {libraryTree[div][cat].map((t: any) => (
-                                <button key={t.id || t.title} onClick={() => loadTemplate(t)} className={`w-full text-left p-2.5 rounded-lg text-[10px] font-bold transition-all truncate ${t.isHardcoded ? 'text-slate-500 hover:text-white' : 'text-emerald-500 hover:text-emerald-400'} hover:bg-white/5`}>
-                                  {t.title}
-                                </button>
-                              ))}
+              {/* SIDEBAR */}
+              <div className="hidden lg:flex flex-col w-80 border-r border-slate-800 bg-slate-950 shrink-0">
+                <div className="p-6 pb-2 border-b border-slate-800 shrink-0">
+                   <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-2"><Database size={12}/> Master Library</p>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 custom-scrollbar pb-20">
+                  <div className="space-y-3">
+                    {Object.keys(libraryTree).sort().map(div => (
+                      <div key={div} className="space-y-1">
+                        <div className="flex items-center gap-1 group/div">
+                          <button onClick={() => toggleDiv(div)} className="flex-1 flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-emerald-400 transition-all">
+                            <div className="flex flex-col items-start text-left">
+                               <span className="text-[9px] font-black uppercase text-emerald-500">Div {div}</span>
+                               <span className="text-[10px] font-bold uppercase truncate max-w-[110px]">{divisionMap[div] || 'Specialties'}</span>
                             </div>
-                          ))}
+                            {expandedDivs.includes(div) ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+                          </button>
+                          <button 
+                            onClick={() => startSubItem(div)}
+                            title="New Sub-Item"
+                            className="p-3 bg-slate-900 border border-slate-800 rounded-xl text-slate-600 hover:text-white hover:bg-emerald-600 transition-all opacity-0 group-hover/div:opacity-100"
+                          >
+                            <Plus size={14}/>
+                          </button>
                         </div>
-                      )}
+
+                        {expandedDivs.includes(div) && (
+                          <div className="pl-3 space-y-4 pt-3 pb-2 border-l border-slate-800 ml-4 animate-in slide-in-from-top-2 duration-200">
+                            {Object.keys(libraryTree[div]).map(cat => (
+                              <div key={cat} className="space-y-1">
+                                <p className="text-[8px] font-black text-slate-600 uppercase pl-2 mb-1">{cat}</p>
+                                {libraryTree[div][cat].map((t: any) => (
+                                  <div key={t.id || t.title} className="flex items-center gap-1 group/item">
+                                    <button onClick={() => loadTemplate(t)} className={`flex-1 text-left p-2.5 rounded-lg text-[10px] font-bold transition-all truncate ${t.isHardcoded ? 'text-slate-500 hover:text-white' : 'text-emerald-500 hover:text-emerald-400'} hover:bg-white/5`}>
+                                      {t.title}
+                                    </button>
+                                    
+                                    {/* DELETE TEMPLATE BUTTON (ONLY FOR CUSTOM TEMPLATES) */}
+                                    {!t.isHardcoded && t.id && (
+                                      <button 
+                                        onClick={(e) => handleDeleteTemplate(e, t.id, t.title)} 
+                                        className="p-1.5 text-slate-600 hover:text-red-500 opacity-0 group-hover/item:opacity-100 transition-all rounded-lg hover:bg-slate-900"
+                                      >
+                                        <Trash2 size={12}/>
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <div className="mt-8 pt-8 border-t border-slate-800 space-y-3">
+                       <p className="text-[9px] font-black uppercase text-slate-600 tracking-widest pl-2">Create Master Div</p>
+                       <div className="flex gap-2">
+                          <input value={newDivCode} onChange={e => setNewDivCode(e.target.value)} placeholder="00" className="w-14 bg-slate-900 border border-slate-800 p-2 rounded-lg text-[10px] font-black text-white text-center outline-none" />
+                          <input value={newDivLabel} onChange={e => setNewDivLabel(e.target.value)} placeholder="Label" className="flex-1 bg-slate-900 border border-slate-800 p-2 rounded-lg text-[10px] font-black text-white outline-none" />
+                          <button onClick={handleAddDivision} className="bg-blue-600 p-2 rounded-lg text-white"><Plus size={14}/></button>
+                       </div>
                     </div>
-                  ))}
+                  </div>
                 </div>
               </div>
 
-              {/* EDITOR AREA - THIS SCROLLS INDEPENDENTLY */}
+              {/* EDITOR AREA */}
               <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-900/50 flex flex-col relative">
                 
                 {/* STICKY SUB-HEADER */}
-                <div className="sticky top-0 bg-slate-950 border-b border-slate-800 p-6 grid grid-cols-1 md:grid-cols-2 gap-8 items-start z-40 shrink-0">
+                <div className="sticky top-0 bg-slate-950/95 backdrop-blur-md p-6 border-b border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-8 items-start z-40 shrink-0">
                    <div>
                       <label className="text-[9px] font-black text-slate-500 uppercase mb-2 block flex items-center gap-2"><Clock size={12} className="text-blue-500"/> Bid Deadline</label>
                       <input type="datetime-local" value={formData.due_date} onChange={e => setFormData({...formData, due_date: e.target.value})} className="w-full bg-slate-900 border border-slate-800 p-3 rounded-xl font-bold text-white text-xs outline-none focus:border-blue-500 [color-scheme:dark]" />
@@ -482,7 +578,7 @@ export default function BidManager() {
                       </label>
                       <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
                          {projectPlans.map(plan => (
-                            <button key={plan.id} onClick={() => togglePlanLink(plan.id)} className={`shrink-0 px-3 py-2 rounded-lg text-[9px] font-black uppercase border transition-all ${formData.linked_plans.includes(plan.id) ? 'bg-blue-600 border-blue-500 text-white shadow-lg' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>{plan.sheet_number || plan.title.slice(0, 5)}</button>
+                            <button key={plan.id} onClick={() => togglePlanLink(plan.id)} className={`shrink-0 px-3 py-2 rounded-lg text-[9px] font-black uppercase border transition-all ${formData.linked_plans.includes(plan.id) ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>{plan.sheet_number || plan.title.slice(0, 5)}</button>
                          ))}
                       </div>
                    </div>
@@ -546,15 +642,15 @@ export default function BidManager() {
               </div>
             </div>
 
-            {/* LOCKED MODAL FOOTER */}
-            <div className="p-8 border-t border-slate-800 bg-slate-950 flex flex-col md:flex-row justify-between items-center shrink-0 z-50 gap-4">
-               <button onClick={() => handleSave(true)} disabled={saving || !formData.title} className="flex items-center gap-3 text-[10px] font-black uppercase text-blue-400 hover:text-white transition-all bg-blue-950/20 px-8 py-5 rounded-2xl border border-blue-900/30 shadow-lg italic w-full md:w-auto justify-center">
-                 <BookmarkPlus size={22}/> Save to Matt's Library
+            {/* FIXED MODAL FOOTER */}
+            <div className="p-6 border-t border-slate-800 bg-slate-950 flex flex-col md:flex-row justify-between items-center shrink-0 z-30 gap-4">
+               <button onClick={() => handleSave(true)} disabled={saving || !formData.title} className="flex items-center gap-3 text-[10px] font-black uppercase text-blue-400 hover:text-white transition-all bg-blue-950/20 px-8 py-4 rounded-2xl border border-blue-900/30 shadow-lg italic w-full md:w-auto justify-center">
+                 <BookmarkPlus size={20}/> Save to Master Library
                </button>
                <div className="flex gap-6 w-full md:w-auto">
                  <button onClick={() => setShowModal(false)} className="px-8 py-4 text-xs font-black uppercase text-slate-500 hover:text-white tracking-widest italic flex-1 md:flex-none">Discard</button>
-                 <button onClick={() => handleSave(false)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-16 py-5 rounded-2xl text-sm font-black uppercase tracking-[0.3em] shadow-2xl flex items-center gap-4 transition-all hover:scale-105 active:scale-95 italic flex-1 md:flex-none justify-center">
-                    {saving ? <Loader2 className="animate-spin" size={20}/> : <Save size={20}/>} Push to Tenders
+                 <button onClick={() => handleSave(false)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-12 py-4 rounded-2xl text-sm font-black uppercase tracking-[0.3em] shadow-2xl flex items-center gap-3 transition-all hover:scale-105 active:scale-95 italic flex-1 md:flex-none justify-center">
+                    {saving ? <Loader2 className="animate-spin" size={18}/> : <Save size={18}/>} Save & Add to Project
                  </button>
                </div>
             </div>
@@ -577,10 +673,10 @@ export default function BidManager() {
               </select>
               <div className="space-y-2">
                 {sourcePackages.map(pkg => (
-                  <div key={pkg.id} className="bg-slate-950 border border-slate-800 p-5 rounded-2xl flex justify-between items-center hover:border-blue-500/50 transition-all shadow-md">
+                  <div className="bg-slate-950 border border-slate-800 p-5 rounded-2xl flex justify-between items-center hover:border-blue-500/50 transition-all shadow-md" key={pkg.id}>
                     <div className="text-left leading-tight">
                       <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest mb-1">Div {pkg.division_code}</p>
-                      <p className="font-bold text-white uppercase italic">{pkg.title}</p>
+                      <p className="text-xs font-bold text-white uppercase italic">{pkg.title}</p>
                     </div>
                     <button onClick={() => { loadTemplate(pkg); setShowModal(true); setShowImportModal(false); }} className="bg-blue-600/10 text-blue-500 hover:bg-blue-600 hover:text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all shadow-lg italic">Import</button>
                   </div>
