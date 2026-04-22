@@ -1,14 +1,15 @@
 'use client'
 
+// 1. VERCEL BUILD FIX - Forces dynamic rendering for the token route
 export const dynamic = 'force-dynamic'
 
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { 
-  FileText, CheckCircle2, Globe, Clock, 
+  FileText, CheckCircle2, Clock, 
   Download, Loader2, HardHat, ShieldCheck, 
-  AlertCircle, Info, DollarSign, Calendar, Send,
+  AlertCircle, DollarSign, Calendar, Send,
   UploadCloud, FileCheck, X, XCircle, RefreshCw, Lock
 } from 'lucide-react'
 
@@ -31,7 +32,9 @@ export default function TenderPortal() {
     proposal_link: '' 
   })
 
-  useEffect(() => { if (token) fetchPortalData() }, [token])
+  useEffect(() => { 
+    if (token) fetchPortalData() 
+  }, [token])
 
   const fetchPortalData = async () => {
     setLoading(true)
@@ -46,8 +49,8 @@ export default function TenderPortal() {
 
       setInvite(invData)
       setBidData({
-          amount: invData.submitted_amount || '',
-          days: invData.schedule_impact_days || '',
+          amount: invData.submitted_amount?.toString() || '',
+          days: invData.schedule_impact_days?.toString() || '',
           notes: invData.trade_notes || '',
           proposal_link: invData.proposal_link || ''
       })
@@ -60,17 +63,26 @@ export default function TenderPortal() {
       
       if (pkgData) {
         setPkg(pkgData)
-        let planIds = []
+        let planIds: string[] = []
         try {
-          planIds = Array.isArray(pkgData.linked_plans) ? pkgData.linked_plans : JSON.parse(pkgData.linked_plans || '[]')
-        } catch (e) { planIds = [] }
+          // Robust parsing for Vercel
+          if (Array.isArray(pkgData.linked_plans)) {
+            planIds = pkgData.linked_plans
+          } else if (typeof pkgData.linked_plans === 'string') {
+            planIds = JSON.parse(pkgData.linked_plans)
+          }
+        } catch (e) { 
+          planIds = [] 
+        }
 
         if (planIds.length > 0) {
           const { data: docs } = await supabase.from('project_documents').select('*').in('id', planIds)
           setPlans(docs || [])
         }
       }
-    } catch (err) { console.error("Portal Error:", err) }
+    } catch (err) { 
+      console.error("Portal Error:", err) 
+    }
     setLoading(false)
   }
 
@@ -87,7 +99,9 @@ export default function TenderPortal() {
       fileLink = data.publicUrl
     }
 
-    window.open(fileLink, '_blank', 'noopener,noreferrer')
+    if (typeof window !== 'undefined') {
+      window.open(fileLink, '_blank', 'noopener,noreferrer')
+    }
   }
 
   // --- RSVP ENGINE ---
@@ -190,6 +204,8 @@ export default function TenderPortal() {
     </div>
   )
 
+  const isFormLocked = invite.status === 'Invited'
+
   return (
     <div className="fixed inset-0 bg-slate-950 overflow-y-auto z-[9999] text-slate-100 font-sans">
       
@@ -289,7 +305,7 @@ export default function TenderPortal() {
                         <div className="space-y-8">
                             
                             {/* RSVP BAR WITH EXPLICIT INSTRUCTIONS */}
-                            {invite.status === 'Invited' && (
+                            {isFormLocked && (
                                 <div className="bg-blue-950/20 border border-blue-900/50 p-6 rounded-3xl text-center animate-in fade-in slide-in-from-top-2 relative z-10">
                                     <Lock size={32} className="text-blue-500 mx-auto mb-3 opacity-50" />
                                     <p className="text-blue-400 font-bold text-sm mb-1">Will you be submitting a quote?</p>
@@ -303,7 +319,7 @@ export default function TenderPortal() {
                             )}
 
                             {/* LOCKED SUBMISSION FORM */}
-                            <form onSubmit={handleSubmitBid} className={`space-y-8 transition-all duration-500 ${invite.status === 'Invited' ? 'opacity-40 grayscale pointer-events-none blur-[1px]' : 'opacity-100'}`}>
+                            <form onSubmit={handleSubmitBid} className={`space-y-8 transition-opacity duration-300 ${isFormLocked ? 'opacity-30 pointer-events-none' : 'opacity-100'}`}>
                                 
                                 {/* QUOTE UPLOAD WITH REVISION TRACKING */}
                                 <div className="space-y-3">
@@ -379,7 +395,7 @@ export default function TenderPortal() {
                                 </button>
 
                                 {/* OPT-OUT BUTTON ONCE ACTIVE */}
-                                {(invite.status === 'Bidding' || invite.status === 'Submitted') && (
+                                {!isFormLocked && (
                                   <button 
                                     type="button" 
                                     onClick={() => handleRSVP('Declined')} 
