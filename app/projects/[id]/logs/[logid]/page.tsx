@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import { ChevronLeft, HardHat, CloudRain, Clock, Loader2, FileCheck, Images, Plus, Minus, Trash2, Printer, Share2, Lock, Unlock } from 'lucide-react'
 
-// --- 🛠️ BULLETPROOF MOBILE COMPRESSION ENGINE ---
+// --- 🛠️ BULLETPROOF MOBILE COMPRESSION ENGINE (FOR DB UPLOAD) ---
 const compressImage = (file: File): Promise<Blob> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -51,7 +51,7 @@ const compressImage = (file: File): Promise<Blob> => {
   })
 }
 
-// --- 📉 OFFLINE PDF IMAGE COMPRESSOR ---
+// --- 📉 OFFLINE PDF IMAGE COMPRESSOR (RESOLUTION INCREASED) ---
 const getCompressedImageForPDF = async (url: string): Promise<string | null> => {
   return new Promise((resolve) => {
     const img = new Image()
@@ -59,7 +59,8 @@ const getCompressedImageForPDF = async (url: string): Promise<string | null> => 
     
     img.onload = () => {
       const canvas = document.createElement('canvas')
-      const MAX_WIDTH = 600 // Aggressively shrink for PDF
+      // Bumped from 600 to 1000 for sharper PDF photos without ballooning file size
+      const MAX_WIDTH = 1000 
       let width = img.width
       let height = img.height
 
@@ -76,7 +77,8 @@ const getCompressedImageForPDF = async (url: string): Promise<string | null> => 
         ctx.fillStyle = '#FFFFFF'
         ctx.fillRect(0, 0, width, height)
         ctx.drawImage(img, 0, 0, width, height)
-        resolve(canvas.toDataURL('image/jpeg', 0.5)) // 50% Quality for ultra-small PDFs
+        // Bumped quality to 75% for cleaner visuals
+        resolve(canvas.toDataURL('image/jpeg', 0.75)) 
       } else {
         resolve(null)
       }
@@ -235,44 +237,73 @@ export default function EditDailyLog() {
     else { navigator.clipboard.writeText(text); alert('Copied to clipboard'); }
   }
 
-  // --- 🖨️ NATIVE PDF EXPORT ENGINE ---
+  // --- 🖨️ STYLIZED NATIVE PDF EXPORT ENGINE ---
   const handleExportPDF = async () => {
     setExportingPdf(true)
     try {
       const { jsPDF } = await import('jspdf')
       const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' })
       
-      // Header
-      doc.setFontSize(22)
+      // Top Accent Banner (Blue-600)
+      doc.setFillColor(37, 99, 235) 
+      doc.rect(0, 0, 216, 6, 'F') 
+
+      // Header Title
+      doc.setFontSize(24)
+      doc.setTextColor(15, 23, 42) // Slate-900
       doc.setFont('helvetica', 'bold')
-      doc.text('DAILY SITE REPORT', 15, 20)
+      doc.text('DAILY SITE REPORT', 15, 22)
+      
+      // Project Subtitle
+      doc.setFontSize(10)
+      doc.setTextColor(100, 116, 139) // Slate-500
+      doc.text(project?.name?.toUpperCase() || 'PROJECT RECORD', 15, 28)
+      
+      // Right-Aligned Metadata Box
+      const displayDate = date ? new Date(date + 'T12:00:00').toLocaleDateString() : 'N/A'
       
       doc.setFontSize(10)
+      doc.setTextColor(15, 23, 42)
+      doc.setFont('helvetica', 'bold')
+      doc.text('Date:', 130, 22)
       doc.setFont('helvetica', 'normal')
-      doc.text(`Project: ${project?.name || 'Project Record'}`, 15, 28)
-      doc.text(`Date: ${date ? new Date(date + 'T12:00:00').toLocaleDateString() : 'N/A'}`, 15, 33)
-      doc.text(`Weather: ${weather || 'N/A'}`, 15, 38)
+      doc.text(displayDate, 145, 22)
+
+      doc.setFont('helvetica', 'bold')
+      doc.text('Weather:', 130, 28)
+      doc.setFont('helvetica', 'normal')
       
+      const weatherText = doc.splitTextToSize(weather || 'N/A', 50)
+      doc.text(weatherText, 148, 28)
+
+      // Divider Line
+      doc.setDrawColor(226, 232, 240) // Slate-200
       doc.setLineWidth(0.5)
-      doc.line(15, 43, 200, 43)
+      doc.line(15, 36, 200, 36)
 
-      // Manpower
+      // Manpower Section
       doc.setFontSize(12)
+      doc.setTextColor(15, 23, 42)
       doc.setFont('helvetica', 'bold')
-      doc.text('Manpower on Site:', 15, 52)
+      doc.text('Manpower on Site', 15, 46)
+      
       doc.setFont('helvetica', 'normal')
       doc.setFontSize(10)
+      doc.setTextColor(71, 85, 105) // Slate-600
       const manpowerText = doc.splitTextToSize(getManpowerString() || 'None reported.', 180)
-      doc.text(manpowerText, 15, 58)
+      doc.text(manpowerText, 15, 52)
 
-      let yOffset = 64 + (manpowerText.length * 5)
+      let yOffset = 58 + (manpowerText.length * 5)
 
-      // Work Performed
+      // Work Performed Section
       doc.setFontSize(12)
+      doc.setTextColor(15, 23, 42)
       doc.setFont('helvetica', 'bold')
-      doc.text('Work Performed:', 15, yOffset)
+      doc.text('Work Performed', 15, yOffset)
+      
       doc.setFont('helvetica', 'normal')
       doc.setFontSize(10)
+      doc.setTextColor(71, 85, 105)
       const workText = doc.splitTextToSize(workPerformed || 'None reported.', 180)
       yOffset += 6
       doc.text(workText, 15, yOffset)
@@ -282,8 +313,9 @@ export default function EditDailyLog() {
       // Photos (Compressed & Stitched 2-up)
       if (photos && photos.length > 0) {
         doc.setFontSize(12)
+        doc.setTextColor(15, 23, 42)
         doc.setFont('helvetica', 'bold')
-        doc.text('Site Visuals:', 15, yOffset)
+        doc.text('Site Visuals', 15, yOffset)
         yOffset += 8
         
         let col = 0
@@ -296,6 +328,9 @@ export default function EditDailyLog() {
           const base64Img = await getCompressedImageForPDF(photos[i])
           if (base64Img) {
             const xPos = col === 0 ? 15 : 110
+            // Draw a subtle border around the image
+            doc.setDrawColor(203, 213, 225)
+            doc.rect(xPos, yOffset, 90, 90)
             doc.addImage(base64Img, 'JPEG', xPos, yOffset, 90, 90, undefined, 'FAST')
             
             if (col === 1) {
@@ -309,18 +344,22 @@ export default function EditDailyLog() {
         if (col === 1) yOffset += 95 // bump down if row was unfinished
       }
 
-      // Signature
+      // Signature Block
       if (yOffset > 240) { doc.addPage(); yOffset = 20; }
       
+      doc.setDrawColor(15, 23, 42)
       doc.setLineWidth(0.5)
-      doc.line(15, yOffset + 10, 100, yOffset + 10)
-      doc.setFontSize(14)
+      doc.line(15, yOffset + 15, 100, yOffset + 15)
+      
+      doc.setFontSize(16)
+      doc.setTextColor(37, 99, 235) // Blue signature
       doc.setFont('helvetica', 'italic')
-      doc.text(signature || 'Unsigned', 15, yOffset + 8)
+      doc.text(signature || 'Unsigned', 15, yOffset + 12)
       
       doc.setFontSize(8)
-      doc.setFont('helvetica', 'normal')
-      doc.text('Authorized Site Superintendent', 15, yOffset + 15)
+      doc.setTextColor(100, 116, 139)
+      doc.setFont('helvetica', 'bold')
+      doc.text('AUTHORIZED SITE SUPERINTENDENT', 15, yOffset + 20)
 
       doc.save(`Daily_Log_${date}_${project?.name?.slice(0,6) || 'Export'}.pdf`)
     } catch (err) {
