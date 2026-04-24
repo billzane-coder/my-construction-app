@@ -83,7 +83,7 @@ export default function ProjectWarRoom() {
       setManpowerTotal(counts ? counts.reduce((acc: number, cur: string) => acc + parseInt(cur), 0) : 0)
     }
 
-if (inspections.data && inspections.data.length > 0) {
+    if (inspections.data && inspections.data.length > 0) {
       const passed = inspections.data.filter((i: any) => i.status === 'Pass').length
       setInspectionProgress(Math.round((passed / inspections.data.length) * 100))
     }
@@ -136,8 +136,8 @@ if (inspections.data && inspections.data.length > 0) {
         </div>
       </div>
 
-      {/* --- MODULE GRID (CLEANED UP: DRAWS REMOVED) --- */}
-      <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-4 mb-12">
+      {/* --- MODULE GRID --- */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-11 gap-4 mb-12">
         <ModuleLink title="Financials" href={`/projects/${id}/financials`} icon={<Landmark size={20}/>} color="bg-amber-600" />
         <ModuleLink title="Bidding" href={`/projects/${id}/bidding`} icon={<FileSignature size={20}/>} color="bg-emerald-600" />
         <ModuleLink title="Trades" href={`/projects/${id}/trades`} icon={<UserCog size={20}/>} color="bg-blue-600" />
@@ -148,6 +148,7 @@ if (inspections.data && inspections.data.length > 0) {
         <ModuleLink title="Schedule" href={`/projects/${id}/schedule`} icon={<Calendar size={20}/>} color="bg-fuchsia-600" />
         <ModuleLink title="Submittals" href={`/projects/${id}/submittals`} icon={<FileCheck size={20}/>} color="bg-pink-600" />
         <ModuleLink title="Safety Hub" href={`/projects/${id}/safety`} icon={<ShieldCheck size={20}/>} color="bg-orange-600" />
+        <ModuleLink title="RFIs" href={`/projects/${id}/rfis`} icon={<FileQuestion size={20}/>} color="bg-yellow-600" />
       </div>
 
       {/* SITE STREAM */}

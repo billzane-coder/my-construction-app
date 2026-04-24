@@ -11,7 +11,7 @@ import {
   Terminal,        
   ClipboardList,   
   CheckSquare,
-  Settings // Added Settings Icon
+  Settings
 } from 'lucide-react';
 
 export default function TopNav() {
@@ -54,7 +54,8 @@ export default function TopNav() {
       {/* Navigation */}
       <div className="flex items-center gap-3 md:gap-6 overflow-x-auto no-scrollbar">
         
-        <button onClick={() => router.push('/command-center')} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-white transition-all whitespace-nowrap">
+        {/* FIXED: Route changed to /dashboard */}
+        <button onClick={() => router.push('/dashboard')} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-white transition-all whitespace-nowrap">
           <Terminal size={14} /> <span className="hidden lg:inline">Command Center</span>
         </button>
 
@@ -66,7 +67,8 @@ export default function TopNav() {
           <ClipboardList size={14} /> <span className="hidden lg:inline">Daily Logs</span>
         </button>
 
-        <button onClick={() => router.push('/punch')} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-white transition-all whitespace-nowrap">
+        {/* FIXED: Route changed to /punchlist */}
+        <button onClick={() => router.push('/punchlist')} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-white transition-all whitespace-nowrap">
           <CheckSquare size={14} /> <span className="hidden lg:inline">Global Punch</span>
         </button>
 
@@ -89,7 +91,6 @@ export default function TopNav() {
         
         <div className="h-6 w-[1px] bg-slate-800 mx-1 shrink-0" />
 
-        {/* NEW SETTINGS BUTTON */}
         <button onClick={() => router.push('/settings')} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-white transition-all whitespace-nowrap shrink-0">
           <Settings size={14} style={{ color: settings?.primary_color || '#3b82f6' }} /> <span className="hidden lg:inline">Settings</span>
         </button>

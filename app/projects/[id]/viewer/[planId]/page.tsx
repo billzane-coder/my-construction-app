@@ -237,29 +237,31 @@ export default function ProPlanViewer() {
   return (
     <div className="h-screen w-screen bg-slate-900 flex flex-col overflow-hidden select-none">
       
-      {/* TOOLBAR */}
-      <div className="bg-slate-950 border-b border-slate-800 p-4 flex flex-wrap justify-between items-center z-50 shadow-2xl gap-4">
-        <div className="flex gap-4 items-center">
-          <button onClick={() => router.back()} className="px-4 py-2 text-slate-500 hover:text-white font-black text-[10px] uppercase transition-all">← Exit</button>
+      {/* MOBILE-RESPONSIVE TOOLBAR */}
+      <div className="bg-slate-950 border-b border-slate-800 p-3 md:p-4 flex flex-col lg:flex-row flex-wrap justify-between items-start lg:items-center z-50 shadow-2xl gap-4">
+        
+        {/* LEFT: Exit & Selectors */}
+        <div className="flex flex-wrap gap-2 md:gap-4 items-center w-full lg:w-auto">
+          <button onClick={() => router.back()} className="px-3 py-2 text-slate-500 hover:text-white font-black text-[10px] uppercase transition-all shrink-0">← Exit</button>
           
-          {/* VERSION SELECTOR (FIXED VISIBILITY) */}
-          <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 px-4 py-2 rounded-xl">
-             <Layers size={14} className="text-amber-500" />
+          {/* VERSION SELECTOR */}
+          <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 px-3 py-2 rounded-xl shrink-0">
+             <Layers size={14} className="text-amber-500 shrink-0" />
              <select 
                value={activeLayer} 
                onChange={(e) => { setActiveLayer(e.target.value); setSelectedId(null); }} 
-               className="bg-slate-900 text-white font-black text-[10px] outline-none cursor-pointer uppercase [color-scheme:dark]"
+               className="bg-slate-900 text-white font-black text-[10px] outline-none cursor-pointer uppercase max-w-[80px] sm:max-w-[150px] truncate [color-scheme:dark]"
              >
                {availableLayers.map(layer => (
                  <option key={layer} value={layer} className="bg-slate-900 text-white">{layer}</option>
                ))}
              </select>
-             <button onClick={() => { const n = prompt("New Version Name:"); if(n) {setAvailableLayers([...availableLayers, n]); setActiveLayer(n); } }} className="ml-2 text-blue-500 hover:text-white"><Plus size={14}/></button>
+             <button onClick={() => { const n = prompt("New Version Name:"); if(n) {setAvailableLayers([...availableLayers, n]); setActiveLayer(n); } }} className="ml-1 text-blue-500 hover:text-white"><Plus size={14}/></button>
           </div>
 
-          {/* PAGE SELECTOR (FIXED VISIBILITY) */}
-          <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 px-4 py-2 rounded-xl">
-             <span className="text-[9px] font-black text-slate-500 uppercase">Sheet</span>
+          {/* PAGE SELECTOR */}
+          <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 px-3 py-2 rounded-xl shrink-0">
+             <span className="text-[9px] font-black text-slate-500 uppercase shrink-0">Sheet</span>
              <select 
                value={pageNumber} 
                onChange={(e) => { setPageNumber(Number(e.target.value)); setSelectedId(null); }} 
@@ -272,18 +274,20 @@ export default function ProPlanViewer() {
           </div>
         </div>
 
+        {/* MIDDLE: Tools (Scrollable on mobile) */}
         {viewMode === 'marked' && (
-          <div className="flex gap-2 items-center bg-slate-900 p-1 rounded-2xl border border-slate-800">
+          <div className="flex gap-1 md:gap-2 items-center bg-slate-900 p-1 rounded-2xl border border-slate-800 overflow-x-auto w-full lg:w-auto no-scrollbar shrink-0">
             {(['select', 'pin', 'cloud', 'arrow', 'text'] as Tool[]).map((t) => (
-              <button key={t} onClick={() => setActiveTool(t)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${activeTool === t ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-800'}`}>
+              <button key={t} onClick={() => setActiveTool(t)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all shrink-0 ${activeTool === t ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-800'}`}>
                 {t === 'select' ? '🖱️' : t === 'pin' ? '📍' : t === 'cloud' ? '☁️' : t === 'arrow' ? '↗️' : '📝'} {t}
               </button>
             ))}
-            {selectedId && <button onClick={deleteMarkup} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-red-600/20 text-red-500 ml-2 hover:bg-red-600 hover:text-white transition-all">🗑️ Delete</button>}
+            {selectedId && <button onClick={deleteMarkup} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-red-600/20 text-red-500 ml-2 hover:bg-red-600 hover:text-white transition-all shrink-0">🗑️ Delete</button>}
           </div>
         )}
 
-        <div className="flex gap-3 items-center">
+        {/* RIGHT: Export & View Mode */}
+        <div className="flex gap-3 items-center w-full lg:w-auto justify-between lg:justify-end shrink-0">
           <select 
             value={viewMode} 
             onChange={(e) => setViewMode(e.target.value as 'clean' | 'marked')} 
@@ -297,7 +301,7 @@ export default function ProPlanViewer() {
           <button 
             onClick={handleExportView} 
             disabled={exporting} 
-            className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-black text-[10px] uppercase rounded-xl transition-all flex items-center gap-2 shadow-lg disabled:opacity-50"
+            className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-black text-[10px] uppercase rounded-xl transition-all flex items-center gap-2 shadow-lg disabled:opacity-50 shrink-0"
           >
             {exporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14}/>}
             {exporting ? 'Rendering...' : 'Export View'}
@@ -305,7 +309,7 @@ export default function ProPlanViewer() {
         </div>
       </div>
 
-      {/* VIEWPORT AREA - Note the ID added here for html-to-image to target */}
+      {/* VIEWPORT AREA */}
       <div className="flex-1 relative overflow-hidden bg-slate-800" id="viewport-area">
         <TransformWrapper
           initialScale={1} 
@@ -341,6 +345,7 @@ export default function ProPlanViewer() {
                     <svg 
                       className={`absolute inset-0 w-full h-full z-10 ${canPan ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'}`}
                       onMouseDown={handleStageDown} onMouseMove={handleMove} onMouseUp={handleUp} onMouseLeave={handleUp}
+                      onTouchStart={handleStageDown} onTouchMove={handleMove} onTouchEnd={handleUp} onTouchCancel={handleUp}
                     >
                       {markups
                         .filter(m => (m.page_number || 1) === pageNumber)
@@ -350,11 +355,11 @@ export default function ProPlanViewer() {
                           const color = isSelected ? "#3b82f6" : "#dc2626"
                           
                           return (
-                            <g key={m.id} onMouseDown={(e) => handleShapeDown(e, m.id, 'move')}>
+                            <g key={m.id} onMouseDown={(e) => handleShapeDown(e, m.id, 'move')} onTouchStart={(e) => handleShapeDown(e, m.id, 'move')}>
                               {m.markup_type === 'cloud' && (
                                 <>
                                   <rect x={`${Math.min(m.x_percent, m.end_x_percent)}%`} y={`${Math.min(m.y_percent, m.end_y_percent)}%`} width={`${Math.abs(m.end_x_percent - m.x_percent)}%`} height={`${Math.abs(m.end_y_percent - m.y_percent)}%`} fill={isSelected ? "rgba(59,130,246,0.1)" : "rgba(220,38,38,0.1)"} stroke={color} strokeWidth={isSelected ? 4 : 2} strokeDasharray="8,4" rx={10} />
-                                  {isSelected && <circle cx={`${Math.max(m.x_percent, m.end_x_percent)}%`} cy={`${Math.max(m.y_percent, m.end_y_percent)}%`} r={8} fill="white" stroke="#3b82f6" strokeWidth={2} className="cursor-nwse-resize" onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'br')} />}
+                                  {isSelected && <circle cx={`${Math.max(m.x_percent, m.end_x_percent)}%`} cy={`${Math.max(m.y_percent, m.end_y_percent)}%`} r={8} fill="white" stroke="#3b82f6" strokeWidth={2} className="cursor-nwse-resize" onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'br')} onTouchStart={(e) => handleShapeDown(e, m.id, 'resize', 'br')} />}
                                 </>
                               )}
 
@@ -363,8 +368,8 @@ export default function ProPlanViewer() {
                                   <line x1={`${m.x_percent}%`} y1={`${m.y_percent}%`} x2={`${m.end_x_percent}%`} y2={`${m.end_y_percent}%`} stroke={color} strokeWidth={isSelected ? 6 : 4} markerEnd={isSelected ? "url(#arrowhead-blue)" : "url(#arrowhead-red)"} />
                                   {isSelected && (
                                     <>
-                                      <circle cx={`${m.x_percent}%`} cy={`${m.y_percent}%`} r={8} fill="white" stroke="#3b82f6" strokeWidth={2} onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'start')} />
-                                      <circle cx={`${m.end_x_percent}%`} cy={`${m.end_y_percent}%`} r={8} fill="white" stroke="#3b82f6" strokeWidth={2} onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'end')} />
+                                      <circle cx={`${m.x_percent}%`} cy={`${m.y_percent}%`} r={8} fill="white" stroke="#3b82f6" strokeWidth={2} onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'start')} onTouchStart={(e) => handleShapeDown(e, m.id, 'resize', 'start')} />
+                                      <circle cx={`${m.end_x_percent}%`} cy={`${m.end_y_percent}%`} r={8} fill="white" stroke="#3b82f6" strokeWidth={2} onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'end')} onTouchStart={(e) => handleShapeDown(e, m.id, 'resize', 'end')} />
                                     </>
                                   )}
                                 </>
@@ -402,6 +407,7 @@ export default function ProPlanViewer() {
                                       strokeWidth={2} 
                                       className="cursor-nwse-resize" 
                                       onMouseDown={(e) => handleShapeDown(e, m.id, 'resize', 'br')} 
+                                      onTouchStart={(e) => handleShapeDown(e, m.id, 'resize', 'br')}
                                     />
                                   )}
                                 </g>

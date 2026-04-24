@@ -7,8 +7,46 @@ import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import { 
   ChevronLeft, ClipboardList, CheckCircle2, 
-  Trash2, Save, Loader2, MapPin, HardHat, Camera, X, Plus 
+  Trash2, Save, Loader2, MapPin, HardHat, Camera, X, Plus, Download 
 } from 'lucide-react'
+
+// --- 1. OFFSCREEN CANVAS COMPRESSOR ---
+const getCompressedImage = async (url: string): Promise<string | null> => {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.crossOrigin = 'Anonymous' // Crucial for fetching Supabase URLs without CORS blocking
+    
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      const MAX_WIDTH = 800 // Crushes 4K/iPhone images down to email-friendly sizes
+      let width = img.width
+      let height = img.height
+
+      if (width > MAX_WIDTH) {
+        height *= MAX_WIDTH / width
+        width = MAX_WIDTH
+      }
+
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      
+      if (ctx) {
+        // Draw white background to prevent transparent PNG black-box issues
+        ctx.fillStyle = '#FFFFFF'
+        ctx.fillRect(0, 0, width, height)
+        ctx.drawImage(img, 0, 0, width, height)
+        // Compress to 60% quality JPEG
+        resolve(canvas.toDataURL('image/jpeg', 0.6))
+      } else {
+        resolve(null)
+      }
+    }
+    
+    img.onerror = () => resolve(null)
+    img.src = url
+  })
+}
 
 export default function PunchItemDetail() {
   const { id, punchid } = useParams()
@@ -17,6 +55,7 @@ export default function PunchItemDetail() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [exportingPdf, setExportingPdf] = useState(false)
   
   // Data States
   const [item, setItem] = useState<any>(null)
@@ -102,6 +141,66 @@ export default function PunchItemDetail() {
     setUploading(false)
   }
 
+  // --- 2. THE PDF GENERATOR ---
+  const handleExportPDF = async () => {
+    setExportingPdf(true)
+    try {
+      // Dynamically import jsPDF to avoid Next.js Server-Side Rendering errors
+      const { jsPDF } = await import('jspdf')
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' })
+      
+      // Header
+      doc.setFontSize(20)
+      doc.setFont('helvetica', 'bold')
+      doc.text('PUNCH LIST ITEM', 15, 20)
+      
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'normal')
+      doc.text(`Item ID: ${(punchid as string).slice(0,8)}`, 15, 28)
+      doc.text(`Location: ${location || 'N/A'}`, 15, 33)
+      doc.text(`Assigned To: ${assignedTo || 'TBD'}`, 15, 38)
+      doc.text(`Status: ${status}`, 15, 43)
+      
+      doc.setLineWidth(0.5)
+      doc.line(15, 48, 200, 48)
+
+      // Description
+      doc.setFontSize(12)
+      doc.setFont('helvetica', 'bold')
+      doc.text('Description:', 15, 56)
+      doc.setFont('helvetica', 'normal')
+      const splitText = doc.splitTextToSize(description || 'No description provided.', 180)
+      doc.text(splitText, 15, 62)
+
+      // Photos (Compressed & Stitched)
+      if (photos && photos.length > 0) {
+        let yOffset = 70 + (splitText.length * 5)
+        
+        for (let i = 0; i < photos.length; i++) {
+          const base64Img = await getCompressedImage(photos[i])
+          
+          if (base64Img) {
+            // Page break if we run out of room
+            if (yOffset > 200) { 
+              doc.addPage()
+              yOffset = 20 
+            }
+            
+            // Print image (Centered, approx 120x120mm)
+            doc.addImage(base64Img, 'JPEG', 48, yOffset, 120, 120, undefined, 'FAST')
+            yOffset += 130
+          }
+        }
+      }
+      
+      doc.save(`Deficiency_Report_${(punchid as string).slice(0,6)}.pdf`)
+    } catch (err) {
+      console.error(err)
+      alert("Failed to generate PDF report.")
+    }
+    setExportingPdf(false)
+  }
+
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Retrieving File...</div>
 
   return (
@@ -117,9 +216,19 @@ export default function PunchItemDetail() {
             Item <span className="text-blue-500">Detail</span>
           </h1>
         </div>
-        <button onClick={handleDelete} className="p-4 bg-red-950/20 text-red-500 border border-red-900/50 rounded-2xl hover:bg-red-600 hover:text-white transition-all">
-          <Trash2 size={20} />
-        </button>
+        <div className="flex gap-3">
+          <button 
+            onClick={handleExportPDF} 
+            disabled={exportingPdf} 
+            className="p-4 bg-slate-900 text-blue-500 border border-slate-800 rounded-2xl hover:bg-blue-600 hover:text-white transition-all disabled:opacity-50"
+            title="Export to PDF"
+          >
+            {exportingPdf ? <Loader2 size={20} className="animate-spin" /> : <Download size={20} />}
+          </button>
+          <button onClick={handleDelete} className="p-4 bg-red-950/20 text-red-500 border border-red-900/50 rounded-2xl hover:bg-red-600 hover:text-white transition-all" title="Delete Item">
+            <Trash2 size={20} />
+          </button>
+        </div>
       </div>
 
       <div className="space-y-6">

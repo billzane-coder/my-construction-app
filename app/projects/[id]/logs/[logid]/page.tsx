@@ -6,8 +6,8 @@ import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import { ChevronLeft, HardHat, CloudRain, Clock, Loader2, FileCheck, Images, Plus, Minus, Trash2, Printer, Share2, Lock, Unlock } from 'lucide-react'
 
-// --- 🛠️ IMAGE COMPRESSION ENGINE ---
-const compressImage = (file: File): Promise<File> => {
+// --- 🛠️ BULLETPROOF MOBILE COMPRESSION ENGINE ---
+const compressImage = (file: File): Promise<Blob> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.readAsDataURL(file)
@@ -30,13 +30,19 @@ const compressImage = (file: File): Promise<File> => {
         canvas.width = width
         canvas.height = height
         const ctx = canvas.getContext('2d')
-        ctx?.drawImage(img, 0, 0, width, height)
+        
+        // Ensure white background for transparent images before jpeg conversion
+        if (ctx) {
+          ctx.fillStyle = '#FFFFFF'
+          ctx.fillRect(0, 0, width, height)
+          ctx.drawImage(img, 0, 0, width, height)
+        }
 
         canvas.toBlob(
           (blob) => {
             if (blob) {
-              const compressedFile = new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() })
-              resolve(compressedFile)
+              // Returning a raw Blob instead of a File object prevents iOS Safari crashes
+              resolve(blob)
             } else {
               reject(new Error('Canvas compression failed'))
             }
@@ -135,21 +141,37 @@ export default function EditDailyLog() {
     return contacts.filter(c => tradeCounts[c.id] > 0).map(c => `${tradeCounts[c.id]} ${c.company} (${c.trade_role})`).join(', ')
   }
 
-  const handlePhotoUpload = async (file: File) => {
+  // --- MULTI-PHOTO UPLOAD HANDLER ---
+  const handleMultiPhotoUpload = async (files: File[]) => {
     setUploading(true)
     try {
-      const compressedFile = await compressImage(file)
-      const path = `${id}/logs/${Date.now()}-${compressedFile.name}`
-      const { error } = await supabase.storage.from('project-files').upload(path, compressedFile)
-      if (!error) {
-        const { data } = supabase.storage.from('project-files').getPublicUrl(path)
-        setPhotos(prev => [...prev, data.publicUrl])
-      } else {
-        alert(`Upload error: ${error.message}`)
+      const newUrls: string[] = []
+      
+      for (const file of files) {
+        const compressedBlob = await compressImage(file)
+        
+        // Strip out HEIC/crazy characters that break Supabase routing
+        const safeName = file.name ? file.name.replace(/[^a-zA-Z0-9]/g, '_') : 'photo'
+        const path = `${id}/logs/${Date.now()}-${safeName}.jpg`
+        
+        const { error } = await supabase.storage.from('project-files').upload(path, compressedBlob, {
+          contentType: 'image/jpeg'
+        })
+        
+        if (!error) {
+          const { data } = supabase.storage.from('project-files').getPublicUrl(path)
+          newUrls.push(data.publicUrl)
+        } else {
+          console.error(`Upload error for ${file.name}:`, error)
+        }
+      }
+      
+      if (newUrls.length > 0) {
+        setPhotos(prev => [...prev, ...newUrls])
       }
     } catch (err) {
       console.error(err)
-      alert("Failed to compress and upload image.")
+      alert("Failed to compress and upload image(s).")
     }
     setUploading(false)
   }
@@ -200,22 +222,11 @@ export default function EditDailyLog() {
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-40 print:bg-white print:text-black print:pb-0" id="print-area">
       
-      {/* 🖨️ UPDATED EXPORT PDF FIX */}
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
           @page { margin: 0.5in; size: portrait; }
-          
-          /* 1. HIDE GLOBAL LAYOUT NAVIGATIONS */
-          body * {
-            visibility: hidden;
-          }
-          
-          /* 2. REVEAL ONLY THE REPORT */
-          #print-area, #print-area * {
-            visibility: visible;
-          }
-          
-          /* 3. ANCHOR REPORT TO TOP LEFT OF PAPER */
+          body * { visibility: hidden; }
+          #print-area, #print-area * { visibility: visible; }
           #print-area {
             position: absolute;
             left: 0;
@@ -224,15 +235,11 @@ export default function EditDailyLog() {
             margin: 0 !important;
             padding: 0 !important;
           }
-
-          /* 4. PREVENT SCROLL CUTOFF */
           * { overflow: visible !important; }
           html, body, #__next, main {
             background: white !important;
             height: auto !important;
           }
-
-          /* 5. RESTRAIN GIANT PHOTOS */
           .aspect-square {
             height: 180px !important; 
             width: 180px !important;
@@ -240,19 +247,12 @@ export default function EditDailyLog() {
             display: block !important;
             page-break-inside: avoid !important;
           }
-          
           .aspect-square img {
             width: 100% !important;
             height: 100% !important;
             object-fit: cover !important;
           }
-
-          .grid {
-            display: grid !important;
-            gap: 10px !important;
-          }
-
-          /* 6. CLEANUP UI */
+          .grid { display: grid !important; gap: 10px !important; }
           .print\\:hidden { display: none !important; }
           div[class*="bg-slate-9"], div[class*="bg-slate-8"] {
             background-color: white !important;
@@ -339,8 +339,19 @@ export default function EditDailyLog() {
             <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2 print:text-black"><Images size={14} className="text-blue-500 print:hidden"/> Site Visuals</label>
             {status === 'Draft' && (
               <label className="bg-blue-600/10 text-blue-400 border border-blue-600/20 px-4 py-2 rounded-xl text-[9px] font-black uppercase cursor-pointer flex items-center gap-2 print:hidden">
-                {uploading ? <Loader2 className="animate-spin" size={12}/> : <Plus size={12}/>} Add Photo
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if(f) handlePhotoUpload(f) }} />
+                {uploading ? <Loader2 className="animate-spin" size={12}/> : <Plus size={12}/>} Add Photos
+                {/* 📸 ADDED MULTIPLE ATTRIBUTE HERE */}
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  multiple 
+                  className="hidden" 
+                  onChange={(e) => { 
+                    if (e.target.files && e.target.files.length > 0) {
+                      handleMultiPhotoUpload(Array.from(e.target.files))
+                    }
+                  }} 
+                />
               </label>
             )}
           </div>
