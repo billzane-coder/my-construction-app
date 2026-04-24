@@ -180,7 +180,13 @@ export default function DrawsManager() {
 
   const projectPercentComplete = projectTotals.scheduled > 0 ? (projectTotals.toDate / projectTotals.scheduled) * 100 : 0
 
-  const handleUpdate = (sovLineId: string, val: number) => {
+  // UPDATE ENGINE FOR BOTH COLUMNS
+  const handleUpdateClaim = (sovLineId: string, val: number) => {
+    const safeVal = isNaN(val) || val < 0 ? 0 : val;
+    setDrawLines(prev => prev.map(dl => (dl.sov_line_id === sovLineId && dl.draw_id === activeDraw.id) ? { ...dl, claimed_amount: safeVal } : dl))
+  }
+
+  const handleUpdateVerif = (sovLineId: string, val: number) => {
     const safeVal = isNaN(val) || val < 0 ? 0 : val;
     setDrawLines(prev => prev.map(dl => (dl.sov_line_id === sovLineId && dl.draw_id === activeDraw.id) ? { ...dl, verified_amount: safeVal } : dl))
   }
@@ -220,11 +226,10 @@ export default function DrawsManager() {
 
   const formatMoney = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0)
 
-// --- NATIVE PDF EXPORT ENGINE ---
+  // --- NATIVE PDF EXPORT ENGINE ---
   const handleExportPDF = () => {
     const doc = new jsPDF('landscape')
     
-    // 🚨 Add the return type here
     const hexToRgb = (hex: string): [number, number, number] => {
       const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
       return result ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)] : [37, 99, 235]; 
@@ -482,13 +487,17 @@ export default function DrawsManager() {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-left min-w-[700px]">
+                <table className="w-full text-left min-w-[1000px]">
                   <thead>
                     <tr className="bg-slate-900 border-b border-slate-800 text-[10px] font-black uppercase tracking-widest text-slate-500">
                       <th className="p-6">Description</th>
                       <th className="p-6 text-right">Scheduled</th>
-                      <th className="p-6 text-right border-l border-slate-800/50 bg-slate-950/30">Trade Claim</th>
-                      <th className="p-6 text-right bg-slate-950/30">Claim %</th>
+                      
+                      {/* TRADE CLAIM COLUMNS (NOW EDITABLE) */}
+                      <th className="p-6 text-center bg-amber-950/10 border-l border-amber-900/30 text-amber-500">Claim %</th>
+                      <th className="p-6 pr-8 bg-amber-950/10 text-amber-500 text-right">Trade Claim ($)</th>
+                      
+                      {/* VERIFIED COLUMNS */}
                       <th className="p-6 text-center bg-blue-950/10 border-l border-blue-900/30 text-blue-400">Verif %</th>
                       <th className="p-6 pl-8 bg-blue-950/10 text-blue-400 text-right">Super Verified ($)</th>
                     </tr>
@@ -496,22 +505,46 @@ export default function DrawsManager() {
                   <tbody className="divide-y divide-slate-800/50">
                     {reviewingTrade.lines.map((line: any) => {
                       const isOverbilled = line.verified > line.claimed;
-                      const percentClaimed = line.scheduled > 0 ? ((line.claimed / line.scheduled) * 100).toFixed(1) : '0.0';
+                      const percentClaimed = line.scheduled > 0 ? Number(((line.claimed / line.scheduled) * 100).toFixed(1)) : 0;
                       const verifiedPercent = line.scheduled > 0 ? Number(((line.verified / line.scheduled) * 100).toFixed(1)) : 0;
 
                       return (
                         <tr key={line.id} className="hover:bg-slate-800/20 transition-colors group">
                           <td className="p-6"><p className="font-bold text-white text-sm">{line.desc}</p></td>
                           <td className="p-6 text-right font-black text-slate-400">{formatMoney(line.scheduled)}</td>
-                          <td className="p-6 text-right border-l border-slate-800/50 bg-slate-950/30 font-black text-amber-500">{formatMoney(line.claimed)}</td>
-                          <td className="p-6 text-right bg-slate-950/30 font-bold text-slate-500">{percentClaimed}%</td>
                           
+                          {/* EDITABLE TRADE CLAIM PERCENTAGE */}
+                          <td className="p-4 bg-amber-950/10 border-l border-amber-900/30 align-middle">
+                            <div className="flex items-center justify-center gap-1">
+                              <input type="number" value={percentClaimed === 0 ? '' : percentClaimed} placeholder="0"
+                                onChange={(e) => {
+                                  const pct = parseFloat(e.target.value) || 0;
+                                  handleUpdateClaim(line.id, Number(((pct / 100) * line.scheduled).toFixed(2)));
+                                }} 
+                                className="w-16 bg-slate-950 border border-slate-700 p-3 rounded-xl font-black text-center text-amber-500 outline-none focus:border-amber-500 transition-all" 
+                              />
+                              <span className="text-slate-500 font-bold text-xs">%</span>
+                            </div>
+                          </td>
+
+                          {/* EDITABLE TRADE CLAIM DOLLAR AMOUNT */}
+                          <td className="p-4 pr-6 bg-amber-950/10 align-middle">
+                            <div className="relative">
+                              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-500/50 font-bold">$</span>
+                              <input type="number" value={line.claimed === 0 ? '' : line.claimed} placeholder="0.00"
+                                onChange={(e) => handleUpdateClaim(line.id, parseFloat(e.target.value) || 0)} 
+                                className="w-full bg-slate-950 border border-slate-700 py-3 pl-8 pr-4 rounded-xl font-black text-right text-amber-400 outline-none focus:border-amber-500 transition-all" 
+                              />
+                            </div>
+                          </td>
+                          
+                          {/* EDITABLE SUPER VERIFIED PERCENTAGE */}
                           <td className="p-4 bg-blue-950/10 border-l border-blue-900/30 align-middle">
                             <div className="flex items-center justify-center gap-1">
                               <input type="number" value={verifiedPercent === 0 ? '' : verifiedPercent} placeholder="0"
                                 onChange={(e) => {
                                   const pct = parseFloat(e.target.value) || 0;
-                                  handleUpdate(line.id, Number(((pct / 100) * line.scheduled).toFixed(2)));
+                                  handleUpdateVerif(line.id, Number(((pct / 100) * line.scheduled).toFixed(2)));
                                 }} 
                                 className={`w-16 bg-slate-950 border p-3 rounded-xl font-black text-center outline-none transition-all ${isOverbilled ? 'border-red-900/50 text-red-400' : 'border-slate-700 text-blue-400 focus:border-blue-500'}`} 
                               />
@@ -519,11 +552,12 @@ export default function DrawsManager() {
                             </div>
                           </td>
 
+                          {/* EDITABLE SUPER VERIFIED DOLLAR AMOUNT */}
                           <td className="p-4 pl-6 bg-blue-950/10 align-middle">
                             <div className="relative">
                               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 font-bold">$</span>
                               <input type="number" value={line.verified === 0 ? '' : line.verified} placeholder="0.00"
-                                onChange={(e) => handleUpdate(line.id, parseFloat(e.target.value) || 0)} 
+                                onChange={(e) => handleUpdateVerif(line.id, parseFloat(e.target.value) || 0)} 
                                 className={`w-full bg-slate-950 border py-3 pl-8 pr-4 rounded-xl font-black text-right outline-none transition-all ${isOverbilled ? 'border-red-900/50 text-red-400 focus:border-red-500' : 'border-slate-700 text-white focus:border-blue-500'}`} 
                               />
                             </div>

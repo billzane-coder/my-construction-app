@@ -31,7 +31,6 @@ const compressImage = (file: File): Promise<Blob> => {
         canvas.height = height
         const ctx = canvas.getContext('2d')
         
-        // Ensure white background for transparent images before jpeg conversion
         if (ctx) {
           ctx.fillStyle = '#FFFFFF'
           ctx.fillRect(0, 0, width, height)
@@ -40,12 +39,8 @@ const compressImage = (file: File): Promise<Blob> => {
 
         canvas.toBlob(
           (blob) => {
-            if (blob) {
-              // Returning a raw Blob instead of a File object prevents iOS Safari crashes
-              resolve(blob)
-            } else {
-              reject(new Error('Canvas compression failed'))
-            }
+            if (blob) resolve(blob)
+            else reject(new Error('Canvas compression failed'))
           },
           'image/jpeg',
           0.7 
@@ -56,6 +51,42 @@ const compressImage = (file: File): Promise<Blob> => {
   })
 }
 
+// --- 📉 OFFLINE PDF IMAGE COMPRESSOR ---
+const getCompressedImageForPDF = async (url: string): Promise<string | null> => {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.crossOrigin = 'Anonymous'
+    
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      const MAX_WIDTH = 600 // Aggressively shrink for PDF
+      let width = img.width
+      let height = img.height
+
+      if (width > MAX_WIDTH) {
+        height *= MAX_WIDTH / width
+        width = MAX_WIDTH
+      }
+
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      
+      if (ctx) {
+        ctx.fillStyle = '#FFFFFF'
+        ctx.fillRect(0, 0, width, height)
+        ctx.drawImage(img, 0, 0, width, height)
+        resolve(canvas.toDataURL('image/jpeg', 0.5)) // 50% Quality for ultra-small PDFs
+      } else {
+        resolve(null)
+      }
+    }
+    
+    img.onerror = () => resolve(null)
+    img.src = url
+  })
+}
+
 export default function EditDailyLog() {
   const { id, logid } = useParams()
   const router = useRouter()
@@ -63,6 +94,7 @@ export default function EditDailyLog() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [exportingPdf, setExportingPdf] = useState(false)
   const [contacts, setContacts] = useState<any[]>([])
   const [project, setProject] = useState<any>(null)
   
@@ -94,7 +126,6 @@ export default function EditDailyLog() {
         setStatus(log.data.status || 'Draft')
         setPhotos(log.data.photo_urls || [])
         
-        // --- 🌤️ AUTO-POPULATE WEATHER ---
         let loadedWeather = log.data.weather || ''
         if (!loadedWeather && log.data.log_date) {
           try {
@@ -105,7 +136,6 @@ export default function EditDailyLog() {
               const min = wData.daily.temperature_2m_min[0]
               const code = wData.daily.weathercode[0]
               
-              // Map WMO codes to readable text
               const conditions: Record<number, string> = { 
                 0:'Clear', 1:'Mainly Clear', 2:'Partly Cloudy', 3:'Overcast', 45:'Fog', 
                 51:'Light Drizzle', 61:'Light Rain', 63:'Rain', 71:'Light Snow', 73:'Snow', 95:'Thunderstorm' 
@@ -141,7 +171,6 @@ export default function EditDailyLog() {
     return contacts.filter(c => tradeCounts[c.id] > 0).map(c => `${tradeCounts[c.id]} ${c.company} (${c.trade_role})`).join(', ')
   }
 
-  // --- MULTI-PHOTO UPLOAD HANDLER ---
   const handleMultiPhotoUpload = async (files: File[]) => {
     setUploading(true)
     try {
@@ -149,8 +178,6 @@ export default function EditDailyLog() {
       
       for (const file of files) {
         const compressedBlob = await compressImage(file)
-        
-        // Strip out HEIC/crazy characters that break Supabase routing
         const safeName = file.name ? file.name.replace(/[^a-zA-Z0-9]/g, '_') : 'photo'
         const path = `${id}/logs/${Date.now()}-${safeName}.jpg`
         
@@ -161,16 +188,11 @@ export default function EditDailyLog() {
         if (!error) {
           const { data } = supabase.storage.from('project-files').getPublicUrl(path)
           newUrls.push(data.publicUrl)
-        } else {
-          console.error(`Upload error for ${file.name}:`, error)
         }
       }
       
-      if (newUrls.length > 0) {
-        setPhotos(prev => [...prev, ...newUrls])
-      }
+      if (newUrls.length > 0) setPhotos(prev => [...prev, ...newUrls])
     } catch (err) {
-      console.error(err)
       alert("Failed to compress and upload image(s).")
     }
     setUploading(false)
@@ -195,11 +217,7 @@ export default function EditDailyLog() {
     if (!confirm("Are you sure you want to unlock this log for editing?")) return
     setSaving(true)
     const { error } = await supabase.from('daily_logs').update({ status: 'Draft' }).eq('id', logid)
-    if (!error) {
-      setStatus('Draft')
-    } else {
-      alert("Failed to unlock log.")
-    }
+    if (!error) setStatus('Draft')
     setSaving(false)
   }
 
@@ -217,71 +235,106 @@ export default function EditDailyLog() {
     else { navigator.clipboard.writeText(text); alert('Copied to clipboard'); }
   }
 
+  // --- 🖨️ NATIVE PDF EXPORT ENGINE ---
+  const handleExportPDF = async () => {
+    setExportingPdf(true)
+    try {
+      const { jsPDF } = await import('jspdf')
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' })
+      
+      // Header
+      doc.setFontSize(22)
+      doc.setFont('helvetica', 'bold')
+      doc.text('DAILY SITE REPORT', 15, 20)
+      
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'normal')
+      doc.text(`Project: ${project?.name || 'Project Record'}`, 15, 28)
+      doc.text(`Date: ${date ? new Date(date + 'T12:00:00').toLocaleDateString() : 'N/A'}`, 15, 33)
+      doc.text(`Weather: ${weather || 'N/A'}`, 15, 38)
+      
+      doc.setLineWidth(0.5)
+      doc.line(15, 43, 200, 43)
+
+      // Manpower
+      doc.setFontSize(12)
+      doc.setFont('helvetica', 'bold')
+      doc.text('Manpower on Site:', 15, 52)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(10)
+      const manpowerText = doc.splitTextToSize(getManpowerString() || 'None reported.', 180)
+      doc.text(manpowerText, 15, 58)
+
+      let yOffset = 64 + (manpowerText.length * 5)
+
+      // Work Performed
+      doc.setFontSize(12)
+      doc.setFont('helvetica', 'bold')
+      doc.text('Work Performed:', 15, yOffset)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(10)
+      const workText = doc.splitTextToSize(workPerformed || 'None reported.', 180)
+      yOffset += 6
+      doc.text(workText, 15, yOffset)
+
+      yOffset += (workText.length * 5) + 10
+
+      // Photos (Compressed & Stitched 2-up)
+      if (photos && photos.length > 0) {
+        doc.setFontSize(12)
+        doc.setFont('helvetica', 'bold')
+        doc.text('Site Visuals:', 15, yOffset)
+        yOffset += 8
+        
+        let col = 0
+        for (let i = 0; i < photos.length; i++) {
+          if (yOffset > 200 && col === 0) { 
+            doc.addPage()
+            yOffset = 20 
+          }
+
+          const base64Img = await getCompressedImageForPDF(photos[i])
+          if (base64Img) {
+            const xPos = col === 0 ? 15 : 110
+            doc.addImage(base64Img, 'JPEG', xPos, yOffset, 90, 90, undefined, 'FAST')
+            
+            if (col === 1) {
+              yOffset += 95
+              col = 0
+            } else {
+              col = 1
+            }
+          }
+        }
+        if (col === 1) yOffset += 95 // bump down if row was unfinished
+      }
+
+      // Signature
+      if (yOffset > 240) { doc.addPage(); yOffset = 20; }
+      
+      doc.setLineWidth(0.5)
+      doc.line(15, yOffset + 10, 100, yOffset + 10)
+      doc.setFontSize(14)
+      doc.setFont('helvetica', 'italic')
+      doc.text(signature || 'Unsigned', 15, yOffset + 8)
+      
+      doc.setFontSize(8)
+      doc.setFont('helvetica', 'normal')
+      doc.text('Authorized Site Superintendent', 15, yOffset + 15)
+
+      doc.save(`Daily_Log_${date}_${project?.name?.slice(0,6) || 'Export'}.pdf`)
+    } catch (err) {
+      console.error(err)
+      alert("Failed to generate PDF report.")
+    }
+    setExportingPdf(false)
+  }
+
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Opening Record...</div>
 
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-40 print:bg-white print:text-black print:pb-0" id="print-area">
       
-      <style dangerouslySetInnerHTML={{__html: `
-        @media print {
-          @page { margin: 0.5in; size: portrait; }
-          body * { visibility: hidden; }
-          #print-area, #print-area * { visibility: visible; }
-          #print-area {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-          * { overflow: visible !important; }
-          html, body, #__next, main {
-            background: white !important;
-            height: auto !important;
-          }
-          .aspect-square {
-            height: 180px !important; 
-            width: 180px !important;
-            overflow: hidden !important;
-            display: block !important;
-            page-break-inside: avoid !important;
-          }
-          .aspect-square img {
-            width: 100% !important;
-            height: 100% !important;
-            object-fit: cover !important;
-          }
-          .grid { display: grid !important; gap: 10px !important; }
-          .print\\:hidden { display: none !important; }
-          div[class*="bg-slate-9"], div[class*="bg-slate-8"] {
-            background-color: white !important;
-            border-color: #e2e8f0 !important;
-            color: black !important;
-          }
-          p, h1, h2, h3, h4, span, div, label {
-            color: black !important;
-            text-shadow: none !important;
-          }
-        }
-      `}} />
-
-      {/* PDF HEADER */}
-      <div className="hidden print:block border-b-2 border-black pb-4 mb-8 mt-2">
-        <div className="flex justify-between items-end">
-          <div>
-            <h1 className="text-3xl font-black uppercase tracking-tighter text-black leading-none">Daily Site Report</h1>
-            <p className="text-xs font-bold text-slate-500 uppercase mt-2 tracking-widest">{project?.name || 'Project Record'}</p>
-          </div>
-          <div className="text-right">
-            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">Date of Record</p>
-            <p className="text-lg font-black text-black">
-              {date ? new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' }) : 'No Date'}
-            </p>
-          </div>
-        </div>
-      </div>
-
       <div className="mb-8 border-b-4 border-blue-600 pb-6 flex justify-between items-end print:hidden">
         <div>
           <button onClick={() => router.back()} className="text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white flex items-center gap-1"><ChevronLeft size={12}/> Back to Archive</button>
@@ -340,7 +393,6 @@ export default function EditDailyLog() {
             {status === 'Draft' && (
               <label className="bg-blue-600/10 text-blue-400 border border-blue-600/20 px-4 py-2 rounded-xl text-[9px] font-black uppercase cursor-pointer flex items-center gap-2 print:hidden">
                 {uploading ? <Loader2 className="animate-spin" size={12}/> : <Plus size={12}/>} Add Photos
-                {/* 📸 ADDED MULTIPLE ATTRIBUTE HERE */}
                 <input 
                   type="file" 
                   accept="image/*" 
@@ -390,7 +442,14 @@ export default function EditDailyLog() {
           ) : (
             <>
               <button onClick={handleShare} className="flex-1 bg-blue-600 text-white font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg hover:bg-blue-500"><Share2 size={16}/> Share</button>
-              <button onClick={() => window.print()} className="flex-1 bg-slate-800 text-white font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg hover:bg-slate-700"><Printer size={16}/> Export PDF</button>
+              <button 
+                onClick={handleExportPDF} 
+                disabled={exportingPdf}
+                className="flex-1 bg-slate-800 text-white font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg hover:bg-slate-700 disabled:opacity-50"
+              >
+                {exportingPdf ? <Loader2 size={16} className="animate-spin"/> : <Printer size={16}/>} 
+                Export PDF
+              </button>
             </>
           )}
         </div>
