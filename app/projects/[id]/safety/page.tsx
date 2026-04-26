@@ -6,8 +6,9 @@ import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import { 
-  ChevronLeft, Plus, FileDown, ShieldAlert, 
-  CheckCircle, AlertTriangle, X, Search, FileText, Save, Zap, PenTool
+  ChevronLeft, Plus, FileDown, ShieldAlert, ShieldCheck,
+  CheckCircle, AlertTriangle, X, Search, FileText, 
+  Save, Zap, PenTool, AlertCircle, CheckCircle2, XCircle, Info, ClipboardCheck, Loader2
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
@@ -81,9 +82,18 @@ export default function SafetyHub() {
   const [project, setProject] = useState<any>(null)
   const [walks, setWalks] = useState<any[]>([])
   const [contacts, setContacts] = useState<any[]>([])
+  const [stats, setStats] = useState({ walks: 0, incidents: 0 })
   const [loading, setLoading] = useState(true)
-  const [searchTerm, setSearchTerm] = useState('')
   
+  // Search & Filter State
+  const [searchTerm, setSearchTerm] = useState('')
+  const [searchQueryTrades, setSearchQueryTrades] = useState('')
+  
+  // Trade Compliance & Export State
+  const [selectedTradeId, setSelectedTradeId] = useState('')
+  const [exporting, setExporting] = useState(false)
+
+  // Walk Modal State
   const [selectedWalk, setSelectedWalk] = useState<any>(null)
   const [showNewWalkModal, setShowNewWalkModal] = useState(false)
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false)
@@ -99,16 +109,23 @@ export default function SafetyHub() {
     if (!id) return
     setLoading(true)
     try {
-      const [p, w, c] = await Promise.all([
+      const [p, w, c, inc] = await Promise.all([
         supabase.from('projects').select('name').eq('id', id).single(),
         supabase.from('project_safety_walks').select('*').eq('project_id', id).order('created_at', { ascending: false }),
-        supabase.from('project_contacts').select('id, company, trade_role').eq('project_id', id).order('company')
+        supabase.from('project_contacts').select('*').eq('project_id', id).order('company'),
+        supabase.from('incidents').select('id').eq('project_id', id)
       ])
+      
       if (p.error) throw p.error
       if (w.error) throw w.error
+      
       setProject(p.data)
       setWalks(w.data || [])
       setContacts(c.data || [])
+      setStats({
+        walks: w.data?.length || 0,
+        incidents: inc.data?.length || 0
+      })
     } catch (err) {
       console.error("Data fetch error:", err)
     } finally {
@@ -118,6 +135,33 @@ export default function SafetyHub() {
 
   useEffect(() => { fetchData() }, [id])
 
+  // --- THE ONE-BUTTON EXPORT ENGINE ---
+  const handleExportSafetyPackage = async () => {
+    const trade = contacts.find(t => t.id === selectedTradeId)
+    if (!trade) return alert("Please select a trade partner first.")
+    
+    setExporting(true)
+    
+    const docs = [
+      { name: 'WSIB', url: trade.wsib_url },
+      { name: 'Insurance', url: trade.insurance_url },
+      { name: 'Form 1000', url: trade.form_1000_url },
+      { name: 'Safety Cards', url: trade.safety_cards_url }
+    ].filter(d => d.url)
+
+    if (docs.length === 0) {
+      alert("No compliance documents found for this trade.")
+      setExporting(false)
+      return
+    }
+
+    docs.forEach(doc => {
+      window.open(doc.url, '_blank')
+    })
+
+    setExporting(false)
+  }
+
   const filteredWalks = walks.filter(walk => {
     const searchLower = searchTerm.toLowerCase()
     return (
@@ -126,6 +170,10 @@ export default function SafetyHub() {
       (walk.inspector_name || '').toLowerCase().includes(searchLower)
     )
   })
+
+  const filteredTrades = contacts.filter(t => 
+    t.company?.toLowerCase().includes(searchQueryTrades.toLowerCase())
+  )
 
   const getSuggestions = () => {
     let suggestions: string[] = [];
@@ -256,48 +304,35 @@ export default function SafetyHub() {
     }
   }
 
-  // --- UPGRADED PDF EXPORT ENGINE ---
   const handleExportPDF = async () => {
     const reportElement = document.getElementById('pdf-report');
     if (!reportElement) return;
 
     setIsGeneratingPDF(true);
     try {
-      // Temporarily inject padding so the edges don't get cropped by the canvas
       reportElement.style.padding = '40px';
       
       const canvas = await html2canvas(reportElement, { 
-        scale: 2, // High resolution for crisp text
-        useCORS: true, // Absolutely required to render the Supabase signature image
+        scale: 2, 
+        useCORS: true, 
         allowTaint: false,
         logging: false,
         windowWidth: reportElement.scrollWidth,
         windowHeight: reportElement.scrollHeight
       });
       
-      // Reset padding immediately
       reportElement.style.padding = '0px';
-
       const imgData = canvas.toDataURL('image/png', 1.0);
-      
-      // A4 Paper Dimensions
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4'
-      });
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
       
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
       
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      
-      // Clean up the file name to prevent download errors
       const safeTradeName = (selectedWalk?.trade_company || 'Site_Wide').replace(/[^a-zA-Z0-9]/g, '_');
       const dateStr = new Date(selectedWalk?.created_at).toISOString().split('T')[0];
       const fileName = `Safety_Report_${safeTradeName}_${dateStr}.pdf`;
       
-      // This forces the browser to download the file directly
       pdf.save(fileName);
 
     } catch (err) {
@@ -308,7 +343,7 @@ export default function SafetyHub() {
     }
   }
 
-  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-emerald-500 font-black animate-pulse uppercase tracking-widest">Loading...</div>
+  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-emerald-500 font-black animate-pulse uppercase tracking-widest">Securing Perimeter...</div>
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
@@ -324,21 +359,131 @@ export default function SafetyHub() {
             <ShieldAlert size={14} className="text-emerald-500" /> {project?.name}
           </p>
         </div>
-        <button 
-          onClick={() => {
-            setNotes('');
-            setActiveTradeId('');
-            setSignatureData(null);
-            setShowNewWalkModal(true);
-          }}
-          className="bg-emerald-600 text-white text-[10px] font-black px-10 py-5 rounded-3xl uppercase shadow-lg shadow-emerald-900/20 hover:bg-emerald-500 transition-all flex items-center gap-2"
-        >
-          <Plus size={16} /> New Walk
-        </button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 mb-12">
+        
+        {/* LEFT: TOOLS & STATS */}
+        <div className="lg:col-span-4 space-y-6">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-slate-900 border border-slate-800 p-6 rounded-[32px] shadow-xl text-center">
+              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Audits</p>
+              <p className="text-3xl font-black text-emerald-500">{stats.walks}</p>
+            </div>
+            <div className="bg-slate-900 border border-slate-800 p-6 rounded-[32px] shadow-xl text-center">
+              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Incidents</p>
+              <p className="text-3xl font-black text-red-500">{stats.incidents}</p>
+            </div>
+          </div>
+
+          <button 
+            onClick={() => {
+              setNotes('');
+              setActiveTradeId('');
+              setSignatureData(null);
+              setShowNewWalkModal(true);
+            }} 
+            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white p-8 rounded-[32px] flex flex-col items-center justify-center gap-2 shadow-2xl transition-all border-b-[8px] border-emerald-800 active:translate-y-1 active:border-b-0"
+          >
+            <ClipboardCheck size={32} />
+            <span className="font-black uppercase italic tracking-tighter text-xl">Start Safety Walk</span>
+          </button>
+
+          <button onClick={() => router.push(`/projects/${id}/incidents`)} className="w-full bg-slate-900 hover:bg-red-950 border border-slate-800 hover:border-red-900 text-white p-8 rounded-[32px] flex flex-col items-center justify-center gap-2 shadow-2xl transition-all group">
+            <AlertCircle size={32} className="text-red-500 group-hover:animate-pulse" />
+            <span className="font-black uppercase italic tracking-tighter text-xl">Report Incident</span>
+          </button>
+        </div>
+
+        {/* RIGHT: TRADE COMPLIANCE & ONE-BUTTON EXPORT */}
+        <div className="lg:col-span-8">
+          <div className="bg-slate-900 border border-slate-800 rounded-[40px] p-8 shadow-2xl h-full">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+              <div>
+                <h3 className="text-2xl font-black text-white uppercase italic tracking-tighter">Trade Compliance</h3>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Export safety documentation packages</p>
+              </div>
+              <div className="relative w-full md:w-64">
+                <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" />
+                <input 
+                  type="text" 
+                  placeholder="Search trades..."
+                  className="w-full bg-slate-950 border border-slate-800 p-3 pl-10 rounded-xl text-base md:text-xs font-bold outline-none focus:border-emerald-500"
+                  value={searchQueryTrades}
+                  onChange={(e) => setSearchQueryTrades(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[350px] overflow-y-auto pr-2 no-scrollbar">
+              {filteredTrades.map(trade => (
+                <div 
+                  key={trade.id} 
+                  onClick={() => setSelectedTradeId(trade.id)}
+                  className={`p-5 rounded-[28px] border transition-all cursor-pointer group flex flex-col justify-between min-h-[160px] ${selectedTradeId === trade.id ? 'bg-emerald-950/20 border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.1)]' : 'bg-slate-950 border-slate-800 hover:border-slate-600'}`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h4 className="font-black uppercase italic text-lg leading-tight text-white group-hover:text-emerald-400 transition-colors">{trade.company}</h4>
+                      <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-1">{trade.trade_role}</p>
+                    </div>
+                    {trade.wsib_url && trade.insurance_url ? <CheckCircle2 size={18} className="text-emerald-500" /> : <XCircle size={18} className="text-red-500" />}
+                  </div>
+
+                  <div className="flex gap-2 flex-wrap mt-4">
+                    {trade.wsib_url && <div className="px-2 py-1 bg-slate-900 rounded-lg text-[8px] font-black text-slate-400 uppercase tracking-tighter">WSIB</div>}
+                    {trade.insurance_url && <div className="px-2 py-1 bg-slate-900 rounded-lg text-[8px] font-black text-slate-400 uppercase tracking-tighter">INS</div>}
+                    {trade.form_1000_url && <div className="px-2 py-1 bg-slate-900 rounded-lg text-[8px] font-black text-slate-400 uppercase tracking-tighter">F1000</div>}
+                    {trade.safety_cards_url && <div className="px-2 py-1 bg-slate-900 rounded-lg text-[8px] font-black text-slate-400 uppercase tracking-tighter">CARDS</div>}
+                  </div>
+                </div>
+              ))}
+              {filteredTrades.length === 0 && <p className="text-xs font-bold text-slate-500 py-4 col-span-2 text-center">No trades found matching search.</p>}
+            </div>
+
+            {/* ACTION BAR */}
+            <div className={`mt-8 p-6 rounded-3xl border transition-all flex flex-col md:flex-row items-center justify-between gap-6 ${selectedTradeId ? 'bg-emerald-600 border-emerald-500 shadow-2xl' : 'bg-slate-950 border-slate-800 opacity-50 grayscale pointer-events-none'}`}>
+              <div className="flex items-center gap-4 text-center md:text-left">
+                <div className="bg-white/20 p-3 rounded-2xl"><ShieldCheck size={24} className="text-white" /></div>
+                <div>
+                  <p className="text-[10px] font-black uppercase text-emerald-200">Package Ready</p>
+                  <p className="text-sm font-black text-white uppercase italic tracking-tight">Export Full Compliance File</p>
+                </div>
+              </div>
+              <button 
+                onClick={handleExportSafetyPackage}
+                disabled={exporting}
+                className="bg-white text-emerald-600 px-8 py-4 rounded-2xl font-black text-[11px] uppercase tracking-widest shadow-xl hover:scale-105 transition-all flex items-center gap-2"
+              >
+                {exporting ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={18} />}
+                Generate Package
+              </button>
+            </div>
+            {!selectedTradeId && (
+              <p className="text-center text-[9px] font-black text-slate-600 uppercase tracking-widest mt-4 flex items-center justify-center gap-2 italic">
+                <Info size={12} /> Select a trade partner above to enable one-button export
+              </p>
+            )}
+          </div>
+        </div>
+
       </div>
 
       {/* DATA TABLE */}
       <div className="bg-slate-900 border border-slate-800 rounded-[40px] overflow-hidden shadow-2xl">
+        <div className="p-6 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-center gap-4">
+          <h3 className="text-xl font-black uppercase italic tracking-tight text-white">Quality Control Log</h3>
+          <div className="relative w-full sm:w-64">
+            <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" />
+            <input 
+              type="text" 
+              placeholder="Search reports..."
+              className="w-full bg-slate-950 border border-slate-800 p-3 pl-10 rounded-xl text-base md:text-xs font-bold outline-none focus:border-emerald-500"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[800px]">
             <thead>
@@ -371,6 +516,11 @@ export default function SafetyHub() {
                   </td>
                 </tr>
               ))}
+              {filteredWalks.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="p-12 text-center text-slate-500 font-bold text-sm">No safety walks recorded yet.</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -387,7 +537,7 @@ export default function SafetyHub() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Inspection Type</label>
-                <select name="walk_type" value={activeWalkType} onChange={(e) => setActiveWalkType(e.target.value)} className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-emerald-500 appearance-none">
+                <select name="walk_type" value={activeWalkType} onChange={(e) => setActiveWalkType(e.target.value)} className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-emerald-500 appearance-none text-base md:text-sm">
                   <option>General Site Walk</option>
                   <option>Fall Protection</option>
                   <option>Housekeeping</option>
@@ -397,7 +547,7 @@ export default function SafetyHub() {
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Sub-Trade Inspected</label>
-                <select name="contact_id" value={activeTradeId} onChange={(e) => setActiveTradeId(e.target.value)} className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-emerald-500 appearance-none">
+                <select name="contact_id" value={activeTradeId} onChange={(e) => setActiveTradeId(e.target.value)} className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-emerald-500 appearance-none text-base md:text-sm">
                   <option value="">Site-Wide (General)</option>
                   {contacts.map(trade => (<option key={trade.id} value={trade.id}>{trade.company}</option>))}
                 </select>
@@ -420,7 +570,7 @@ export default function SafetyHub() {
                 <span>Findings & Notes</span>
                 {notes.length > 0 && <button type="button" onClick={() => setNotes('')} className="text-slate-600 hover:text-amber-500">Clear</button>}
               </label>
-              <textarea name="notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="List deficiencies..." rows={4} className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-medium text-white outline-none focus:border-emerald-500 resize-none"></textarea>
+              <textarea name="notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="List deficiencies..." rows={4} className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-medium text-white outline-none focus:border-emerald-500 resize-none text-base md:text-sm"></textarea>
             </div>
 
             {/* SIGNATURE PAD INTEGRATION */}
@@ -436,14 +586,14 @@ export default function SafetyHub() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Status</label>
-                <select name="status" className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-emerald-500 appearance-none">
+                <select name="status" className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-emerald-500 appearance-none text-base md:text-sm">
                   <option value="Pass">Pass / Compliant</option>
                   <option value="Fail">Action Required</option>
                 </select>
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Inspector</label>
-                <input name="inspector_name" defaultValue="Site Superintendent" required className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-slate-300 outline-none focus:border-emerald-500" />
+                <input name="inspector_name" defaultValue="Site Superintendent" required className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-slate-300 outline-none focus:border-emerald-500 text-base md:text-sm" />
               </div>
             </div>
 
@@ -465,13 +615,11 @@ export default function SafetyHub() {
             <div className="flex justify-between items-center bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-2xl">
               <button onClick={() => setSelectedWalk(null)} className="text-[10px] font-black uppercase text-slate-400 hover:text-white flex items-center gap-2 transition-all"><X size={16} /> Close</button>
               
-              {/* This button triggers the new bulletproof export */}
               <button onClick={handleExportPDF} disabled={isGeneratingPDF} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 transition-all flex items-center gap-2 disabled:opacity-50">
                 <FileDown size={16} /> {isGeneratingPDF ? 'Generating...' : 'Auto-Download PDF'}
               </button>
             </div>
 
-            {/* This specific ID is what html2canvas captures */}
             <div id="pdf-report" className="bg-white text-slate-900 p-10 md:p-14 rounded-xl shadow-2xl relative">
               <div className="border-b-2 border-slate-200 pb-6 mb-8 flex justify-between items-end">
                 <div>
@@ -512,7 +660,6 @@ export default function SafetyHub() {
                 </div>
               </div>
 
-              {/* RENDER SAVED SIGNATURE IN THE PDF VIEW */}
               <div className="mt-20 pt-8 border-t-2 border-slate-200 flex justify-between items-end">
                 <div className="w-64">
                   {selectedWalk.signature_url && (
@@ -547,7 +694,7 @@ function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) => void
       if (ctx) {
         ctx.lineWidth = 3;
         ctx.lineCap = 'round';
-        ctx.strokeStyle = '#020617'; // Dark ink
+        ctx.strokeStyle = '#020617'; 
       }
     }
   }, []);

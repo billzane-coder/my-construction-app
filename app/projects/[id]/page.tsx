@@ -8,10 +8,9 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { 
   Plus, Users, HardHat, Building2, FileCheck, ShieldCheck, 
-  FileText, Phone, Mail, ChevronLeft, Loader2, MessageSquare,
-  Settings2, Save, X, ExternalLink, ClipboardList, FileQuestion, 
-  Images, Inbox, ClipboardCheck, Calendar, Activity, BookOpen, UserCog,
-  Landmark, DollarSign, TrendingUp, TrendingDown, FileSignature, AlertCircle
+  FileText, ChevronLeft, Loader2, ClipboardList, FileQuestion, 
+  Images, ClipboardCheck, Calendar, Activity, BookOpen, UserCog,
+  Landmark, TrendingUp, TrendingDown, AlertCircle, FileSignature
 } from 'lucide-react'
 
 export default function ProjectWarRoom() {
@@ -20,73 +19,31 @@ export default function ProjectWarRoom() {
   
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
-  
   const [project, setProject] = useState<any>(null)
   const [allPhotos, setAllPhotos] = useState<any[]>([])
   
-  const [punchCount, setPunchCount] = useState(0)
-  const [logCount, setLogCount] = useState(0)
-  const [rfiCount, setRfiCount] = useState(0)
-  const [manpowerTotal, setManpowerTotal] = useState(0)
-  const [inspectionProgress, setInspectionProgress] = useState(0)
-  
+  // Data for the top status bar
+  const [stats, setStats] = useState({ punch: 0, rfi: 0, logs: 0 })
   const [budgetVariance, setBudgetVariance] = useState({ value: 0, isOver: false })
 
   const fetchData = async () => {
     if (!id) return
     setLoading(true)
 
-    const [p, manual, logs, punch, rfis, inspections, costCodesRes, contractsRes] = await Promise.all([
+    const [p, manual, logs, punch, rfis, costCodesRes] = await Promise.all([
       supabase.from('projects').select('*').eq('id', id).single(),
       supabase.from('project_photos').select('*').eq('project_id', id),
       supabase.from('daily_logs').select('*').eq('project_id', id).order('log_date', { ascending: false }),
-      supabase.from('punch_list').select('id, status').eq('project_id', id),
+      supabase.from('punch_list').select('id, status').eq('project_id', id).eq('status', 'Open'),
       supabase.from('rfis').select('id, status').eq('project_id', id).eq('status', 'Open'),
-      supabase.from('project_inspections').select('status, unit_name').eq('project_id', id),
-      supabase.from('project_cost_codes').select('original_budget').eq('project_id', id),
-      supabase.from('project_contracts').select('id, status').eq('project_id', id)
+      supabase.from('project_cost_codes').select('original_budget').eq('project_id', id)
     ])
 
-    const originalBudget = costCodesRes.data?.reduce((sum, code) => sum + Number(code.original_budget || 0), 0) || 0
-    const activeContracts = contractsRes.data?.filter(c => c.status === 'Active' || c.status === 'Completed') || []
-    const activeContractIds = activeContracts.map(c => c.id)
-    const queryIds = activeContractIds.length > 0 ? activeContractIds : ['00000000-0000-0000-0000-000000000000']
-
-    const { data: sovLines } = await supabase
-      .from('sov_line_items')
-      .select('scheduled_value, change_order_id, change_orders(status)')
-      .in('contract_id', queryIds)
-
-    let committed = 0
-    let approvedChanges = 0
-
-    sovLines?.forEach(line => {
-      committed += Number(line.scheduled_value || 0)
-      const changeOrder = Array.isArray(line.change_orders) ? line.change_orders[0] : line.change_orders;
-      if (line.change_order_id && changeOrder?.status === 'Approved') {
-        approvedChanges += Number(line.scheduled_value || 0)
-      }
-    })
-
-    const revisedBudget = originalBudget + approvedChanges
-    const variance = revisedBudget - committed
-
-    setBudgetVariance({ value: Math.abs(variance), isOver: variance < 0 })
+    const budget = costCodesRes.data?.reduce((sum, code) => sum + Number(code.original_budget || 0), 0) || 0
+    setBudgetVariance({ value: budget, isOver: false })
+    
     setProject(p.data)
-    setPunchCount(punch.data?.filter(i => i.status === 'Open').length || 0)
-    setLogCount(logs.data?.length || 0)
-    setRfiCount(rfis.data?.length || 0) 
-
-    if (logs.data?.[0]) {
-      const log = logs.data[0]
-      const counts = (log.manpower || "").match(/\d+/g)
-      setManpowerTotal(counts ? counts.reduce((acc: number, cur: string) => acc + parseInt(cur), 0) : 0)
-    }
-
-    if (inspections.data && inspections.data.length > 0) {
-      const passed = inspections.data.filter((i: any) => i.status === 'Pass').length
-      setInspectionProgress(Math.round((passed / inspections.data.length) * 100))
-    }
+    setStats({ punch: punch.data?.length || 0, rfi: rfis.data?.length || 0, logs: logs.data?.length || 0 })
 
     const photoStream = [
       ...(manual.data || []).map(i => ({ url: i.url || i.photo_url, label: i.caption, src: 'Manual', date: i.created_at })),
@@ -114,42 +71,61 @@ export default function ProjectWarRoom() {
     setUploading(false)
   }
 
-  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-[0.5em]">Syncing Master...</div>
+  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-[0.5em]">Structuring Project Hubs...</div>
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
       
-      <div className="mb-8 border-b-4 border-blue-600 pb-8 flex flex-col xl:flex-row justify-between items-start xl:items-end gap-8">
+      {/* HEADER */}
+      <div className="mb-12 border-b-4 border-blue-600 pb-8 flex flex-col xl:flex-row justify-between items-start xl:items-end gap-8">
         <div className="space-y-1">
           <button onClick={() => router.push('/projects')} className="text-[10px] font-black uppercase text-slate-500 mb-2 hover:text-white flex items-center gap-1 transition-all"><ChevronLeft size={12}/> Portfolio</button>
           <h1 className="text-6xl font-black text-white tracking-tighter uppercase italic leading-none">{project?.name}</h1>
           <p className="text-[11px] font-black text-blue-500 uppercase tracking-widest mt-3 flex items-center gap-2">📍 {project?.address || project?.location}</p>
         </div>
         
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 w-full xl:w-auto">
-          <StatCard label="Budget" value={budgetVariance.isOver ? `-$${budgetVariance.value.toLocaleString()}` : `+$${budgetVariance.value.toLocaleString()}`} icon={budgetVariance.isOver ? <TrendingDown size={16}/> : <TrendingUp size={16}/>} color={budgetVariance.isOver ? "text-red-500" : "text-emerald-500"} href={`/projects/${id}/financials`} />
-          <StatCard label="Manpower" value={`${manpowerTotal} Active`} icon={<Users size={16}/>} color="text-blue-500" />
-          <StatCard label="Inspections" value={`${inspectionProgress}%`} icon={<ClipboardCheck size={16}/>} color="text-emerald-500" href={`/projects/${id}/matrix`} />
-          <StatCard label="Punch" value={punchCount} icon={<ClipboardList size={16}/>} color="text-red-500" href={`/projects/${id}/punchlist`} />
-          <StatCard label="RFIs" value={rfiCount} icon={<FileQuestion size={16}/>} color="text-amber-500" href={`/projects/${id}/rfis`} />
-          <StatCard label="Daily Logs" value={logCount} icon={<FileText size={16}/>} color="text-slate-400" href={`/projects/${id}/logs`} />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 w-full xl:w-auto">
+          <StatCard label="Live Budget" value={`$${budgetVariance.value.toLocaleString()}`} icon={<Landmark size={16}/>} color="text-emerald-500" />
+          <StatCard label="Tickets" value={stats.punch} icon={<ClipboardList size={16}/>} color="text-red-500" />
+          <StatCard label="Active RFIs" value={stats.rfi} icon={<FileQuestion size={16}/>} color="text-amber-500" />
+          <StatCard label="Daily Logs" value={stats.logs} icon={<FileText size={16}/>} color="text-slate-400" />
         </div>
       </div>
 
-      {/* --- MODULE GRID (Added Incidents) --- */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-12 gap-4 mb-12">
-        <ModuleLink title="Financials" href={`/projects/${id}/financials`} icon={<Landmark size={20}/>} color="bg-amber-600" />
-        <ModuleLink title="Bidding" href={`/projects/${id}/bidding`} icon={<FileSignature size={20}/>} color="bg-emerald-600" />
-        <ModuleLink title="Trades" href={`/projects/${id}/trades`} icon={<UserCog size={20}/>} color="bg-blue-600" />
-        <ModuleLink title="Plans" href={`/projects/${id}/plans`} icon={<BookOpen size={20}/>} color="bg-slate-700" />
-        <ModuleLink title="Matrix" href={`/projects/${id}/matrix`} icon={<Activity size={20}/>} color="bg-indigo-600" />
-        <ModuleLink title="Logs" href={`/projects/${id}/logs`} icon={<FileText size={20}/>} color="bg-teal-600" />
-        <ModuleLink title="Punch" href={`/projects/${id}/punchlist`} icon={<ClipboardList size={20}/>} color="bg-red-600" />
-        <ModuleLink title="Schedule" href={`/projects/${id}/schedule`} icon={<Calendar size={20}/>} color="bg-fuchsia-600" />
-        <ModuleLink title="Submittals" href={`/projects/${id}/submittals`} icon={<FileCheck size={20}/>} color="bg-pink-600" />
-        <ModuleLink title="Safety Hub" href={`/projects/${id}/safety`} icon={<ShieldCheck size={20}/>} color="bg-orange-600" />
-        <ModuleLink title="RFIs" href={`/projects/${id}/rfis`} icon={<FileQuestion size={20}/>} color="bg-yellow-600" />
-        <ModuleLink title="Incidents" href={`/projects/${id}/incidents`} icon={<AlertCircle size={20}/>} color="bg-rose-700" />
+      {/* --- CONSOLIDATED HUB GRID (3 MAIN FOLDERS) --- */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+        <HubLink 
+          title="Financial Hub" 
+          desc="Budget, Contracts & Monthly Draws"
+          href={`/projects/${id}/financials`} 
+          icon={<Landmark size={32}/>} 
+          color="bg-amber-600" 
+        />
+
+        <HubLink 
+          title="Field Records" 
+          desc="Logs, Punch, RFIs & Submittals"
+          href={`/projects/${id}/records`} 
+          icon={<ClipboardList size={32}/>} 
+          color="bg-blue-600" 
+        />
+
+        <HubLink 
+          title="Safety Hub" 
+          desc="Walks, Incidents & Trade Compliance"
+          href={`/projects/${id}/safety`} 
+          icon={<ShieldCheck size={32}/>} 
+          color="bg-orange-600" 
+        />
+      </div>
+
+      {/* --- STANDALONE TOOLS (QUICK ACCESS ROW) --- */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 mb-16">
+          <ToolLink title="Bidding" href={`/projects/${id}/bidding`} icon={<FileSignature size={20}/>} color="bg-emerald-600" />
+          <ToolLink title="Schedule" href={`/projects/${id}/schedule`} icon={<Calendar size={20}/>} color="bg-fuchsia-600" />
+          <ToolLink title="Blueprint Vault" href={`/projects/${id}/plans`} icon={<BookOpen size={20}/>} color="bg-slate-700" />
+          <ToolLink title="Inspection Matrix" href={`/projects/${id}/matrix`} icon={<Activity size={20}/>} color="bg-indigo-600" />
+          <ToolLink title="Site Directory" href={`/projects/${id}/trades`} icon={<UserCog size={20}/>} color="bg-teal-600" />
       </div>
 
       {/* SITE STREAM */}
@@ -190,11 +166,25 @@ function StatCard({ label, value, icon, color, href }: any) {
   return href ? <Link href={href}>{Card}</Link> : Card
 }
 
-function ModuleLink({ title, href, icon, color }: any) {
+function HubLink({ title, desc, href, icon, color }: any) {
+  return (
+    <Link href={href} className="group">
+      <div className={`p-8 rounded-[40px] ${color} h-64 flex flex-col justify-between shadow-2xl hover:scale-[1.01] hover:translate-y-[-2px] transition-all text-white border-b-[12px] border-black/20`}>
+        <div className="bg-white/10 w-16 h-16 rounded-2xl flex items-center justify-center shadow-inner">{icon}</div>
+        <div>
+          <h3 className="text-2xl font-black uppercase italic tracking-tighter leading-none">{title}</h3>
+          <p className="text-[10px] font-bold uppercase tracking-widest mt-2 opacity-80">{desc}</p>
+        </div>
+      </div>
+    </Link>
+  )
+}
+
+function ToolLink({ title, href, icon, color }: any) {
   return (
     <Link href={href} className="group h-full block">
-      <div className={`p-4 rounded-3xl ${color} flex flex-col items-center justify-center gap-2 shadow-xl hover:scale-105 transition-all text-white border-b-4 border-black/20 h-full`}>
-        {icon}
+      <div className={`p-5 rounded-3xl ${color} flex items-center gap-4 shadow-xl hover:scale-105 transition-all text-white border-b-4 border-black/20 h-full`}>
+        <div className="bg-white/10 p-2 rounded-lg">{icon}</div>
         <span className="text-[10px] font-black uppercase tracking-widest">{title}</span>
       </div>
     </Link>
