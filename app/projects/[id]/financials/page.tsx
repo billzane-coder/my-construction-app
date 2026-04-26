@@ -135,6 +135,7 @@ export default function FinancialMaster() {
     if (error) alert("Line is locked to an active contract. You cannot delete it."); else fetchData()
   }
 
+  // --- UPDATED WBS IMPORT ENGINE (PRESERVES DOLLARS) ---
   const handleImportWBS = async (sourceProjectId: string) => {
     setImporting(true)
     try {
@@ -152,8 +153,8 @@ export default function FinancialMaster() {
         project_id: id,
         code: p.code,
         name: p.name,
-        original_budget: 0,
-        manual_commitment: 0
+        original_budget: p.original_budget || 0,
+        manual_commitment: p.manual_commitment || 0
       }))
 
       const { data: insertedParents, error: pErr } = await supabase.from('project_cost_codes').insert(parentPayload).select()
@@ -171,8 +172,8 @@ export default function FinancialMaster() {
           parent_id: parentMap[c.parent_id],
           code: c.code,
           name: c.name,
-          original_budget: 0,
-          manual_commitment: 0
+          original_budget: c.original_budget || 0,
+          manual_commitment: c.manual_commitment || 0
         }))
         await supabase.from('project_cost_codes').insert(childPayload)
       }
@@ -378,7 +379,7 @@ export default function FinancialMaster() {
                  <h3 className="text-lg font-black text-white uppercase italic tracking-tighter">Import WBS</h3>
                  <button onClick={() => setShowImportModal(false)} className="bg-slate-950 p-2 rounded-lg text-slate-500 hover:text-white"><X size={16} /></button>
               </div>
-              <p className="text-xs font-bold text-slate-400 mb-6">Select a past project to clone its Cost Code structure. Budgets and commitments will be reset to $0.</p>
+              <p className="text-xs font-bold text-slate-400 mb-6">Select a past project to clone its Cost Code structure, including all base budgets and manual commitments.</p>
               <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
                  {availableProjects.map(proj => (
                     <button key={proj.id} onClick={() => handleImportWBS(proj.id)} disabled={importing} className="w-full text-left p-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500 transition-colors group flex justify-between items-center">

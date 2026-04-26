@@ -196,7 +196,11 @@ export default function ProjectsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
           {filteredProjects.map((p) => (
-            <div key={p.id} className="bg-slate-900/40 rounded-[48px] border border-slate-800/50 hover:border-blue-500 transition-all p-10 flex flex-col group relative shadow-2xl backdrop-blur-sm overflow-hidden">
+            <Link 
+              href={`/projects/${p.id}`} 
+              key={p.id} 
+              className="bg-slate-900/40 rounded-[48px] border border-slate-800/50 hover:border-blue-500 transition-all p-10 flex flex-col group relative shadow-2xl backdrop-blur-sm overflow-hidden block cursor-pointer"
+            >
               <div className="absolute top-0 right-0 w-32 h-32 bg-blue-600/5 rounded-full blur-3xl group-hover:bg-blue-600/10 transition-all" />
               
               <div className="flex justify-between items-start mb-10">
@@ -223,23 +227,21 @@ export default function ProjectsPage() {
               </p>
 
               <div className="grid grid-cols-2 gap-4 mb-10">
-                <div className="bg-slate-950/50 p-5 rounded-[28px] border border-slate-800/50 text-center">
+                <div className="bg-slate-950/50 p-5 rounded-[28px] border border-slate-800/50 text-center group-hover:border-slate-700 transition-colors">
                   <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-1">Tickets</p>
                   <p className="text-2xl font-black text-white">{p.ticketCount || 0}</p>
                 </div>
-                <div className="bg-slate-950/50 p-5 rounded-[28px] border border-slate-800/50 text-center">
+                <div className="bg-slate-950/50 p-5 rounded-[28px] border border-slate-800/50 text-center group-hover:border-slate-700 transition-colors">
                   <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-1">Logs</p>
                   <p className="text-2xl font-black text-white">{p.auditCount || 0}</p>
                 </div>
               </div>
 
-              <Link 
-                href={`/projects/${p.id}`}
-                className="mt-auto bg-slate-800 hover:bg-blue-600 text-white font-black py-6 rounded-[28px] text-[10px] uppercase tracking-[0.3em] text-center transition-all shadow-xl flex items-center justify-center gap-2 group-hover:gap-4"
-              >
+              {/* Converted to a div since the whole card is now a Link */}
+              <div className="mt-auto bg-slate-800 group-hover:bg-blue-600 text-white font-black py-6 rounded-[28px] text-[10px] uppercase tracking-[0.3em] text-center transition-all shadow-xl flex items-center justify-center gap-2 group-hover:gap-4">
                 Enter War Room <ChevronRight size={14} />
-              </Link>
-            </div>
+              </div>
+            </Link>
           ))}
           
           {filteredProjects.length === 0 && (

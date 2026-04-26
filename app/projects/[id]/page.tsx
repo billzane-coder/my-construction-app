@@ -11,7 +11,7 @@ import {
   FileText, Phone, Mail, ChevronLeft, Loader2, MessageSquare,
   Settings2, Save, X, ExternalLink, ClipboardList, FileQuestion, 
   Images, Inbox, ClipboardCheck, Calendar, Activity, BookOpen, UserCog,
-  Landmark, DollarSign, TrendingUp, TrendingDown, FileSignature
+  Landmark, DollarSign, TrendingUp, TrendingDown, FileSignature, AlertCircle
 } from 'lucide-react'
 
 export default function ProjectWarRoom() {
@@ -136,8 +136,8 @@ export default function ProjectWarRoom() {
         </div>
       </div>
 
-      {/* --- MODULE GRID --- */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-11 gap-4 mb-12">
+      {/* --- MODULE GRID (Added Incidents) --- */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-12 gap-4 mb-12">
         <ModuleLink title="Financials" href={`/projects/${id}/financials`} icon={<Landmark size={20}/>} color="bg-amber-600" />
         <ModuleLink title="Bidding" href={`/projects/${id}/bidding`} icon={<FileSignature size={20}/>} color="bg-emerald-600" />
         <ModuleLink title="Trades" href={`/projects/${id}/trades`} icon={<UserCog size={20}/>} color="bg-blue-600" />
@@ -149,6 +149,7 @@ export default function ProjectWarRoom() {
         <ModuleLink title="Submittals" href={`/projects/${id}/submittals`} icon={<FileCheck size={20}/>} color="bg-pink-600" />
         <ModuleLink title="Safety Hub" href={`/projects/${id}/safety`} icon={<ShieldCheck size={20}/>} color="bg-orange-600" />
         <ModuleLink title="RFIs" href={`/projects/${id}/rfis`} icon={<FileQuestion size={20}/>} color="bg-yellow-600" />
+        <ModuleLink title="Incidents" href={`/projects/${id}/incidents`} icon={<AlertCircle size={20}/>} color="bg-rose-700" />
       </div>
 
       {/* SITE STREAM */}

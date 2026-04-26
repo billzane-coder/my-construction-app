@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { FinancialHeader } from '../page'
-import { Plus, CheckCircle2, Lock, Unlock, X, DollarSign, LayoutGrid, Mail } from 'lucide-react'
+import { Plus, CheckCircle2, Lock, Unlock, X, DollarSign, LayoutGrid, Mail, Copy, Loader2 } from 'lucide-react'
 
 export default function ContractsManager() {
   const { id } = useParams()
@@ -20,13 +20,23 @@ export default function ContractsManager() {
   const [newSovDesc, setNewSovDesc] = useState('')
   const [newSovAmount, setNewSovAmount] = useState('')
 
+  // Cloning States
+  const [availableProjects, setAvailableProjects] = useState<any[]>([])
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importing, setImporting] = useState(false)
+
   const fetchData = async () => {
     setLoading(true)
-    let { data: codesRes } = await supabase.from('project_cost_codes').select('*').eq('project_id', id)
-    setCostCodes(codesRes || [])
+    
+    const [codesRes, contactsRes, projRes] = await Promise.all([
+      supabase.from('project_cost_codes').select('*').eq('project_id', id),
+      supabase.from('project_contacts').select('*').eq('project_id', id),
+      supabase.from('projects').select('id, name').neq('id', id)
+    ])
 
-    const { data: contactsRes } = await supabase.from('project_contacts').select('*').eq('project_id', id)
-    setContacts(contactsRes || [])
+    setCostCodes(codesRes.data || [])
+    setContacts(contactsRes.data || [])
+    if (projRes.data) setAvailableProjects(projRes.data)
 
     const { data: contractData } = await supabase
       .from('project_contracts')
@@ -64,16 +74,13 @@ export default function ContractsManager() {
     await supabase.from('sov_line_items').delete().eq('id', lineId); fetchData()
   }
 
-// THE MAGIC AUTO-SYNC BUDGET FUNCTION
   const handleActivateContract = async () => {
     if (!selectedContract) return
     const total = calculateContractTotal(selectedContract.sov_line_items)
     await supabase.from('project_contracts').update({ status: 'Active' }).eq('id', selectedContract.id)
     
-    // FIXED: Safely convert null/undefined to 0 before checking
     const currentBudget = Number(selectedContract.project_cost_codes?.original_budget || 0)
 
-    // Auto-update Master Budget if the original budget is empty or zero
     if (currentBudget === 0) {
       await supabase.from('project_cost_codes').update({ original_budget: total }).eq('id', selectedContract.cost_code_id)
     }
@@ -86,7 +93,78 @@ export default function ContractsManager() {
     fetchData()
   }
 
-  // ONBOARDING EMAIL GENERATOR
+  // --- CONTRACT CLONING ENGINE ---
+  const handleImportContracts = async (sourceProjectId: string) => {
+    setImporting(true)
+    try {
+      // 1. Get old contracts, their SOVs, and the names/codes of their trades & WBS
+      const { data: sourceContracts } = await supabase
+        .from('project_contracts')
+        .select(`
+          *,
+          project_cost_codes(code),
+          project_contacts(company),
+          sov_line_items(*)
+        `)
+        .eq('project_id', sourceProjectId)
+
+      if (!sourceContracts || sourceContracts.length === 0) {
+        alert('No contracts found in the selected project.')
+        setImporting(false)
+        return
+      }
+
+      // 2. Loop and map to the new project
+      for (const sContract of sourceContracts) {
+        
+        // Smart match WBS code
+        const sourceCode = sContract.project_cost_codes?.code
+        const matchCode = costCodes.find(c => c.code === sourceCode)
+
+        // Smart match Trade Partner
+        const sourceCompany = Array.isArray(sContract.project_contacts) ? sContract.project_contacts[0]?.company : sContract.project_contacts?.company
+        const matchContact = contacts.find(c => c.company === sourceCompany)
+
+        // Insert shell contract
+        const newContractPayload = {
+          project_id: id,
+          title: sContract.title,
+          status: 'Draft',
+          cost_code_id: matchCode?.id || null,
+          contact_id: matchContact?.id || null
+        }
+
+        const { data: newContract, error: cErr } = await supabase
+          .from('project_contracts')
+          .insert([newContractPayload])
+          .select()
+          .single()
+
+        if (cErr) {
+          console.error('Failed to import contract:', sContract.title, cErr)
+          continue
+        }
+
+        // Insert all SOV line items and keep their dollar values
+        if (sContract.sov_line_items && sContract.sov_line_items.length > 0) {
+          const newSovs = sContract.sov_line_items.map((sov: any) => ({
+            contract_id: newContract.id,
+            cost_code_id: matchCode?.id || null,
+            description: sov.description,
+            scheduled_value: sov.scheduled_value
+          }))
+          await supabase.from('sov_line_items').insert(newSovs)
+        }
+      }
+
+      setShowImportModal(false)
+      fetchData()
+    } catch (err: any) {
+      alert('Error importing contracts: ' + err.message)
+    }
+    setImporting(false)
+  }
+
   const handleGenerateEmail = () => {
     const subject = `Award & Onboarding Requirements: ${selectedContract.title}`
     const body = `Hi Team,\n\nCongratulations on being awarded the ${selectedContract.title} package.\n\nBefore mobilizing, please submit the following required compliance documents to our Trade Hub:\n\n1. WSIB Clearance Certificate\n2. Form 1000\n3. General Liability Insurance Certificate\n4. Corporate Health & Safety Policy\n\nThanks,\nSiteMaster Pro`
@@ -100,10 +178,37 @@ export default function ContractsManager() {
 
   return (
     <div className="w-full bg-slate-950 min-h-screen p-6 md:p-12 text-slate-100">
+      
+      {/* IMPORT MODAL */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-[200] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-200">
+              <div className="flex justify-between items-center mb-6">
+                 <h3 className="text-lg font-black text-white uppercase italic tracking-tighter">Clone Contracts & SOVs</h3>
+                 <button onClick={() => setShowImportModal(false)} className="bg-slate-950 p-2 rounded-lg text-slate-500 hover:text-white"><X size={16} /></button>
+              </div>
+              <p className="text-xs font-bold text-slate-400 mb-2">Select a past project to clone its contracts and schedule of values. Dollar amounts will be preserved.</p>
+              <p className="text-[10px] font-black uppercase text-amber-500 tracking-widest mb-6">Note: Import your WBS and Directory first to auto-link trades.</p>
+              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
+                 {availableProjects.map(proj => (
+                    <button key={proj.id} onClick={() => handleImportContracts(proj.id)} disabled={importing} className="w-full text-left p-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-blue-500 transition-colors group flex justify-between items-center">
+                       <span className="text-sm font-bold text-slate-300 group-hover:text-white uppercase">{proj.name}</span>
+                       {importing ? <Loader2 size={16} className="animate-spin text-blue-500"/> : <Copy size={16} className="text-slate-600 group-hover:text-blue-500"/>}
+                    </button>
+                 ))}
+                 {availableProjects.length === 0 && <p className="text-xs font-bold text-slate-500 text-center py-4">No other projects found.</p>}
+              </div>
+           </div>
+        </div>
+      )}
+
       <FinancialHeader id={id} active="sov" />
       <div className="flex justify-between items-center mb-8">
         <h2 className="text-3xl font-black uppercase italic tracking-tighter">Awarded <span className="text-blue-500">Contracts</span></h2>
-        <button onClick={() => setShowNewModal(true)} className="bg-blue-600 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase shadow-xl hover:bg-blue-500 flex items-center gap-2"><Plus size={16}/> New Contract</button>
+        <div className="flex gap-3">
+          <button onClick={() => setShowImportModal(true)} className="bg-slate-900 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase border border-slate-800 hover:bg-slate-800 flex items-center gap-2 transition-all shadow-lg"><Copy size={16}/> Clone Prev Project</button>
+          <button onClick={() => setShowNewModal(true)} className="bg-blue-600 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase shadow-xl hover:bg-blue-500 flex items-center gap-2 transition-all"><Plus size={16}/> New Contract</button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">

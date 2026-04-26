@@ -14,7 +14,7 @@ import {
   ArrowRight, 
   Clock, 
   Activity,
-  ShieldAlert // Fixed: Added missing icon import
+  ShieldAlert 
 } from 'lucide-react'
 
 export default function Dashboard() {
@@ -150,17 +150,20 @@ export default function Dashboard() {
             <div className="space-y-4">
               {recentTickets.map(ticket => (
                 <Link href={`/punchlist/${ticket.id}`} key={ticket.id} className="block group">
-                  <div className="bg-slate-900/40 hover:bg-slate-900 p-6 rounded-[32px] border border-slate-800 group-hover:border-blue-500/50 transition-all shadow-xl flex justify-between items-center">
-                    <div className="flex-1">
+                  <div className="bg-slate-900/40 hover:bg-slate-900 p-6 rounded-[32px] border border-slate-800 group-hover:border-blue-500/50 transition-all shadow-xl flex justify-between items-center gap-4">
+                    {/* ADDED: min-w-0 forces the container to respect truncate */}
+                    <div className="flex-1 min-w-0">
                       <div className="flex gap-3 items-center mb-2">
-                        <span className={`text-[8px] font-black px-2 py-1 rounded-lg uppercase tracking-widest ${ticket.priority === 'Urgent' ? 'bg-red-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
+                        {/* ADDED: shrink-0 stops the priority pill from compressing */}
+                        <span className={`shrink-0 text-[8px] font-black px-2 py-1 rounded-lg uppercase tracking-widest ${ticket.priority === 'Urgent' ? 'bg-red-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
                           {ticket.priority || 'Med'}
                         </span>
-                        <span className="text-[10px] font-black text-blue-400 uppercase tracking-tighter">{ticket.location}</span>
+                        <span className="text-[10px] font-black text-blue-400 uppercase tracking-tighter truncate">{ticket.location}</span>
                       </div>
-                      <p className="text-sm font-bold text-slate-200 leading-tight truncate pr-4">{ticket.description}</p>
+                      <p className="text-sm font-bold text-slate-200 leading-tight truncate">{ticket.description}</p>
                     </div>
-                    <ArrowRight size={18} className="text-slate-800 group-hover:text-blue-500 transition-all" />
+                    {/* ADDED: shrink-0 stops the arrow from compressing */}
+                    <ArrowRight size={18} className="text-slate-800 group-hover:text-blue-500 transition-all shrink-0" />
                   </div>
                 </Link>
               ))}
@@ -185,17 +188,20 @@ export default function Dashboard() {
             <div className="space-y-4">
               {recentAudits.map(audit => (
                 <Link href={`/inspections/${audit.id}`} key={audit.id} className="block group">
-                  <div className="bg-slate-900/40 hover:bg-slate-900 p-6 rounded-[32px] border border-slate-800 group-hover:border-emerald-500/50 transition-all shadow-xl flex justify-between items-center">
-                    <div>
-                      <p className="text-sm font-black text-white uppercase italic tracking-tight mb-1">{audit.inspection_templates?.name || 'Phase Audit'}</p>
+                  <div className="bg-slate-900/40 hover:bg-slate-900 p-6 rounded-[32px] border border-slate-800 group-hover:border-emerald-500/50 transition-all shadow-xl flex justify-between items-center gap-4">
+                    {/* ADDED: min-w-0 forces the container to respect truncate */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-black text-white uppercase italic tracking-tight mb-1 truncate">{audit.inspection_templates?.name || 'Phase Audit'}</p>
                       <div className="flex gap-3 items-center">
-                        <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest bg-emerald-500/10 px-2 py-1 rounded-lg">
+                        {/* ADDED: shrink-0 stops the unit pill from compressing */}
+                        <span className="shrink-0 text-[9px] font-black text-emerald-400 uppercase tracking-widest bg-emerald-500/10 px-2 py-1 rounded-lg">
                           Unit {audit.unit_number}
                         </span>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-tight">{audit.projects?.name}</span>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-tight truncate">{audit.projects?.name}</span>
                       </div>
                     </div>
-                    <div className="text-right">
+                    {/* ADDED: shrink-0 stops the status text from compressing */}
+                    <div className="text-right shrink-0">
                       <span className="text-[8px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest bg-slate-800 text-slate-500">
                         {audit.status}
                       </span>

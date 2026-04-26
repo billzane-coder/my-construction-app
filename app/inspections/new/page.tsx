@@ -78,13 +78,12 @@ export default function NewInspection() {
 
       if (dbError) throw new Error(`Database Error: ${dbError.message}`)
 
-      // === 4. UPDATED AUTO-PUNCH LOGIC (STRICT STRINGS) ===
+      // === 4. AUTO-PUNCH LOGIC ===
       const failedItems = Object.entries(results).filter(([_, score]) => score === 'Fail')
       
       if (failedItems.length > 0) {
         setStatus('GENERATING DEFICIENCY TICKETS...')
         
-        // Strict String Casting to prevent Supabase Type Crashes
         const unitNumStr = String(formData.get('unit_number') || 'General')
         const projectIdStr = String(selectedProjectId || '')
         const templateNameStr = String(selectedTemplate?.name || 'Unknown Phase')
@@ -100,24 +99,18 @@ export default function NewInspection() {
           notes: 'Auto-generated from Phase Audit.' 
         }))
 
-        // This will print the exact payload to your browser's dev console
-        console.log("SENDING TO SUPABASE:", JSON.stringify(punchItems, null, 2))
-
         const { error: punchError } = await supabase.from('punch_list').insert(punchItems)
         
         if (punchError) {
-           console.error("Supabase Rejected The Insert:", JSON.stringify(punchError, null, 2))
-           // Throwing an error stops the redirect so you can read the status text
-           throw new Error(`Punch List Failed: ${punchError.message || 'Check Console'}`) 
+           throw new Error(`Punch List Failed: ${punchError.message}`) 
         }
       }
-      // ==================================
 
       setStatus('✅ SUCCESS! REDIRECTING...')
-      router.refresh() // Tell Next.js to dump the cache FIRST
+      router.refresh() 
       setTimeout(() => {
-         router.push('/inspections') // Then move the user
-      }, 500) // Give the database a half-second to settle
+         router.push('/inspections') 
+      }, 500)
       
     } catch (err: any) {
       console.error("Critical Failure:", err)
@@ -126,7 +119,6 @@ export default function NewInspection() {
     }
   }
 
-  // Draw Logic
   const getPos = (e: React.PointerEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect()
     return { x: e.clientX - (rect?.left || 0), y: e.clientY - (rect?.top || 0) }
@@ -141,15 +133,18 @@ export default function NewInspection() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="bg-slate-900 p-5 rounded-[32px] border border-slate-800 shadow-xl space-y-3">
-          <select required value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)} className="w-full p-4 bg-slate-800 border border-slate-700 rounded-2xl text-sm font-bold text-white outline-none">
+          
+          {/* FIX: text-base prevents iOS zoom bug on mobile */}
+          <select required value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)} className="w-full p-4 bg-slate-800 border border-slate-700 rounded-2xl text-base md:text-sm font-bold text-white outline-none">
             <option value="">Select Project...</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-          <input name="unit_number" required placeholder="Unit # (e.g. 204)" className="w-full p-4 bg-slate-800 border border-slate-700 rounded-2xl text-sm font-bold text-white outline-none" />
+          
+          <input name="unit_number" required placeholder="Unit # (e.g. 204)" className="w-full p-4 bg-slate-800 border border-slate-700 rounded-2xl text-base md:text-sm font-bold text-white outline-none" />
         </div>
 
         <div className="bg-slate-900 p-5 rounded-[32px] border border-slate-800 shadow-xl">
-          <select required onChange={(e) => setSelectedTemplate(templates.find(t => t.id === e.target.value))} className="w-full p-4 bg-slate-800 border border-slate-700 rounded-2xl text-sm font-bold text-white outline-none">
+          <select required onChange={(e) => setSelectedTemplate(templates.find(t => t.id === e.target.value))} className="w-full p-4 bg-slate-800 border border-slate-700 rounded-2xl text-base md:text-sm font-bold text-white outline-none">
             <option value="">Choose Phase...</option>
             {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
@@ -184,7 +179,8 @@ export default function NewInspection() {
               </div>
             </div>
 
-            <textarea name="notes" placeholder="General notes..." className="w-full p-6 bg-slate-900 border border-slate-800 rounded-[32px] text-sm text-white min-h-[140px] outline-none" />
+            {/* FIX: text-base prevents iOS zoom bug */}
+            <textarea name="notes" placeholder="General notes..." className="w-full p-6 bg-slate-900 border border-slate-800 rounded-[32px] text-base md:text-sm text-white min-h-[140px] outline-none" />
             
             <div className="bg-slate-900 p-5 rounded-[32px] border border-slate-800">
               <p className="text-[10px] font-black text-slate-500 uppercase mb-4 tracking-widest">Lead Builder Sign-Off</p>
