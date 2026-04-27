@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import { 
   ChevronLeft, Plus, Save, Loader2, GripVertical, 
-  CalendarDays, HardHat, AlertTriangle, Link as LinkIcon, Edit2, Trash2, Printer, ChevronDown, ChevronRight
+  CalendarDays, HardHat, AlertTriangle, Link as LinkIcon, Edit2, Trash2, Printer, ChevronDown, ChevronRight, Layers
 } from 'lucide-react'
 
 const parseDate = (d: string) => new Date(d + 'T00:00:00')
@@ -28,6 +28,11 @@ export default function ScheduleMaster() {
   const [saving, setSaving] = useState(false)
   const [tasks, setTasks] = useState<any[]>([])
   const [trades, setTrades] = useState<any[]>([])
+  
+  // --- NEW: GLOBAL OVERLAY STATE ---
+  const [overlayMode, setOverlayMode] = useState(false)
+  const [overlayTasks, setOverlayTasks] = useState<any[]>([])
+  const [otherProjects, setOtherProjects] = useState<any[]>([])
   
   const [gridStartDate, setGridStartDate] = useState(new Date())
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
@@ -52,9 +57,12 @@ export default function ScheduleMaster() {
   useEffect(() => {
     async function fetchData() {
       if (!id) return
-      const [tData, trData] = await Promise.all([
+      
+      // 1. Fetch current project data
+      const [tData, trData, projectsData] = await Promise.all([
         supabase.from('project_schedule').select('*, project_contacts(company)').eq('project_id', id).order('sort_order', { ascending: true }),
-        supabase.from('project_contacts').select('id, company').eq('project_id', id)
+        supabase.from('project_contacts').select('id, company').eq('project_id', id),
+        supabase.from('projects').select('id, name, status').neq('status', 'Closed') // Fetch active projects for overlay
       ])
       
       if (tData.data) {
@@ -66,13 +74,30 @@ export default function ScheduleMaster() {
         }
       }
       if (trData.data) setTrades(trData.data)
+      
+      if (projectsData.data) {
+        const otherProjs = projectsData.data.filter(p => p.id !== id)
+        setOtherProjects(otherProjs)
+        
+        // Fetch tasks for other projects to power the overlay mode
+        if (otherProjs.length > 0) {
+          const otherIds = otherProjs.map(p => p.id)
+          const { data: overlayData } = await supabase
+            .from('project_schedule')
+            .select('*, projects(name), project_contacts(company)')
+            .in('project_id', otherIds)
+            
+          if (overlayData) setOverlayTasks(overlayData)
+        }
+      }
+      
       setLoading(false)
     }
     fetchData()
   }, [id])
 
   // --- ENGINE ---
-  const { processedTasks, projectEndDate, criticalPathIds, groupedTasks } = useMemo(() => {
+  const { processedTasks, projectEndDate, criticalPathIds, groupedTasks, globalGroupedTasks } = useMemo(() => {
     let pTasks = [...tasks]
     let maxEnd = 0
     let endMap: Record<string, number> = {}
@@ -100,6 +125,7 @@ export default function ScheduleMaster() {
 
     pTasks.filter(t => endMap[t.id] === maxEnd).forEach(t => findCriticalChain(t.id))
 
+    // Local Grouping
     const grouped = pTasks.reduce((acc, task) => {
       const cat = task.category || 'Pre-con'
       if (!acc[cat]) acc[cat] = []
@@ -107,9 +133,18 @@ export default function ScheduleMaster() {
       return acc
     }, {} as Record<string, any[]>)
 
-    return { processedTasks: pTasks, projectEndDate: maxEnd, criticalPathIds: cPath, groupedTasks: grouped }
-  }, [tasks])
+    // Global Grouping (For Overlay Mode)
+    let globalGrouped = { ...grouped }
+    if (overlayMode) {
+      overlayTasks.forEach(task => {
+        const cat = task.category || 'Pre-con'
+        if (!globalGrouped[cat]) globalGrouped[cat] = []
+        globalGrouped[cat].push({ ...task, isOverlay: true })
+      })
+    }
 
+    return { processedTasks: pTasks, projectEndDate: maxEnd, criticalPathIds: cPath, groupedTasks: grouped, globalGroupedTasks: globalGrouped }
+  }, [tasks, overlayTasks, overlayMode])
 
   // --- HORIZONTAL DRAG LOGIC ---
   const handleHPointerDown = (e: React.PointerEvent, taskId: string, start_date: string, type: 'move' | 'extendEnd', duration: number) => {
@@ -263,7 +298,6 @@ export default function ScheduleMaster() {
     }
   }
 
-
   const saveAllTasks = async () => {
     setSaving(true)
     const updates = tasks.map((t, i) => ({ 
@@ -321,7 +355,7 @@ export default function ScheduleMaster() {
     })
   }
 
-// --- UPGRADED PDF EXPORT ENGINE (html-to-image + jsPDF) ---
+  // --- UPGRADED PDF EXPORT ENGINE (html-to-image + jsPDF) ---
   const handlePrint = async () => {
     const element = document.getElementById('gantt-canvas')
     if (!element) return
@@ -329,28 +363,20 @@ export default function ScheduleMaster() {
     setSaving(true)
 
     try {
-      // 1. Dynamically import the modern image engine
       const { toJpeg } = await import('html-to-image')
       const { jsPDF } = await import('jspdf')
 
-      // 2. Snapshot the grid using the browser's native rendering
       const imgData = await toJpeg(element, {
         quality: 0.8,
-        backgroundColor: '#0f172a', // Matches slate-900 background
-        pixelRatio: 2, // High-res export
+        backgroundColor: '#0f172a',
+        pixelRatio: 2, 
       })
 
-      // 3. Create an A3 Landscape PDF
       const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' })
-      
-      // Calculate aspect ratio using the DOM element's actual pixel dimensions
       const pdfWidth = pdf.internal.pageSize.getWidth()
       const pdfHeight = (element.scrollHeight * pdfWidth) / element.scrollWidth
 
-      // 4. Bake the image onto the PDF
       pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight)
-      
-      // 5. Download it
       pdf.save(`Project_Schedule_${id}.pdf`)
 
     } catch (error) {
@@ -379,11 +405,14 @@ export default function ScheduleMaster() {
 
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Rendering Timeline...</div>
 
+  // We use the globalGroupedTasks to render the rows if overlay is active
+  const activeTaskMap = overlayMode ? globalGroupedTasks : groupedTasks;
+
   return (
     <div className="max-w-[1800px] mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
       
       {/* HEADER */}
-      <div className="mb-8 border-b-4 border-blue-600 pb-6 flex justify-between items-end">
+      <div className="mb-8 border-b-4 border-blue-600 pb-6 flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6">
         <div>
           <button onClick={() => router.back()} className="text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white flex items-center gap-1 transition-all"><ChevronLeft size={12}/> War Room</button>
           <h1 className="text-4xl font-black text-white tracking-tighter uppercase italic leading-none">Master <span className="text-blue-500">Schedule</span></h1>
@@ -393,21 +422,41 @@ export default function ScheduleMaster() {
              </p>
           )}
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
+          
+          {/* --- GLOBAL OVERLAY TOGGLE --- */}
+          {otherProjects.length > 0 && (
+            <label className={`cursor-pointer flex items-center gap-2 text-[10px] font-black px-6 py-4 rounded-2xl uppercase transition-all shadow-xl border ${overlayMode ? 'bg-indigo-600/20 text-indigo-400 border-indigo-500' : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-700'}`}>
+              <Layers size={14} />
+              <input type="checkbox" className="hidden" checked={overlayMode} onChange={(e) => setOverlayMode(e.target.checked)} />
+              Overlay All Projects
+            </label>
+          )}
+
           <button onClick={handlePrint} disabled={saving} className="bg-slate-800 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all flex items-center gap-2 shadow-xl">
-            {saving ? <Loader2 size={14} className="animate-spin"/> : <Printer size={14}/>} Export PDF
+            {saving ? <Loader2 size={14} className="animate-spin"/> : <Printer size={14}/>} Export
           </button>
           <button onClick={saveAllTasks} disabled={saving} className="bg-slate-800 text-blue-400 border border-blue-900/50 text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all flex items-center gap-2 shadow-xl">
             {saving ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>} Sync
           </button>
           <button onClick={() => setShowNewTask(true)} className="bg-blue-600 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-all flex items-center gap-2">
-            <Plus size={16}/> New Task
+            <Plus size={16}/> Task
           </button>
         </div>
       </div>
 
+      {/* OVERLAY LEGEND */}
+      {overlayMode && (
+        <div className="mb-4 bg-indigo-950/30 border border-indigo-900/50 p-4 rounded-2xl flex items-center gap-4 animate-in slide-in-from-top-4 duration-300">
+          <Layers size={16} className="text-indigo-400" />
+          <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">
+            Viewing global multi-project timeline. Transparent bars represent tasks from other sites. 
+          </p>
+        </div>
+      )}
+
       {/* PC GANTT CANVAS */}
-      <div className="bg-slate-900 rounded-[32px] border border-slate-800 shadow-2xl overflow-hidden">
+      <div className="bg-slate-900 rounded-[32px] border border-slate-800 shadow-2xl overflow-hidden relative z-0">
         
         <div className="overflow-auto custom-scrollbar max-h-[75vh] relative" ref={containerRef}>
           {/* 🎯 TARGET CANVAS FOR PDF EXPORT */}
@@ -415,7 +464,8 @@ export default function ScheduleMaster() {
 
             {/* STICKY HEADER ROW */}
             <div className="flex sticky top-0 z-40 bg-slate-900 border-b border-slate-800 shadow-sm">
-              <div className="w-[320px] shrink-0 sticky left-0 z-50 bg-slate-900 p-4 border-r border-slate-800 flex flex-col justify-end font-black text-[10px] text-slate-500 uppercase tracking-widest">Trade / Task</div>
+              {/* RESPONSIVE LEFT COLUMN */}
+              <div className="w-40 md:w-[320px] shrink-0 sticky left-0 z-50 bg-slate-900 p-4 border-r border-slate-800 flex flex-col justify-end font-black text-[9px] md:text-[10px] text-slate-500 uppercase tracking-widest">Trade / Task</div>
               <div className="w-[80px] shrink-0 p-4 border-r border-slate-800 flex flex-col justify-end items-center font-black text-[10px] text-slate-500 uppercase tracking-widest">Start</div>
               <div className="w-[80px] shrink-0 p-4 border-r border-slate-800 flex flex-col justify-end items-center font-black text-[10px] text-slate-500 uppercase tracking-widest">End</div>
               <div className="w-[60px] shrink-0 p-4 border-r border-slate-800 flex flex-col justify-end items-center font-black text-[10px] text-slate-500 uppercase tracking-widest">Dur.</div>
@@ -423,7 +473,7 @@ export default function ScheduleMaster() {
               <div className="flex flex-col">
                 <div className="flex border-b border-slate-800/50 h-8">
                   {monthSpans.map((m, i) => (
-                    <div key={i} className="px-4 py-2 text-[10px] font-black text-blue-500 uppercase tracking-widest border-r border-slate-800/50" style={{ width: m.colSpan * COL_WIDTH }}>{m.name}</div>
+                    <div key={i} className="px-4 py-2 text-[10px] font-black text-blue-500 uppercase tracking-widest border-r border-slate-800/50 truncate" style={{ width: m.colSpan * COL_WIDTH }}>{m.name}</div>
                   ))}
                 </div>
                 <div className="flex h-8">
@@ -437,11 +487,11 @@ export default function ScheduleMaster() {
             </div>
 
             {/* CATEGORY & TASK ROWS */}
-            {Object.keys(groupedTasks).length === 0 && (
+            {Object.keys(activeTaskMap).length === 0 && (
                <div className="p-12 text-center text-[10px] font-black uppercase tracking-widest text-slate-600">No tasks scheduled yet.</div>
             )}
             
-            {Object.entries(groupedTasks as Record<string, any[]>).map(([category, catTasks]) => {
+            {Object.entries(activeTaskMap as Record<string, any[]>).map(([category, catTasks]) => {
               const isCollapsed = collapsedCats.has(category)
               const isDraggedCategory = reorderingCategory === category
               
@@ -461,18 +511,19 @@ export default function ScheduleMaster() {
                     onDragStart={(e) => handleDragStartCategory(e, category)}
                     className="flex bg-slate-950/50 border-b border-slate-800/50 sticky left-0 z-30"
                   >
-                    <div className="w-[320px] shrink-0 sticky left-0 z-30 bg-slate-950/80 flex items-stretch border-r border-slate-800">
-                      {/* Category Drag Handle */}
-                      <div className="w-8 flex items-center justify-center cursor-grab active:cursor-grabbing hover:bg-slate-900 text-slate-600 hover:text-white border-r border-slate-800/50">
+                    {/* RESPONSIVE LEFT COLUMN */}
+                    <div className="w-40 md:w-[320px] shrink-0 sticky left-0 z-30 bg-slate-950/80 flex items-stretch border-r border-slate-800">
+                      {/* Category Drag Handle (Hidden on Mobile) */}
+                      <div className="hidden md:flex w-8 items-center justify-center cursor-grab active:cursor-grabbing hover:bg-slate-900 text-slate-600 hover:text-white border-r border-slate-800/50">
                         <GripVertical size={14} />
                       </div>
                       <button 
                         onClick={() => toggleCategory(category)}
-                        className="flex-1 p-3 flex items-center gap-2 hover:bg-slate-900 transition-colors text-left"
+                        className="flex-1 p-2 md:p-3 flex items-center gap-1 md:gap-2 hover:bg-slate-900 transition-colors text-left overflow-hidden"
                       >
-                        {isCollapsed ? <ChevronRight size={14} className="text-slate-500" /> : <ChevronDown size={14} className="text-slate-500" />}
-                        <span className="text-xs font-black text-white uppercase tracking-widest">{category}</span>
-                        <span className="text-[9px] font-bold text-slate-500 ml-auto bg-slate-900 px-2 py-0.5 rounded">{catTasks.length}</span>
+                        {isCollapsed ? <ChevronRight size={14} className="text-slate-500 shrink-0" /> : <ChevronDown size={14} className="text-slate-500 shrink-0" />}
+                        <span className="text-[10px] md:text-xs font-black text-white uppercase tracking-widest truncate">{category}</span>
+                        <span className="text-[9px] font-bold text-slate-500 ml-auto bg-slate-900 px-2 py-0.5 rounded hidden sm:inline-block">{catTasks.length}</span>
                       </button>
                     </div>
                     {/* Empty Grid Fill */}
@@ -488,13 +539,13 @@ export default function ScheduleMaster() {
                     const startMs = parseDate(t.start_date).getTime()
                     const endMs = startMs + (t.duration_days * DAY_MS)
                     const offsetDays = Math.floor((startMs - gridStartDate.getTime()) / DAY_MS)
-                    const isCritical = criticalPathIds.has(t.id)
+                    const isCritical = criticalPathIds.has(t.id) && !t.isOverlay
                     const isDraggedTask = reorderingId === t.id
 
                     return (
                       <div 
                         key={t.id} 
-                        className={`flex border-b border-slate-800/50 hover:bg-slate-800/20 transition-colors relative h-16 task-row ${isDraggedTask ? 'opacity-50' : ''}`}
+                        className={`flex border-b border-slate-800/50 hover:bg-slate-800/20 transition-colors relative h-16 task-row ${isDraggedTask ? 'opacity-50' : ''} ${t.isOverlay ? 'opacity-60 bg-slate-950/50' : ''}`}
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={(e) => {
                           e.preventDefault()
@@ -503,25 +554,32 @@ export default function ScheduleMaster() {
                       >
                         
                         {/* Locked Data Columns */}
-                        <div className="w-[320px] shrink-0 sticky left-0 z-20 bg-slate-950 border-r border-slate-800 flex items-stretch">
-                          {/* Task Vertical Drag Handle */}
-                          <div 
-                            draggable
-                            onDragStart={(e) => handleDragStartTask(e, t.id)}
-                            className="w-8 flex items-center justify-center border-r border-slate-800/50 cursor-grab active:cursor-grabbing hover:bg-slate-800 text-slate-600 hover:text-white"
-                          >
-                            <GripVertical size={14} />
-                          </div>
+                        <div className="w-40 md:w-[320px] shrink-0 sticky left-0 z-20 bg-slate-950 border-r border-slate-800 flex items-stretch">
+                          {/* Task Vertical Drag Handle (Hidden on mobile or overlay) */}
+                          {!t.isOverlay && (
+                            <div 
+                              draggable
+                              onDragStart={(e) => handleDragStartTask(e, t.id)}
+                              className="hidden md:flex w-8 items-center justify-center border-r border-slate-800/50 cursor-grab active:cursor-grabbing hover:bg-slate-800 text-slate-600 hover:text-white"
+                            >
+                              <GripVertical size={14} />
+                            </div>
+                          )}
+                          {t.isOverlay && <div className="hidden md:block w-8 border-r border-slate-800/50 bg-slate-950/30" />}
                           
                           <button 
-                            onClick={() => setEditingTask(t)}
-                            className="flex-1 p-3 flex flex-col justify-center text-left hover:bg-slate-900 transition-colors overflow-hidden"
+                            onClick={() => !t.isOverlay && setEditingTask(t)}
+                            className={`flex-1 p-2 md:p-3 flex flex-col justify-center text-left transition-colors overflow-hidden ${t.isOverlay ? 'cursor-default pointer-events-none' : 'hover:bg-slate-900'}`}
                           >
                             <div className="flex justify-between items-center w-full">
-                              <p className="text-xs font-bold text-white truncate transition-colors pr-2">{t.task_name}</p>
-                              <Edit2 size={12} className="text-slate-600 shrink-0 hover:text-white" />
+                              <p className={`text-[10px] md:text-xs font-bold truncate transition-colors pr-2 ${t.isOverlay ? 'text-indigo-300' : 'text-white'}`}>{t.task_name}</p>
+                              {!t.isOverlay && <Edit2 size={12} className="text-slate-600 shrink-0 hover:text-white hidden sm:block" />}
                             </div>
-                            <p className="text-[9px] font-black text-slate-500 uppercase truncate tracking-widest mt-0.5">{t.project_contacts?.company || 'General'}</p>
+                            {t.isOverlay ? (
+                              <p className="text-[8px] md:text-[9px] font-black text-indigo-500 uppercase truncate tracking-widest mt-0.5">{t.projects?.name}</p>
+                            ) : (
+                              <p className="text-[8px] md:text-[9px] font-black text-slate-500 uppercase truncate tracking-widest mt-0.5">{t.project_contacts?.company || 'General'}</p>
+                            )}
                           </button>
                         </div>
                         
@@ -551,35 +609,42 @@ export default function ScheduleMaster() {
                           {/* Draggable Bar */}
                           {offsetDays >= 0 && (
                             <div 
-                              className={`absolute top-1/2 -translate-y-1/2 h-10 rounded-xl flex items-center shadow-lg transition-colors group/bar ${
-                                isCritical ? 'bg-red-600 hover:bg-red-500 border border-red-400' : 'bg-blue-600 hover:bg-blue-500 border border-blue-400'
+                              className={`absolute top-1/2 -translate-y-1/2 h-8 md:h-10 rounded-xl flex items-center shadow-lg transition-colors group/bar ${
+                                t.isOverlay ? 'bg-indigo-600/30 border border-indigo-400 border-dashed pointer-events-none' :
+                                isCritical ? 'bg-red-600 hover:bg-red-500 border border-red-400' : 
+                                'bg-blue-600 hover:bg-blue-500 border border-blue-400'
                               }`}
                               style={{ left: offsetDays * COL_WIDTH, width: Math.max(t.duration_days * COL_WIDTH, COL_WIDTH - 8) }}
                             >
                               {/* Left Edge (For moving) */}
-                              <div 
-                                className="w-6 h-full flex items-center justify-center cursor-grab active:cursor-grabbing shrink-0"
-                                onPointerDown={(e) => handleHPointerDown(e, t.id, t.start_date, 'move', t.duration_days)}
-                                onPointerMove={handleHPointerMove}
-                                onPointerUp={handleHPointerUp}
-                              >
-                                <GripVertical size={12} className="text-white/50" />
-                              </div>
+                              {!t.isOverlay && (
+                                <div 
+                                  className="w-6 h-full flex items-center justify-center cursor-grab active:cursor-grabbing shrink-0"
+                                  onPointerDown={(e) => handleHPointerDown(e, t.id, t.start_date, 'move', t.duration_days)}
+                                  onPointerMove={handleHPointerMove}
+                                  onPointerUp={handleHPointerUp}
+                                >
+                                  <GripVertical size={12} className="text-white/50 hidden md:block" />
+                                </div>
+                              )}
 
                               {/* Center Content */}
                               <div className="flex-1 truncate pointer-events-none px-1">
                                 <span className="text-[10px] font-black text-white">
                                   {t.dependencies?.length > 0 && <LinkIcon size={10} className="inline mr-1" />}
+                                  {t.isOverlay && t.project_contacts?.company}
                                 </span>
                               </div>
 
                               {/* Right Edge (For extending duration) */}
-                              <div 
-                                className="w-4 h-full cursor-col-resize shrink-0 hover:bg-white/20 rounded-r-xl"
-                                onPointerDown={(e) => handleHPointerDown(e, t.id, t.start_date, 'extendEnd', t.duration_days)}
-                                onPointerMove={handleHPointerMove}
-                                onPointerUp={handleHPointerUp}
-                              />
+                              {!t.isOverlay && (
+                                <div 
+                                  className="w-4 h-full cursor-col-resize shrink-0 hover:bg-white/20 rounded-r-xl"
+                                  onPointerDown={(e) => handleHPointerDown(e, t.id, t.start_date, 'extendEnd', t.duration_days)}
+                                  onPointerMove={handleHPointerMove}
+                                  onPointerUp={handleHPointerUp}
+                                />
+                              )}
                             </div>
                           )}
                         </div>
@@ -640,7 +705,7 @@ export default function ScheduleMaster() {
                 className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-slate-400 outline-none"
               >
                 <option value="">No Dependencies</option>
-                {tasks.filter(t => t.id !== editingTask.id).map(t => (
+                {tasks.filter(t => t.id !== editingTask.id && !t.isOverlay).map(t => (
                   <option key={t.id} value={t.id}>{t.task_name}</option>
                 ))}
               </select>

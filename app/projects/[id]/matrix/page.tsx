@@ -12,13 +12,13 @@ import {
 
 // --- RESTORED & EXPANDED PHASES ---
 const INSPECTION_PHASES = [
-  'Locates',                // NEW: Step Zero!
+  'Locates',
   'Footing / Foundation',
-  'Backfill',               
+  'Backfill', 
   'Underground Plumbing',
   'Underground Insulation', 
-  'Framing',                
-  'Air Barrier',            
+  'Framing',
+  'Air Barrier',
   'Rough Plumbing',
   'Rough HVAC',
   'ESA Rough-In',
@@ -109,18 +109,16 @@ export default function InspectionMatrix() {
     fetchData()
   }
 
-const handleUpdateStatus = async (newStatus: string) => {
+  const handleUpdateStatus = async (newStatus: string) => {
     if (!activeCell) return
     setSaving(true)
     
-    // 1. Check if this specific cell already has a database row
     const existingRecord = inspections.find(
       i => i.unit_name === activeCell.unit && i.inspection_type === activeCell.phase
     )
 
     let actionError = null;
 
-    // 2. If it exists, UPDATE it. If it's a "Ghost Row", INSERT it.
     if (existingRecord?.id) {
       const { error } = await supabase.from('project_inspections')
         .update({ status: newStatus, notes: activeCell.notes })
@@ -144,7 +142,7 @@ const handleUpdateStatus = async (newStatus: string) => {
       return
     }
       
-    // 3. Auto-Log Generation (with Timezone Fix)
+    // Auto-Log Generation (with Timezone Fix)
     if (newStatus === 'Pass' || newStatus === 'Fail') {
       const offset = new Date().getTimezoneOffset() * 60000
       const localToday = new Date(Date.now() - offset).toISOString().split('T')[0]
@@ -361,14 +359,13 @@ const handleUpdateStatus = async (newStatus: string) => {
       )}
 
       <div className="bg-slate-900 rounded-[32px] border border-slate-800 shadow-2xl w-full relative z-0">
-        {/* THIS WRAPPER FORCES THE SCROLL */}
         <div className="w-full overflow-x-auto custom-scrollbar p-1 pb-6 bg-slate-950 rounded-[32px]">
-          {/* BRUTE FORCE WIDTH: Ensures the table is always wide enough to scroll */}
           <div className="min-w-[1400px]">
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-950 sticky top-0 z-10 shadow-sm border-b border-slate-800">
                 <tr>
-                  <th className="p-5 font-black text-[10px] text-slate-500 uppercase tracking-widest border-r border-slate-800 min-w-[150px] sticky left-0 bg-slate-950 z-20 shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)]">
+                  {/* --- RESPONSIVE FIX FOR THE LOT COLUMN --- */}
+                  <th className="p-3 md:p-5 font-black text-[9px] md:text-[10px] text-slate-500 uppercase tracking-widest border-r border-slate-800 w-24 min-w-[96px] md:w-auto md:min-w-[150px] sticky left-0 bg-slate-950 z-20 shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)]">
                     Unit / Lot
                   </th>
                   {INSPECTION_PHASES.map((phase, i) => (
@@ -390,10 +387,11 @@ const handleUpdateStatus = async (newStatus: string) => {
                 
                 {units.map((unit) => (
                   <tr key={unit} className="hover:bg-slate-800/20 transition-colors group">
-                    <td className="p-5 font-black text-white text-sm uppercase tracking-widest border-r border-slate-800 sticky left-0 bg-slate-900 z-10 shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)] min-w-[150px] break-words">
+                    {/* --- RESPONSIVE FIX FOR THE LOT COLUMN --- */}
+                    <td className="p-3 md:p-5 font-black text-white text-xs md:text-sm uppercase tracking-widest border-r border-slate-800 sticky left-0 bg-slate-900 z-10 shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)] w-24 min-w-[96px] md:w-auto md:min-w-[150px] break-words">
                       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2">
                         <span className="whitespace-normal leading-tight">{unit}</span>
-                        <button onClick={() => handleDeleteUnit(unit)} className="text-slate-600 hover:text-red-500 opacity-100 md:opacity-0 group-hover:opacity-100 transition-all p-2">
+                        <button onClick={() => handleDeleteUnit(unit)} className="text-slate-600 hover:text-red-500 opacity-100 md:opacity-0 group-hover:opacity-100 transition-all p-1 md:p-2">
                           <Trash2 size={14} />
                         </button>
                       </div>

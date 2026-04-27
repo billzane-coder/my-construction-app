@@ -8,69 +8,88 @@ import { useParams, useRouter } from 'next/navigation'
 import { 
   ChevronLeft, Plus, FileDown, ShieldAlert, ShieldCheck,
   CheckCircle, AlertTriangle, X, Search, FileText, 
-  Save, Zap, PenTool, AlertCircle, CheckCircle2, XCircle, Info, ClipboardCheck, Loader2
+  Save, Zap, PenTool, AlertCircle, CheckCircle2, XCircle, 
+  Info, ClipboardCheck, Loader2, Camera
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 
-// --- SMART PROMPTS DICTIONARY ---
+// --- 🛠️ ROBUST ONTARIO-STANDARD SAFETY PROMPTS ---
 const SAFETY_PROMPTS = {
   walkTypes: {
     'Fall Protection': [
-      'Guardrails verified at 42" with mid-rail and toe board', 
-      'Workers tied off with zero free-fall slack', 
-      'Floor openings securely covered and marked "DANGER HOLE"',
-      'Ladders tied off at top and bottom (3ft past landing)'
+      'Guardrails verified at 42" (+/- 3") with mid-rail and toe board', 
+      'Travel restraint/Fall arrest system inspected and daily logs present', 
+      'Floor openings securely covered, fastened and marked "DANGER HOLE"',
+      'Ladders tied off/secured at top and bottom (extend 3ft past landing)',
+      'Warning bump lines established minimum 2 meters from leading edge',
+      'Lifeline anchor points verified by competent person (5000lb capacity)'
     ],
-    'Housekeeping': [
-      'Egress routes 100% clear of trip hazards', 
-      'Scrap lumber stripped of nails / nails bent', 
-      'Combustible waste binned and removed from floor',
-      'Extension cords flown above head height'
+    'Housekeeping/MOL': [
+      'Egress routes and stairwells 100% clear of debris/cables', 
+      'Scrap lumber stripped of nails or nails bent over', 
+      '4A:40BC Fire extinguishers inspected, tagged and accessible (every 3000sqft)',
+      'Temporary lighting operational in all work areas and stairwells',
+      'Combustible waste binned and actively removed from work area',
+      'Material stacked securely and clear of public walkways/hoist areas'
     ],
-    'Hot Work': [
-      '4A:40BC Fire extinguisher within 10ft', 
-      'Dedicated fire watch assigned for 60 mins post-work', 
-      'Combustibles cleared within 35ft radius'
-    ],
-    'Scaffold Inspection': [
-      'Base plates level on mudsills', 
-      'All cross braces securely pinned', 
-      'Work platforms fully planked with no gaps',
-      'Guardrails installed on all open sides'
+    'Scaffold/Access': [
+      'MOL Green Tag present and signed within last 24hrs by competent person', 
+      'Base plates level on mudsills with no makeshift blocking/bricks', 
+      'Work platforms fully planked (no gaps >1")',
+      'Access ladder extends beyond platform / internal stairs clear',
+      'All cross braces securely pinned and locked',
+      'Toe boards installed on all open sides of platforms over 10ft'
     ]
   },
   trades: {
+    interiors: [
+      'Stilts used only on swept, level floors (max 36" height) with guardrails adjusted',
+      'Baker scaffold locking pins engaged and wheels locked before mounting',
+      'Dust control/N95 masks actively used during sanding operations',
+      'Taping compound buckets stacked safely (max 3 high)',
+      'Cutting stations equipped with localized ventilation or HEPA vacuums',
+      'Acoustic ceiling tie-offs secure and tested before hanging grid'
+    ],
     framing: [
-      'Truss bracing installed per engineered drawings', 
-      'Pneumatic nailers disconnected when clearing jams', 
-      'Leading edge fall protection in place'
+      'Temporary truss bracing installed per engineered specs before loading', 
+      'Fall arrest harnesses worn for all work over 10ft (or guardrails in place)', 
+      'Power saws have functioning return-guards (none pinned back)',
+      'Pneumatic nailers disconnected when clearing jams or walking',
+      'Lumber stacks level, stable, and clear of public walkways',
+      'Workers wearing appropriate eye and hearing protection during cuts'
     ],
     electrical: [
-      'GFCI functioning on temporary power panels', 
-      'Lockout/Tagout applied to live circuits', 
-      'No aluminum ladders in use near live panels'
+      'GFCI protection tested and active on all temp power panels/spiders', 
+      'Live circuits Locked-Out/Tagged-Out (LOTO) with physical locks and tags', 
+      'Non-conductive (fiberglass) ladders only for electrical work (no aluminum)',
+      'Panels have dead-fronts installed (no exposed live busbars)',
+      'Temporary power cables flown above head height (not in puddles)',
+      'No daisy-chaining of extension cords across the site'
     ],
-    plumbing: [
-      'Trench shoring installed (excavations >4ft)', 
-      'Gas cylinders stored upright and chained', 
-      'Hot work permit active for brazing'
-    ],
-    interiors: [
-      'Baker scaffold locking pins fully engaged', 
-      'Acoustic lathing tie-offs secure and tested', 
-      'Insulation fiber control / N95 respirators worn',
-      'Stilts used only on swept, flat floors'
+    mechanical: [
+      'Hot Work Permit active and posted at brazing/welding station', 
+      'Dedicated fire watch assigned for 60 mins post-work',
+      'Gas cylinders stored upright, capped, chained, and separated (O2/Acetylene)', 
+      'Trench shoring/sloping verified for exterior excavations >4ft deep',
+      'Confined space entry permits signed, air tested, and rescue plan on-site',
+      'Welding screens in place to protect nearby workers from flash'
     ],
     roofing: [
-      'Anchors verified for 5000lb capacity', 
-      'Lanyards protected from sharp edges', 
-      'Materials secured from wind drift'
+      'Roof anchors verified for 5000lb capacity before tie-off', 
+      'Lanyards protected from sharp edge friction/cutting', 
+      'Materials secured from wind drift (especially insulation board)',
+      'Hoisting area cordoned off with danger tape on the ground level',
+      'Propane kettles (if applicable) equipped with fully charged extinguisher',
+      'Workers wearing high-traction footwear'
     ],
     concrete: [
-      'Rebar caps installed to prevent impalement', 
-      'Pump truck outriggers fully extended on pads', 
-      'Silica dust wet-cut methods actively used'
+      'Rebar caps (steel reinforced) installed to prevent impalement', 
+      'Pump truck outriggers fully extended on proper dunnage pads', 
+      'Silica dust wet-cut methods actively used for all cutting/grinding',
+      'Formwork bracing verified by competent person before pour',
+      'Concrete wash-out station utilized (no dumping in drains/soil)',
+      'Workers wearing long sleeves and eye protection during pour'
     ]
   }
 };
@@ -85,25 +104,21 @@ export default function SafetyHub() {
   const [stats, setStats] = useState({ walks: 0, incidents: 0 })
   const [loading, setLoading] = useState(true)
   
-  // Search & Filter State
   const [searchTerm, setSearchTerm] = useState('')
   const [searchQueryTrades, setSearchQueryTrades] = useState('')
-  
-  // Trade Compliance & Export State
   const [selectedTradeId, setSelectedTradeId] = useState('')
   const [exporting, setExporting] = useState(false)
 
-  // Walk Modal State
-  const [selectedWalk, setSelectedWalk] = useState<any>(null)
+  // Walk Modal & Photo State
   const [showNewWalkModal, setShowNewWalkModal] = useState(false)
-  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false)
+  const [walkPhotos, setWalkPhotos] = useState<File[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
-
-  // Smart Prompts & Form State
   const [activeWalkType, setActiveWalkType] = useState('General Site Walk')
   const [activeTradeId, setActiveTradeId] = useState('')
   const [notes, setNotes] = useState('')
   const [signatureData, setSignatureData] = useState<string | null>(null)
+  const [selectedWalk, setSelectedWalk] = useState<any>(null)
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false)
 
   const fetchData = async () => {
     if (!id) return
@@ -115,17 +130,8 @@ export default function SafetyHub() {
         supabase.from('project_contacts').select('*').eq('project_id', id).order('company'),
         supabase.from('incidents').select('id').eq('project_id', id)
       ])
-      
-      if (p.error) throw p.error
-      if (w.error) throw w.error
-      
-      setProject(p.data)
-      setWalks(w.data || [])
-      setContacts(c.data || [])
-      setStats({
-        walks: w.data?.length || 0,
-        incidents: inc.data?.length || 0
-      })
+      setProject(p.data); setWalks(w.data || []); setContacts(c.data || []);
+      setStats({ walks: w.data?.length || 0, incidents: inc.data?.length || 0 })
     } catch (err) {
       console.error("Data fetch error:", err)
     } finally {
@@ -135,32 +141,10 @@ export default function SafetyHub() {
 
   useEffect(() => { fetchData() }, [id])
 
-  // --- THE ONE-BUTTON EXPORT ENGINE ---
-  const handleExportSafetyPackage = async () => {
-    const trade = contacts.find(t => t.id === selectedTradeId)
-    if (!trade) return alert("Please select a trade partner first.")
-    
-    setExporting(true)
-    
-    const docs = [
-      { name: 'WSIB', url: trade.wsib_url },
-      { name: 'Insurance', url: trade.insurance_url },
-      { name: 'Form 1000', url: trade.form_1000_url },
-      { name: 'Safety Cards', url: trade.safety_cards_url }
-    ].filter(d => d.url)
-
-    if (docs.length === 0) {
-      alert("No compliance documents found for this trade.")
-      setExporting(false)
-      return
-    }
-
-    docs.forEach(doc => {
-      window.open(doc.url, '_blank')
-    })
-
-    setExporting(false)
-  }
+  // --- SMART PROMPTS & FILTER LOGIC ---
+  const filteredTrades = contacts.filter((t: any) => 
+    t.company?.toLowerCase().includes(searchQueryTrades.toLowerCase())
+  )
 
   const filteredWalks = walks.filter(walk => {
     const searchLower = searchTerm.toLowerCase()
@@ -170,10 +154,6 @@ export default function SafetyHub() {
       (walk.inspector_name || '').toLowerCase().includes(searchLower)
     )
   })
-
-  const filteredTrades = contacts.filter(t => 
-    t.company?.toLowerCase().includes(searchQueryTrades.toLowerCase())
-  )
 
   const getSuggestions = () => {
     let suggestions: string[] = [];
@@ -186,13 +166,13 @@ export default function SafetyHub() {
          const role = trade.trade_role.toLowerCase();
          if (role.includes('frame') || role.includes('carpenter')) suggestions.push(...SAFETY_PROMPTS.trades.framing);
          else if (role.includes('electric')) suggestions.push(...SAFETY_PROMPTS.trades.electrical);
-         else if (role.includes('plumb') || role.includes('hvac') || role.includes('mechanical')) suggestions.push(...SAFETY_PROMPTS.trades.plumbing);
-         else if (role.includes('drywall') || role.includes('acoustic') || role.includes('insulation') || role.includes('tape')) suggestions.push(...SAFETY_PROMPTS.trades.interiors);
+         else if (role.includes('plumb') || role.includes('hvac') || role.includes('mechanical')) suggestions.push(...SAFETY_PROMPTS.trades.mechanical);
+         else if (role.includes('drywall') || role.includes('acoustic') || role.includes('insulation') || role.includes('tape') || role.includes('interior')) suggestions.push(...SAFETY_PROMPTS.trades.interiors);
          else if (role.includes('roof')) suggestions.push(...SAFETY_PROMPTS.trades.roofing);
          else if (role.includes('concrete') || role.includes('form')) suggestions.push(...SAFETY_PROMPTS.trades.concrete);
       }
     }
-    return Array.from(new Set(suggestions)).slice(0, 6);
+    return Array.from(new Set(suggestions)).slice(0, 8);
   }
 
   const handleAppendPrompt = (text: string) => {
@@ -202,106 +182,64 @@ export default function SafetyHub() {
     });
   }
 
-  const handleCreateWalk = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setIsSubmitting(true);
+  // --- EXPORT & SAVE LOGIC ---
+  const handleExportSafetyPackage = async () => {
+    const trade = contacts.find(t => t.id === selectedTradeId)
+    if (!trade) return alert("Select a trade first.")
+    setExporting(true)
     
+    const docs = [
+      { name: 'WSIB', url: trade.wsib_url },
+      { name: 'Insurance', url: trade.insurance_url },
+      { name: 'Form 1000', url: trade.form_1000_url },
+      { name: 'Certifications', url: trade.safety_cards_url }
+    ].filter(d => d.url)
+
+    if (docs.length === 0) {
+      alert("No documents found in this trade's safety bucket.")
+    } else {
+      docs.forEach(doc => window.open(doc.url, '_blank'))
+    }
+    setExporting(false)
+  }
+
+  const handleCreateWalk = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsSubmitting(true)
     try {
-      const fd = new FormData(e.currentTarget);
-      const contactId = activeTradeId;
-      const selectedContact = contacts.find(c => c.id === contactId);
-      const companyName = selectedContact ? selectedContact.company : 'Site-Wide';
-      const status = fd.get('status') as string;
-      const inspectorName = fd.get('inspector_name') as string;
-
-      let finalSignatureUrl = null;
-
-      if (signatureData) {
-        const res = await fetch(signatureData);
-        const blob = await res.blob();
-        const filePath = `${id}/signatures/${Date.now()}_sig.png`;
-        
-        const { error: sigError } = await supabase.storage.from('project-files').upload(filePath, blob);
-        if (!sigError) {
-          const { data: publicUrlData } = supabase.storage.from('project-files').getPublicUrl(filePath);
-          finalSignatureUrl = publicUrlData.publicUrl;
+      const photoUrls: string[] = []
+      for (const file of walkPhotos) {
+        const path = `${id}/safety_walks/${Date.now()}-${file.name}`
+        const { error } = await supabase.storage.from('project-files').upload(path, file)
+        if (!error) {
+          const { data } = supabase.storage.from('project-files').getPublicUrl(path)
+          photoUrls.push(data.publicUrl)
         }
       }
 
-      const payload = {
+      let sigUrl = null
+      if (signatureData) {
+        const blob = await (await fetch(signatureData)).blob()
+        const path = `${id}/signatures/sw-${Date.now()}.png`
+        await supabase.storage.from('project-files').upload(path, blob)
+        sigUrl = supabase.storage.from('project-files').getPublicUrl(path).data.publicUrl
+      }
+
+      const trade = contacts.find(c => c.id === activeTradeId)
+      await supabase.from('project_safety_walks').insert([{
         project_id: id,
         walk_type: activeWalkType,
-        trade_company: companyName,
-        inspector_name: inspectorName,
-        status: status,
+        trade_company: trade?.company || 'Site-Wide',
         notes: notes,
-        signature_url: finalSignatureUrl
-      };
+        status: (e.target as any).status.value,
+        inspector_name: (e.target as any).inspector_name.value,
+        signature_url: sigUrl,
+        photo_urls: photoUrls 
+      }])
 
-      const { data: walkData, error: walkError } = await supabase
-        .from('project_safety_walks')
-        .insert([payload])
-        .select()
-        .single();
-
-      if (walkError) throw walkError;
-
-      if (contactId) {
-        const doc = new jsPDF();
-        doc.setFontSize(22);
-        doc.text(`Official Site Safety Report`, 20, 20);
-        doc.setFontSize(12);
-        doc.setTextColor(100);
-        doc.text(`Project: ${project?.name || 'Site'}`, 20, 30);
-        doc.text(`Date: ${new Date().toLocaleDateString()}`, 20, 36);
-        doc.setTextColor(0);
-        doc.text(`Audit Type: ${activeWalkType}`, 20, 50);
-        doc.text(`Sub-Trade Inspected: ${companyName}`, 20, 56);
-        doc.text(`Inspector: ${inspectorName}`, 20, 62);
-        doc.setFontSize(14);
-        doc.setTextColor(status === 'Pass' ? 0 : 200, status === 'Pass' ? 150 : 0, 0);
-        doc.text(`Status: ${status === 'Pass' ? 'Compliant' : 'Action Required'}`, 20, 72);
-        
-        doc.setTextColor(0);
-        doc.setFontSize(12);
-        doc.text(`Findings & Notes:`, 20, 86);
-        doc.setFontSize(10);
-        const splitNotes = doc.splitTextToSize(notes || 'No additional notes provided.', 170);
-        doc.text(splitNotes, 20, 92);
-
-        if (signatureData) {
-          const finalY = 92 + (splitNotes.length * 5) + 20;
-          doc.addImage(signatureData, 'PNG', 20, finalY, 60, 20);
-          doc.setFontSize(10);
-          doc.setTextColor(150);
-          doc.text("Signed & Acknowledged", 20, finalY + 25);
-        }
-
-        const pdfBlob = doc.output('blob');
-        const fileName = `SafetyWalk_${companyName.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
-        const filePath = `${id}/trades/${contactId}/Safety/${fileName}`;
-
-        const { error: uploadError } = await supabase.storage.from('project-files').upload(filePath, pdfBlob);
-        if (!uploadError) {
-          const { data: urlData } = supabase.storage.from('project-files').getPublicUrl(filePath);
-          await supabase.from('project_submittals').insert([{
-            project_id: id, contact_id: contactId, title: `${activeWalkType} Audit`, 
-            category: 'Safety', url: urlData.publicUrl, status: status === 'Pass' ? 'Approved' : 'Action Required'
-          }]);
-        }
-      }
-
-      setShowNewWalkModal(false);
-      setNotes('');
-      setSignatureData(null);
-      fetchData(); 
-
-    } catch (err: any) {
-      console.error("Save failed:", err);
-      alert(`Save failed: ${err.message}`);
-    } finally {
-      setIsSubmitting(false);
-    }
+      setShowNewWalkModal(false); setWalkPhotos([]); setNotes(''); setSignatureData(null); fetchData()
+    } catch (err) { alert("Save failed.") }
+    setIsSubmitting(false)
   }
 
   const handleExportPDF = async () => {
@@ -311,7 +249,6 @@ export default function SafetyHub() {
     setIsGeneratingPDF(true);
     try {
       reportElement.style.padding = '40px';
-      
       const canvas = await html2canvas(reportElement, { 
         scale: 2, 
         useCORS: true, 
@@ -352,7 +289,7 @@ export default function SafetyHub() {
       <div className="mb-10 border-b-4 border-emerald-600 pb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
           <button onClick={() => router.push(`/projects/${id}`)} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-500 mb-4 hover:text-white transition-all">
-            <ChevronLeft size={14} /> Back to War Room
+            <ChevronLeft size={14} /> War Room
           </button>
           <h1 className="text-5xl font-black text-white tracking-tighter uppercase italic leading-none">Safety <span className="text-emerald-500">Hub</span></h1>
           <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-3 flex items-center gap-2">
@@ -361,9 +298,8 @@ export default function SafetyHub() {
         </div>
       </div>
 
+      {/* TOP GRID: STATS & COMPLIANCE */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 mb-12">
-        
-        {/* LEFT: TOOLS & STATS */}
         <div className="lg:col-span-4 space-y-6">
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-slate-900 border border-slate-800 p-6 rounded-[32px] shadow-xl text-center">
@@ -376,15 +312,7 @@ export default function SafetyHub() {
             </div>
           </div>
 
-          <button 
-            onClick={() => {
-              setNotes('');
-              setActiveTradeId('');
-              setSignatureData(null);
-              setShowNewWalkModal(true);
-            }} 
-            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white p-8 rounded-[32px] flex flex-col items-center justify-center gap-2 shadow-2xl transition-all border-b-[8px] border-emerald-800 active:translate-y-1 active:border-b-0"
-          >
+          <button onClick={() => setShowNewWalkModal(true)} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white p-8 rounded-[32px] flex flex-col items-center justify-center gap-2 shadow-2xl transition-all border-b-[8px] border-emerald-800 active:translate-y-1 active:border-b-0">
             <ClipboardCheck size={32} />
             <span className="font-black uppercase italic tracking-tighter text-xl">Start Safety Walk</span>
           </button>
@@ -395,32 +323,28 @@ export default function SafetyHub() {
           </button>
         </div>
 
-        {/* RIGHT: TRADE COMPLIANCE & ONE-BUTTON EXPORT */}
         <div className="lg:col-span-8">
           <div className="bg-slate-900 border border-slate-800 rounded-[40px] p-8 shadow-2xl h-full">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
               <div>
                 <h3 className="text-2xl font-black text-white uppercase italic tracking-tighter">Trade Compliance</h3>
-                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Export safety documentation packages</p>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Export mandatory safety docs</p>
               </div>
               <div className="relative w-full md:w-64">
                 <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" />
                 <input 
-                  type="text" 
-                  placeholder="Search trades..."
-                  className="w-full bg-slate-950 border border-slate-800 p-3 pl-10 rounded-xl text-base md:text-xs font-bold outline-none focus:border-emerald-500"
-                  value={searchQueryTrades}
+                  type="text" placeholder="Search trades..." 
+                  className="w-full bg-slate-950 border border-slate-800 p-3 pl-10 rounded-xl text-base outline-none focus:border-emerald-500"
                   onChange={(e) => setSearchQueryTrades(e.target.value)}
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[350px] overflow-y-auto pr-2 no-scrollbar">
-              {filteredTrades.map(trade => (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[300px] overflow-y-auto pr-2 no-scrollbar">
+              {filteredTrades.map((trade: any) => (
                 <div 
-                  key={trade.id} 
-                  onClick={() => setSelectedTradeId(trade.id)}
-                  className={`p-5 rounded-[28px] border transition-all cursor-pointer group flex flex-col justify-between min-h-[160px] ${selectedTradeId === trade.id ? 'bg-emerald-950/20 border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.1)]' : 'bg-slate-950 border-slate-800 hover:border-slate-600'}`}
+                  key={trade.id} onClick={() => setSelectedTradeId(trade.id)}
+                  className={`p-5 rounded-[28px] border transition-all cursor-pointer group flex flex-col justify-between min-h-[140px] ${selectedTradeId === trade.id ? 'bg-emerald-950/20 border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.1)]' : 'bg-slate-950 border-slate-800 hover:border-slate-600'}`}
                 >
                   <div className="flex justify-between items-start">
                     <div>
@@ -429,44 +353,21 @@ export default function SafetyHub() {
                     </div>
                     {trade.wsib_url && trade.insurance_url ? <CheckCircle2 size={18} className="text-emerald-500" /> : <XCircle size={18} className="text-red-500" />}
                   </div>
-
-                  <div className="flex gap-2 flex-wrap mt-4">
-                    {trade.wsib_url && <div className="px-2 py-1 bg-slate-900 rounded-lg text-[8px] font-black text-slate-400 uppercase tracking-tighter">WSIB</div>}
-                    {trade.insurance_url && <div className="px-2 py-1 bg-slate-900 rounded-lg text-[8px] font-black text-slate-400 uppercase tracking-tighter">INS</div>}
-                    {trade.form_1000_url && <div className="px-2 py-1 bg-slate-900 rounded-lg text-[8px] font-black text-slate-400 uppercase tracking-tighter">F1000</div>}
-                    {trade.safety_cards_url && <div className="px-2 py-1 bg-slate-900 rounded-lg text-[8px] font-black text-slate-400 uppercase tracking-tighter">CARDS</div>}
-                  </div>
                 </div>
               ))}
-              {filteredTrades.length === 0 && <p className="text-xs font-bold text-slate-500 py-4 col-span-2 text-center">No trades found matching search.</p>}
             </div>
 
-            {/* ACTION BAR */}
             <div className={`mt-8 p-6 rounded-3xl border transition-all flex flex-col md:flex-row items-center justify-between gap-6 ${selectedTradeId ? 'bg-emerald-600 border-emerald-500 shadow-2xl' : 'bg-slate-950 border-slate-800 opacity-50 grayscale pointer-events-none'}`}>
               <div className="flex items-center gap-4 text-center md:text-left">
                 <div className="bg-white/20 p-3 rounded-2xl"><ShieldCheck size={24} className="text-white" /></div>
-                <div>
-                  <p className="text-[10px] font-black uppercase text-emerald-200">Package Ready</p>
-                  <p className="text-sm font-black text-white uppercase italic tracking-tight">Export Full Compliance File</p>
-                </div>
+                <p className="text-sm font-black text-white uppercase italic tracking-tight">Export Compliance File</p>
               </div>
-              <button 
-                onClick={handleExportSafetyPackage}
-                disabled={exporting}
-                className="bg-white text-emerald-600 px-8 py-4 rounded-2xl font-black text-[11px] uppercase tracking-widest shadow-xl hover:scale-105 transition-all flex items-center gap-2"
-              >
-                {exporting ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={18} />}
-                Generate Package
+              <button onClick={handleExportSafetyPackage} disabled={exporting} className="bg-white text-emerald-600 px-8 py-4 rounded-2xl font-black text-[11px] uppercase tracking-widest shadow-xl hover:scale-105 transition-all flex items-center gap-2">
+                {exporting ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={18} />} Generate Package
               </button>
             </div>
-            {!selectedTradeId && (
-              <p className="text-center text-[9px] font-black text-slate-600 uppercase tracking-widest mt-4 flex items-center justify-center gap-2 italic">
-                <Info size={12} /> Select a trade partner above to enable one-button export
-              </p>
-            )}
           </div>
         </div>
-
       </div>
 
       {/* DATA TABLE */}
@@ -526,28 +427,28 @@ export default function SafetyHub() {
         </div>
       </div>
 
-      {/* --- NEW WALK MODAL WITH SIGNATURE PAD --- */}
+      {/* --- 📱 NEW WALK MODAL --- */}
       {showNewWalkModal && (
-        <div className="fixed inset-0 bg-slate-950/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md overflow-y-auto">
-          <form onSubmit={handleCreateWalk} className="bg-slate-900 border-2 border-emerald-600 p-8 md:p-10 rounded-[56px] max-w-2xl w-full space-y-6 shadow-2xl my-8">
-            <div className="text-center mb-6">
-              <h2 className="text-3xl font-black text-white uppercase italic">Log Safety Walk</h2>
+        <div className="fixed inset-0 bg-slate-950/95 z-[150] flex items-start justify-center p-4 backdrop-blur-md overflow-y-auto pt-safe">
+          <form onSubmit={handleCreateWalk} className="bg-slate-900 border-2 border-emerald-600 p-6 md:p-10 rounded-[56px] max-w-2xl w-full space-y-6 shadow-2xl mt-12 mb-20">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-3xl font-black text-white uppercase italic">Site Walk</h2>
+              <button type="button" onClick={() => setShowNewWalkModal(false)} className="bg-slate-800 text-slate-400 p-3 rounded-full hover:text-white"><X size={20}/></button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Inspection Type</label>
-                <select name="walk_type" value={activeWalkType} onChange={(e) => setActiveWalkType(e.target.value)} className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-emerald-500 appearance-none text-base md:text-sm">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Type</label>
+                <select name="walk_type" value={activeWalkType} onChange={(e) => setActiveWalkType(e.target.value)} className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-emerald-500 text-base">
                   <option>General Site Walk</option>
                   <option>Fall Protection</option>
-                  <option>Housekeeping</option>
-                  <option>Scaffold Inspection</option>
-                  <option>Hot Work</option>
+                  <option>Housekeeping/MOL</option>
+                  <option>Scaffold/Access</option>
                 </select>
               </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Sub-Trade Inspected</label>
-                <select name="contact_id" value={activeTradeId} onChange={(e) => setActiveTradeId(e.target.value)} className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-emerald-500 appearance-none text-base md:text-sm">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Trade</label>
+                <select name="contact_id" value={activeTradeId} onChange={(e) => setActiveTradeId(e.target.value)} className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-emerald-500 text-base">
                   <option value="">Site-Wide (General)</option>
                   {contacts.map(trade => (<option key={trade.id} value={trade.id}>{trade.company}</option>))}
                 </select>
@@ -556,53 +457,55 @@ export default function SafetyHub() {
 
             {getSuggestions().length > 0 && (
               <div className="bg-slate-950/50 p-4 rounded-3xl border border-slate-800/50">
-                <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest mb-3 flex items-center gap-1.5"><Zap size={12}/> Smart Checks</p>
-                <div className="flex flex-wrap gap-2">
-                  {getSuggestions().map((suggestion, i) => (
-                    <button key={i} type="button" onClick={() => handleAppendPrompt(suggestion)} className="bg-slate-800 hover:bg-emerald-600 hover:text-white text-slate-300 text-[10px] font-bold px-3 py-2 rounded-xl text-left">+ {suggestion}</button>
+                <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest mb-3 flex items-center gap-1.5"><Zap size={12}/> Ontario Compliance Checks</p>
+                <div className="flex flex-col gap-2">
+                  {getSuggestions().map((suggestion: string, i: number) => (
+                    <button key={i} type="button" onClick={() => handleAppendPrompt(suggestion)} className="bg-slate-800 hover:bg-emerald-600 hover:text-white text-slate-300 text-[10px] font-bold px-4 py-3 rounded-xl text-left transition-colors">+ {suggestion}</button>
                   ))}
                 </div>
               </div>
             )}
 
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2 flex justify-between">
-                <span>Findings & Notes</span>
-                {notes.length > 0 && <button type="button" onClick={() => setNotes('')} className="text-slate-600 hover:text-amber-500">Clear</button>}
-              </label>
-              <textarea name="notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="List deficiencies..." rows={4} className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-medium text-white outline-none focus:border-emerald-500 resize-none text-base md:text-sm"></textarea>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2 flex justify-between">Observations</label>
+              <textarea name="notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Type or use smart checks above..." rows={5} className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-medium text-white outline-none focus:border-emerald-500 text-base resize-none"></textarea>
             </div>
 
-            {/* SIGNATURE PAD INTEGRATION */}
-            <div className="space-y-2">
-               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2 flex items-center gap-2">
-                 <PenTool size={12} /> Sign-Off
+            {/* 📸 WALK PHOTO ATTACHMENTS */}
+            <div className="bg-slate-950 p-5 rounded-3xl border border-slate-800">
+               <label className="flex items-center justify-between mb-4">
+                 <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Photo Evidence</span>
+                 <label className="cursor-pointer bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-500 transition-colors">
+                    <Camera size={18} />
+                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => setWalkPhotos([...walkPhotos, ...Array.from(e.target.files!)])} />
+                 </label>
                </label>
-               <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800">
-                  <SignaturePad onChange={(dataUrl) => setSignatureData(dataUrl)} />
+               <div className="flex flex-wrap gap-3">
+                 {walkPhotos.map((file, i) => (
+                   <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden border border-slate-700">
+                      <img src={URL.createObjectURL(file)} className="w-full h-full object-cover" />
+                      <button type="button" onClick={() => setWalkPhotos(walkPhotos.filter((_, idx) => idx !== i))} className="absolute top-1 right-1 bg-red-600 p-1 rounded-md text-white"><X size={10}/></button>
+                   </div>
+                 ))}
                </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Status</label>
-                <select name="status" className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white outline-none focus:border-emerald-500 appearance-none text-base md:text-sm">
-                  <option value="Pass">Pass / Compliant</option>
-                  <option value="Fail">Action Required</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">Inspector</label>
-                <input name="inspector_name" defaultValue="Site Superintendent" required className="w-full p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-slate-300 outline-none focus:border-emerald-500 text-base md:text-sm" />
-              </div>
+            <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800">
+               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2 flex items-center gap-2 mb-2"><PenTool size={12} /> Digital Sign-Off</label>
+               <SignaturePad onChange={(dataUrl) => setSignatureData(dataUrl)} />
             </div>
 
-            <div className="flex gap-4 pt-4">
-              <button type="button" onClick={() => setShowNewWalkModal(false)} className="flex-1 bg-slate-800 text-white py-5 rounded-3xl font-black uppercase text-[10px] tracking-widest">Cancel</button>
-              <button type="submit" disabled={isSubmitting} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-5 rounded-3xl font-black uppercase text-[10px] tracking-widest shadow-xl flex justify-center items-center gap-2 disabled:opacity-50">
-                <Save size={16} /> {isSubmitting ? 'Saving...' : 'Save Report'}
-              </button>
+            <div className="grid grid-cols-2 gap-4">
+               <select name="status" className="p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white text-base">
+                 <option value="Pass">Compliant</option>
+                 <option value="Fail">Action Required</option>
+               </select>
+               <input name="inspector_name" defaultValue="Site Super" className="p-4 bg-slate-950 rounded-2xl border border-slate-800 font-bold text-white text-base" />
             </div>
+
+            <button type="submit" disabled={isSubmitting} className="w-full bg-emerald-600 text-white py-6 rounded-3xl font-black uppercase tracking-widest text-sm shadow-xl flex justify-center items-center gap-2">
+              {isSubmitting ? <Loader2 className="animate-spin" /> : <Save size={18} />} Finalize Safety Walk
+            </button>
           </form>
         </div>
       )}
@@ -660,6 +563,18 @@ export default function SafetyHub() {
                 </div>
               </div>
 
+              {/* PDF RENDER SAVED PHOTOS */}
+              {selectedWalk.photo_urls && selectedWalk.photo_urls.length > 0 && (
+                <div className="mb-10">
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest border-b border-slate-200 pb-2 mb-4">Visual Evidence</h3>
+                  <div className="grid grid-cols-3 gap-4">
+                    {selectedWalk.photo_urls.map((url: string, idx: number) => (
+                      <img key={idx} src={url} crossOrigin="anonymous" className="w-full aspect-square object-cover rounded-xl border border-slate-300" alt="Evidence" />
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="mt-20 pt-8 border-t-2 border-slate-200 flex justify-between items-end">
                 <div className="w-64">
                   {selectedWalk.signature_url && (
@@ -694,7 +609,7 @@ function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) => void
       if (ctx) {
         ctx.lineWidth = 3;
         ctx.lineCap = 'round';
-        ctx.strokeStyle = '#020617'; 
+        ctx.strokeStyle = '#FFFFFF'; 
       }
     }
   }, []);
@@ -733,36 +648,21 @@ function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) => void
     if (canvasRef.current) onChange(canvasRef.current.toDataURL('image/png'));
   };
 
-  const clearCanvas = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-    onChange(null);
-  };
-
   return (
-    <div>
-      <div className="bg-white rounded-xl overflow-hidden border-2 border-slate-200">
-        <canvas
-          ref={canvasRef}
-          width={400}
-          height={150}
-          className="w-full h-[150px] touch-none cursor-crosshair"
-          onMouseDown={startDrawing}
-          onMouseMove={draw}
-          onMouseUp={stopDrawing}
-          onMouseLeave={stopDrawing}
-          onTouchStart={startDrawing}
-          onTouchMove={draw}
-          onTouchEnd={stopDrawing}
-        />
-      </div>
-      <div className="mt-2 flex justify-end">
-        <button type="button" onClick={clearCanvas} className="text-[10px] font-black uppercase text-slate-500 hover:text-amber-500 tracking-widest transition-all">
-          Clear Signature
-        </button>
-      </div>
+    <div className="bg-slate-900 rounded-xl overflow-hidden border border-slate-700">
+      <canvas
+        ref={canvasRef}
+        width={400}
+        height={150}
+        className="w-full h-[120px] touch-none cursor-crosshair"
+        onMouseDown={startDrawing}
+        onMouseMove={draw}
+        onMouseUp={stopDrawing}
+        onMouseLeave={stopDrawing}
+        onTouchStart={startDrawing}
+        onTouchMove={draw}
+        onTouchEnd={stopDrawing}
+      />
     </div>
   );
 }

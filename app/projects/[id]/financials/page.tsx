@@ -12,7 +12,7 @@ import {
   ChevronLeft, Plus, X, ShieldCheck, Wallet, 
   FileStack, ArrowRight, Trash2, Check, Lock, 
   Loader2, ChevronDown, ChevronRight, Users, Printer, FileSpreadsheet,
-  Copy, Save
+  Copy, Save, Unlock, CheckCircle2
 } from 'lucide-react'
 
 export default function FinancialMaster() {
@@ -23,7 +23,8 @@ export default function FinancialMaster() {
   const [project, setProject] = useState<any>(null)
   const [settings, setSettings] = useState<any>(null) 
   
-  // Hierarchy States
+  // Ledger State
+  const [isLocked, setIsLocked] = useState(false) // Master Lock
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
   const [editingCell, setEditingCell] = useState<{ id: string, field: string, value: string } | null>(null)
   const [isAdding, setIsAdding] = useState<{ show: boolean, parentId: string | null }>({ show: false, parentId: null })
@@ -32,6 +33,7 @@ export default function FinancialMaster() {
   // WBS Import States
   const [availableProjects, setAvailableProjects] = useState<any[]>([])
   const [showImportModal, setShowImportModal] = useState(false)
+  const [importMode, setImportMode] = useState<'values' | 'structure'>('values')
   const [importing, setImporting] = useState(false)
 
   const fetchData = async (silent = false) => {
@@ -131,12 +133,15 @@ export default function FinancialMaster() {
   }
 
   const handleDelete = async (rowId: string) => {
+    if(isLocked) return alert("Ledger is currently locked. Unlock to make structural changes.");
     const { error } = await supabase.from('project_cost_codes').delete().eq('id', rowId)
     if (error) alert("Line is locked to an active contract. You cannot delete it."); else fetchData()
   }
 
-  // --- UPDATED WBS IMPORT ENGINE (PRESERVES DOLLARS) ---
+  // --- UPGRADED WBS IMPORT ENGINE ---
   const handleImportWBS = async (sourceProjectId: string) => {
+    if (!confirm(`Are you sure you want to pull WBS codes into this project?\n\nMode: ${importMode === 'values' ? 'Keep Dollar Values' : 'Structure Only (Zero Budgets)'}`)) return;
+
     setImporting(true)
     try {
       const { data: sourceCodes } = await supabase.from('project_cost_codes').select('*').eq('project_id', sourceProjectId)
@@ -153,8 +158,8 @@ export default function FinancialMaster() {
         project_id: id,
         code: p.code,
         name: p.name,
-        original_budget: p.original_budget || 0,
-        manual_commitment: p.manual_commitment || 0
+        original_budget: importMode === 'values' ? (p.original_budget || 0) : 0,
+        manual_commitment: importMode === 'values' ? (p.manual_commitment || 0) : 0
       }))
 
       const { data: insertedParents, error: pErr } = await supabase.from('project_cost_codes').insert(parentPayload).select()
@@ -172,11 +177,14 @@ export default function FinancialMaster() {
           parent_id: parentMap[c.parent_id],
           code: c.code,
           name: c.name,
-          original_budget: c.original_budget || 0,
-          manual_commitment: c.manual_commitment || 0
+          original_budget: importMode === 'values' ? (c.original_budget || 0) : 0,
+          manual_commitment: importMode === 'values' ? (c.manual_commitment || 0) : 0
         }))
         await supabase.from('project_cost_codes').insert(childPayload)
       }
+
+      // If we imported with values, automatically lock the ledger to preserve the baseline
+      if (importMode === 'values') setIsLocked(true);
 
       setShowImportModal(false)
       fetchData()
@@ -379,7 +387,23 @@ export default function FinancialMaster() {
                  <h3 className="text-lg font-black text-white uppercase italic tracking-tighter">Import WBS</h3>
                  <button onClick={() => setShowImportModal(false)} className="bg-slate-950 p-2 rounded-lg text-slate-500 hover:text-white"><X size={16} /></button>
               </div>
-              <p className="text-xs font-bold text-slate-400 mb-6">Select a past project to clone its Cost Code structure, including all base budgets and manual commitments.</p>
+              
+              {/* Import Mode Toggle */}
+              <div className="flex bg-slate-950 p-1 rounded-xl mb-6 border border-slate-800">
+                 <button 
+                   onClick={() => setImportMode('values')} 
+                   className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors ${importMode === 'values' ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:text-white'}`}
+                 >
+                   Full Copy (Values)
+                 </button>
+                 <button 
+                   onClick={() => setImportMode('structure')} 
+                   className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors ${importMode === 'structure' ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:text-white'}`}
+                 >
+                   Structure Only ($0)
+                 </button>
+              </div>
+
               <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
                  {availableProjects.map(proj => (
                     <button key={proj.id} onClick={() => handleImportWBS(proj.id)} disabled={importing} className="w-full text-left p-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500 transition-colors group flex justify-between items-center">
@@ -419,12 +443,23 @@ export default function FinancialMaster() {
       
       <div className="space-y-8 w-full print:space-y-6">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 print:hidden">
-          <h2 className="text-3xl font-black uppercase italic tracking-tighter print:text-black">WBS <span className="text-emerald-500 print:text-emerald-600">Ledger</span></h2>
+          <div className="flex items-center gap-4">
+             <h2 className="text-3xl font-black uppercase italic tracking-tighter print:text-black">WBS <span className="text-emerald-500 print:text-emerald-600">Ledger</span></h2>
+             
+             {/* MASTER LOCK TOGGLE */}
+             <button 
+               onClick={() => setIsLocked(!isLocked)}
+               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${isLocked ? 'bg-red-950/40 text-red-500 border border-red-900/50' : 'bg-emerald-950/40 text-emerald-500 border border-emerald-900/50'}`}
+             >
+               {isLocked ? <><Lock size={12}/> Locked Rev.1</> : <><Unlock size={12}/> Editing</>}
+             </button>
+          </div>
+
           <div className="flex gap-3">
-            <button onClick={() => setShowImportModal(true)} className="bg-slate-900 hover:bg-slate-800 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-slate-700 flex items-center gap-2 transition-all shadow-lg">
+            <button onClick={() => setShowImportModal(true)} disabled={isLocked} className="bg-slate-900 hover:bg-slate-800 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-slate-700 flex items-center gap-2 transition-all shadow-lg disabled:opacity-30 disabled:pointer-events-none">
               <Copy size={14}/> Import WBS
             </button>
-            <button onClick={() => setIsAdding({ show: true, parentId: null })} className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all shadow-lg">
+            <button onClick={() => setIsAdding({ show: true, parentId: null })} disabled={isLocked} className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all shadow-lg disabled:opacity-30 disabled:pointer-events-none">
               <Plus size={14}/> New Category
             </button>
           </div>
@@ -455,7 +490,7 @@ export default function FinancialMaster() {
               </thead>
               <tbody className="divide-y divide-slate-800/50 print:divide-slate-200 font-bold">
                 
-                {isAdding.show && (
+                {isAdding.show && !isLocked && (
                   <tr className="bg-emerald-950/20 border-b border-emerald-900/50 print:hidden">
                     <td className="p-4">
                       <input autoFocus placeholder="Code" className="w-full bg-slate-950 border border-emerald-500 p-3 rounded-xl text-white font-black outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all text-xs" value={newRow.code} onChange={e => setNewRow({...newRow, code: e.target.value})} />
@@ -492,19 +527,19 @@ export default function FinancialMaster() {
                             </button>
                           )}
                           <div className={`${row.depth > 0 ? 'ml-6 print:ml-4' : ''}`}>
-                            {editingCell?.id === row.id && editingCell?.field === 'code' ? (
+                            {editingCell?.id === row.id && editingCell?.field === 'code' && !isLocked ? (
                               <input autoFocus className="bg-slate-950 border border-blue-500 p-1.5 rounded text-blue-400 text-xs font-black outline-none w-24 print:hidden" value={editingCell?.value || ''} onChange={e => setEditingCell(prev => prev ? { ...prev, value: e.target.value } : null)} onBlur={() => handleSaveCell(row.id)} />
                             ) : (
-                              <span className={`cursor-pointer text-xs uppercase ${row.depth === 0 ? 'text-blue-400 print:text-slate-900 font-black' : 'text-blue-400 print:text-slate-600'}`} onClick={() => setEditingCell({ id: row.id, field: 'code', value: row.code })}>{row.code}</span>
+                              <span className={`cursor-pointer text-xs uppercase ${row.depth === 0 ? 'text-blue-400 print:text-slate-900 font-black' : 'text-blue-400 print:text-slate-600'}`} onClick={() => !isLocked && setEditingCell({ id: row.id, field: 'code', value: row.code })}>{row.code}</span>
                             )}
                           </div>
                         </div>
                       </td>
                       <td className="p-6 print:p-4">
-                        {editingCell?.id === row.id && editingCell?.field === 'name' ? (
+                        {editingCell?.id === row.id && editingCell?.field === 'name' && !isLocked ? (
                           <input autoFocus className="bg-slate-950 border border-slate-500 p-1.5 rounded text-white text-xs outline-none w-full print:hidden" value={editingCell?.value || ''} onChange={e => setEditingCell(prev => prev ? { ...prev, value: e.target.value } : null)} onBlur={() => handleSaveCell(row.id)} />
                         ) : (
-                          <span className={`cursor-pointer uppercase text-xs ${row.depth === 0 ? 'text-white font-black print:text-black' : 'text-slate-400 print:text-slate-700'}`} onClick={() => setEditingCell({ id: row.id, field: 'name', value: row.name })}>{row.name}</span>
+                          <span className={`cursor-pointer uppercase text-xs ${row.depth === 0 ? 'text-white font-black print:text-black' : 'text-slate-400 print:text-slate-700'}`} onClick={() => !isLocked && setEditingCell({ id: row.id, field: 'name', value: row.name })}>{row.name}</span>
                         )}
                       </td>
                       <td className="p-6 print:p-4 text-slate-500 print:text-slate-600 text-[10px] uppercase truncate max-w-[120px]">{row.trade}</td>
@@ -512,18 +547,18 @@ export default function FinancialMaster() {
                       <td className="p-6 print:p-4 text-right">
                         {row.display_committed > 0 && row.display_original === 0 ? (
                            <div className="flex items-center justify-end gap-2 text-slate-500 print:text-slate-800 text-xs font-bold"><Lock size={10} className="text-emerald-500 print:hidden" /> {formatMoney(row.display_original)}</div>
-                        ) : editingCell?.id === row.id && editingCell?.field === 'original_budget' ? (
+                        ) : editingCell?.id === row.id && editingCell?.field === 'original_budget' && !isLocked ? (
                           <input type="number" autoFocus className="bg-slate-950 border border-emerald-500 p-1.5 rounded text-right text-emerald-400 text-xs outline-none w-24 print:hidden" value={editingCell?.value || ''} onChange={e => setEditingCell(prev => prev ? { ...prev, value: e.target.value } : null)} onBlur={() => handleSaveCell(row.id)} />
                         ) : (
-                          <span className="cursor-pointer text-slate-400 print:text-slate-800 text-xs hover:text-white transition-colors" onClick={() => setEditingCell({ id: row.id, field: 'original_budget', value: row.original.toString() })}>{formatMoney(row.display_original)}</span>
+                          <span className={`cursor-pointer text-xs transition-colors ${isLocked ? 'text-slate-500' : 'text-slate-400 print:text-slate-800 hover:text-white'}`} onClick={() => !isLocked && setEditingCell({ id: row.id, field: 'original_budget', value: row.original.toString() })}>{formatMoney(row.display_original)}</span>
                         )}
                       </td>
                       
                       <td className="p-6 print:p-4 text-right border-l border-slate-800/50 print:border-slate-300">
-                        {editingCell?.id === row.id && editingCell?.field === 'manual_commitment' ? (
+                        {editingCell?.id === row.id && editingCell?.field === 'manual_commitment' && !isLocked ? (
                           <input type="number" autoFocus placeholder="Direct Cost" className="bg-slate-950 border border-blue-500 p-1.5 rounded text-right text-slate-300 text-xs font-bold outline-none w-24 print:hidden" value={editingCell?.value || ''} onChange={e => setEditingCell(prev => prev ? { ...prev, value: e.target.value } : null)} onBlur={() => handleSaveCell(row.id)} />
                         ) : (
-                          <div className="flex flex-col items-end cursor-pointer group" onClick={() => setEditingCell({ id: row.id, field: 'manual_commitment', value: row.manual_commitment?.toString() || '0' })}>
+                          <div className={`flex flex-col items-end cursor-pointer group ${isLocked ? 'pointer-events-none' : ''}`} onClick={() => !isLocked && setEditingCell({ id: row.id, field: 'manual_commitment', value: row.manual_commitment?.toString() || '0' })}>
                             <span className="text-slate-300 print:text-slate-900 text-xs font-bold group-hover:text-blue-400 transition-colors">{formatMoney(row.display_committed)}</span>
                           </div>
                         )}
@@ -534,8 +569,8 @@ export default function FinancialMaster() {
                       <td className={`p-6 print:p-4 text-right text-xs font-black border-l border-slate-800/50 print:border-slate-300 ${row.isOverBudget ? 'text-red-500 print:text-red-700' : 'text-emerald-500 print:text-emerald-700'}`}>{formatMoney(Math.abs(row.variance))}</td>
                       
                       <td className="p-6 text-right w-24 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity print:hidden">
-                        {row.depth === 0 && <button onClick={() => setIsAdding({ show: true, parentId: row.id })} className="text-blue-500 hover:text-blue-400 mr-4" title="Add Sub-item"><Plus size={16} /></button>}
-                        <button onClick={() => handleDelete(row.id)} className="text-slate-600 hover:text-red-500"><Trash2 size={16} /></button>
+                        {row.depth === 0 && <button onClick={() => setIsAdding({ show: true, parentId: row.id })} disabled={isLocked} className="text-blue-500 hover:text-blue-400 mr-4 disabled:opacity-30"><Plus size={16} /></button>}
+                        <button onClick={() => handleDelete(row.id)} disabled={isLocked} className="text-slate-600 hover:text-red-500 disabled:opacity-30"><Trash2 size={16} /></button>
                       </td>
                     </tr>
                   )
