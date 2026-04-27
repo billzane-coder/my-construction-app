@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import { 
   ChevronLeft, Plus, Save, Loader2, GripVertical, 
-  CalendarDays, HardHat, AlertTriangle, Link as LinkIcon, Edit2, Trash2, Printer, ChevronDown, ChevronRight, Layers
+  CalendarDays, HardHat, AlertTriangle, Link as LinkIcon, Edit2, Trash2, Printer, ChevronDown, ChevronRight, Layers, Check
 } from 'lucide-react'
 
 const parseDate = (d: string) => new Date(d + 'T00:00:00')
@@ -29,8 +29,8 @@ export default function ScheduleMaster() {
   const [tasks, setTasks] = useState<any[]>([])
   const [trades, setTrades] = useState<any[]>([])
   
-  // --- NEW: GLOBAL OVERLAY STATE ---
-  const [overlayMode, setOverlayMode] = useState(false)
+  // --- UPGRADED: SPECIFIC OVERLAY SELECTION ---
+  const [overlayProjects, setOverlayProjects] = useState<string[]>([])
   const [overlayTasks, setOverlayTasks] = useState<any[]>([])
   const [otherProjects, setOtherProjects] = useState<any[]>([])
   
@@ -58,11 +58,10 @@ export default function ScheduleMaster() {
     async function fetchData() {
       if (!id) return
       
-      // 1. Fetch current project data
       const [tData, trData, projectsData] = await Promise.all([
         supabase.from('project_schedule').select('*, project_contacts(company)').eq('project_id', id).order('sort_order', { ascending: true }),
         supabase.from('project_contacts').select('id, company').eq('project_id', id),
-        supabase.from('projects').select('id, name, status').neq('status', 'Closed') // Fetch active projects for overlay
+        supabase.from('projects').select('id, name, status').neq('status', 'Closed')
       ])
       
       if (tData.data) {
@@ -79,7 +78,6 @@ export default function ScheduleMaster() {
         const otherProjs = projectsData.data.filter(p => p.id !== id)
         setOtherProjects(otherProjs)
         
-        // Fetch tasks for other projects to power the overlay mode
         if (otherProjs.length > 0) {
           const otherIds = otherProjs.map(p => p.id)
           const { data: overlayData } = await supabase
@@ -95,6 +93,12 @@ export default function ScheduleMaster() {
     }
     fetchData()
   }, [id])
+
+  const toggleOverlayProject = (projectId: string) => {
+    setOverlayProjects(prev => 
+      prev.includes(projectId) ? prev.filter(pid => pid !== projectId) : [...prev, projectId]
+    )
+  }
 
   // --- ENGINE ---
   const { processedTasks, projectEndDate, criticalPathIds, groupedTasks, globalGroupedTasks } = useMemo(() => {
@@ -125,7 +129,6 @@ export default function ScheduleMaster() {
 
     pTasks.filter(t => endMap[t.id] === maxEnd).forEach(t => findCriticalChain(t.id))
 
-    // Local Grouping
     const grouped = pTasks.reduce((acc, task) => {
       const cat = task.category || 'Pre-con'
       if (!acc[cat]) acc[cat] = []
@@ -133,10 +136,11 @@ export default function ScheduleMaster() {
       return acc
     }, {} as Record<string, any[]>)
 
-    // Global Grouping (For Overlay Mode)
+    // Apply Specific Overlays
     let globalGrouped = { ...grouped }
-    if (overlayMode) {
-      overlayTasks.forEach(task => {
+    if (overlayProjects.length > 0) {
+      const activeOverlayTasks = overlayTasks.filter(t => overlayProjects.includes(t.project_id))
+      activeOverlayTasks.forEach(task => {
         const cat = task.category || 'Pre-con'
         if (!globalGrouped[cat]) globalGrouped[cat] = []
         globalGrouped[cat].push({ ...task, isOverlay: true })
@@ -144,7 +148,7 @@ export default function ScheduleMaster() {
     }
 
     return { processedTasks: pTasks, projectEndDate: maxEnd, criticalPathIds: cPath, groupedTasks: grouped, globalGroupedTasks: globalGrouped }
-  }, [tasks, overlayTasks, overlayMode])
+  }, [tasks, overlayTasks, overlayProjects])
 
   // --- HORIZONTAL DRAG LOGIC ---
   const handleHPointerDown = (e: React.PointerEvent, taskId: string, start_date: string, type: 'move' | 'extendEnd', duration: number) => {
@@ -245,16 +249,13 @@ export default function ScheduleMaster() {
 
     const dragType = e.dataTransfer.getData('dragType') || (reorderingCategory ? 'category' : 'task')
 
-    // 1. Handle Dropping an Entire Category
     if (dragType === 'category' && reorderingCategory) {
       if (reorderingCategory === targetCategory) return
 
       setTasks(prev => {
         let newTasks = [...prev]
-        
         const draggedCats = newTasks.filter(t => t.category === reorderingCategory)
         newTasks = newTasks.filter(t => t.category !== reorderingCategory)
-
         const targetIndex = newTasks.findIndex(t => t.category === targetCategory)
 
         if (targetIndex !== -1) {
@@ -271,7 +272,6 @@ export default function ScheduleMaster() {
       return
     }
 
-    // 2. Handle Dropping a Single Task
     if (dragType === 'task' && reorderingId && reorderingId !== targetTaskId) {
       setTasks(prev => {
         let newTasks = [...prev]
@@ -355,7 +355,6 @@ export default function ScheduleMaster() {
     })
   }
 
-  // --- UPGRADED PDF EXPORT ENGINE (html-to-image + jsPDF) ---
   const handlePrint = async () => {
     const element = document.getElementById('gantt-canvas')
     if (!element) return
@@ -387,7 +386,6 @@ export default function ScheduleMaster() {
     setSaving(false)
   }
 
-  // --- GRID GENERATION ---
   const gridDays = Array.from({ length: 120 }).map((_, i) => {
     const d = new Date(gridStartDate.getTime() + (i * DAY_MS))
     return { date: d, isWeekend: d.getDay() === 0 || d.getDay() === 6, month: d.toLocaleString('en-US', { month: 'long', year: 'numeric' }) }
@@ -405,8 +403,7 @@ export default function ScheduleMaster() {
 
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Rendering Timeline...</div>
 
-  // We use the globalGroupedTasks to render the rows if overlay is active
-  const activeTaskMap = overlayMode ? globalGroupedTasks : groupedTasks;
+  const activeTaskMap = overlayProjects.length > 0 ? globalGroupedTasks : groupedTasks;
 
   return (
     <div className="max-w-[1800px] mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
@@ -424,15 +421,6 @@ export default function ScheduleMaster() {
         </div>
         <div className="flex flex-wrap gap-3">
           
-          {/* --- GLOBAL OVERLAY TOGGLE --- */}
-          {otherProjects.length > 0 && (
-            <label className={`cursor-pointer flex items-center gap-2 text-[10px] font-black px-6 py-4 rounded-2xl uppercase transition-all shadow-xl border ${overlayMode ? 'bg-indigo-600/20 text-indigo-400 border-indigo-500' : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-700'}`}>
-              <Layers size={14} />
-              <input type="checkbox" className="hidden" checked={overlayMode} onChange={(e) => setOverlayMode(e.target.checked)} />
-              Overlay All Projects
-            </label>
-          )}
-
           <button onClick={handlePrint} disabled={saving} className="bg-slate-800 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all flex items-center gap-2 shadow-xl">
             {saving ? <Loader2 size={14} className="animate-spin"/> : <Printer size={14}/>} Export
           </button>
@@ -445,26 +433,34 @@ export default function ScheduleMaster() {
         </div>
       </div>
 
-      {/* OVERLAY LEGEND */}
-      {overlayMode && (
-        <div className="mb-4 bg-indigo-950/30 border border-indigo-900/50 p-4 rounded-2xl flex items-center gap-4 animate-in slide-in-from-top-4 duration-300">
-          <Layers size={16} className="text-indigo-400" />
-          <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">
-            Viewing global multi-project timeline. Transparent bars represent tasks from other sites. 
-          </p>
+      {/* --- SPECIFIC PROJECT OVERLAY SELECTOR --- */}
+      {otherProjects.length > 0 && (
+        <div className="mb-6 flex flex-wrap items-center gap-2 bg-slate-900 border border-slate-800 p-2 rounded-2xl shadow-xl">
+          <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2 pr-4 flex items-center gap-1">
+            <Layers size={12}/> Compare Overlay:
+          </span>
+          {otherProjects.map(p => {
+            const isActive = overlayProjects.includes(p.id);
+            return (
+              <button 
+                key={p.id}
+                onClick={() => toggleOverlayProject(p.id)}
+                className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border flex items-center gap-2 ${isActive ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-700'}`}
+              >
+                {isActive && <Check size={10} />}
+                {p.name}
+              </button>
+            )
+          })}
         </div>
       )}
 
       {/* PC GANTT CANVAS */}
       <div className="bg-slate-900 rounded-[32px] border border-slate-800 shadow-2xl overflow-hidden relative z-0">
-        
         <div className="overflow-auto custom-scrollbar max-h-[75vh] relative" ref={containerRef}>
-          {/* 🎯 TARGET CANVAS FOR PDF EXPORT */}
           <div id="gantt-canvas" className="w-max min-w-full bg-slate-900">
 
-            {/* STICKY HEADER ROW */}
             <div className="flex sticky top-0 z-40 bg-slate-900 border-b border-slate-800 shadow-sm">
-              {/* RESPONSIVE LEFT COLUMN */}
               <div className="w-40 md:w-[320px] shrink-0 sticky left-0 z-50 bg-slate-900 p-4 border-r border-slate-800 flex flex-col justify-end font-black text-[9px] md:text-[10px] text-slate-500 uppercase tracking-widest">Trade / Task</div>
               <div className="w-[80px] shrink-0 p-4 border-r border-slate-800 flex flex-col justify-end items-center font-black text-[10px] text-slate-500 uppercase tracking-widest">Start</div>
               <div className="w-[80px] shrink-0 p-4 border-r border-slate-800 flex flex-col justify-end items-center font-black text-[10px] text-slate-500 uppercase tracking-widest">End</div>
@@ -486,7 +482,6 @@ export default function ScheduleMaster() {
               </div>
             </div>
 
-            {/* CATEGORY & TASK ROWS */}
             {Object.keys(activeTaskMap).length === 0 && (
                <div className="p-12 text-center text-[10px] font-black uppercase tracking-widest text-slate-600">No tasks scheduled yet.</div>
             )}
@@ -500,33 +495,19 @@ export default function ScheduleMaster() {
                   key={category} 
                   className={`group ${isDraggedCategory ? 'opacity-50' : ''}`}
                   onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    handleDrop(e, category);
-                  }}
+                  onDrop={(e) => { e.preventDefault(); handleDrop(e, category); }}
                 >
-                  {/* CATEGORY HEADER */}
-                  <div 
-                    draggable
-                    onDragStart={(e) => handleDragStartCategory(e, category)}
-                    className="flex bg-slate-950/50 border-b border-slate-800/50 sticky left-0 z-30"
-                  >
-                    {/* RESPONSIVE LEFT COLUMN */}
+                  <div draggable onDragStart={(e) => handleDragStartCategory(e, category)} className="flex bg-slate-950/50 border-b border-slate-800/50 sticky left-0 z-30">
                     <div className="w-40 md:w-[320px] shrink-0 sticky left-0 z-30 bg-slate-950/80 flex items-stretch border-r border-slate-800">
-                      {/* Category Drag Handle (Hidden on Mobile) */}
                       <div className="hidden md:flex w-8 items-center justify-center cursor-grab active:cursor-grabbing hover:bg-slate-900 text-slate-600 hover:text-white border-r border-slate-800/50">
                         <GripVertical size={14} />
                       </div>
-                      <button 
-                        onClick={() => toggleCategory(category)}
-                        className="flex-1 p-2 md:p-3 flex items-center gap-1 md:gap-2 hover:bg-slate-900 transition-colors text-left overflow-hidden"
-                      >
+                      <button onClick={() => toggleCategory(category)} className="flex-1 p-2 md:p-3 flex items-center gap-1 md:gap-2 hover:bg-slate-900 transition-colors text-left overflow-hidden">
                         {isCollapsed ? <ChevronRight size={14} className="text-slate-500 shrink-0" /> : <ChevronDown size={14} className="text-slate-500 shrink-0" />}
                         <span className="text-[10px] md:text-xs font-black text-white uppercase tracking-widest truncate">{category}</span>
                         <span className="text-[9px] font-bold text-slate-500 ml-auto bg-slate-900 px-2 py-0.5 rounded hidden sm:inline-block">{catTasks.length}</span>
                       </button>
                     </div>
-                    {/* Empty Grid Fill */}
                     <div className="flex-1 flex bg-slate-950/50 pointer-events-none">
                       <div className="w-[80px] shrink-0 border-r border-slate-800" />
                       <div className="w-[80px] shrink-0 border-r border-slate-800" />
@@ -534,7 +515,6 @@ export default function ScheduleMaster() {
                     </div>
                   </div>
 
-                  {/* TASKS IN THIS CATEGORY */}
                   {!isCollapsed && catTasks.map((t: any) => {
                     const startMs = parseDate(t.start_date).getTime()
                     const endMs = startMs + (t.duration_days * DAY_MS)
@@ -544,33 +524,21 @@ export default function ScheduleMaster() {
 
                     return (
                       <div 
-                        key={t.id} 
+                        key={`${t.id}-${t.isOverlay ? 'overlay' : 'base'}`} 
                         className={`flex border-b border-slate-800/50 hover:bg-slate-800/20 transition-colors relative h-16 task-row ${isDraggedTask ? 'opacity-50' : ''} ${t.isOverlay ? 'opacity-60 bg-slate-950/50' : ''}`}
                         onDragOver={(e) => e.preventDefault()}
-                        onDrop={(e) => {
-                          e.preventDefault()
-                          handleDrop(e, category, t.id)
-                        }}
+                        onDrop={(e) => { e.preventDefault(); handleDrop(e, category, t.id) }}
                       >
                         
-                        {/* Locked Data Columns */}
                         <div className="w-40 md:w-[320px] shrink-0 sticky left-0 z-20 bg-slate-950 border-r border-slate-800 flex items-stretch">
-                          {/* Task Vertical Drag Handle (Hidden on mobile or overlay) */}
                           {!t.isOverlay && (
-                            <div 
-                              draggable
-                              onDragStart={(e) => handleDragStartTask(e, t.id)}
-                              className="hidden md:flex w-8 items-center justify-center border-r border-slate-800/50 cursor-grab active:cursor-grabbing hover:bg-slate-800 text-slate-600 hover:text-white"
-                            >
+                            <div draggable onDragStart={(e) => handleDragStartTask(e, t.id)} className="hidden md:flex w-8 items-center justify-center border-r border-slate-800/50 cursor-grab active:cursor-grabbing hover:bg-slate-800 text-slate-600 hover:text-white">
                               <GripVertical size={14} />
                             </div>
                           )}
                           {t.isOverlay && <div className="hidden md:block w-8 border-r border-slate-800/50 bg-slate-950/30" />}
                           
-                          <button 
-                            onClick={() => !t.isOverlay && setEditingTask(t)}
-                            className={`flex-1 p-2 md:p-3 flex flex-col justify-center text-left transition-colors overflow-hidden ${t.isOverlay ? 'cursor-default pointer-events-none' : 'hover:bg-slate-900'}`}
-                          >
+                          <button onClick={() => !t.isOverlay && setEditingTask(t)} className={`flex-1 p-2 md:p-3 flex flex-col justify-center text-left transition-colors overflow-hidden ${t.isOverlay ? 'cursor-default pointer-events-none' : 'hover:bg-slate-900'}`}>
                             <div className="flex justify-between items-center w-full">
                               <p className={`text-[10px] md:text-xs font-bold truncate transition-colors pr-2 ${t.isOverlay ? 'text-indigo-300' : 'text-white'}`}>{t.task_name}</p>
                               {!t.isOverlay && <Edit2 size={12} className="text-slate-600 shrink-0 hover:text-white hidden sm:block" />}
@@ -584,29 +552,22 @@ export default function ScheduleMaster() {
                         </div>
                         
                         <div className="w-[80px] shrink-0 p-4 border-r border-slate-800 flex items-center justify-center">
-                          <span className="text-[10px] font-bold text-slate-400">
-                            {new Date(startMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}
-                          </span>
+                          <span className="text-[10px] font-bold text-slate-400">{new Date(startMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
                         </div>
 
                         <div className="w-[80px] shrink-0 p-4 border-r border-slate-800 flex items-center justify-center">
-                          <span className="text-[10px] font-bold text-slate-400">
-                            {new Date(endMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}
-                          </span>
+                          <span className="text-[10px] font-bold text-slate-400">{new Date(endMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
                         </div>
 
                         <div className="w-[60px] shrink-0 p-4 border-r border-slate-800 flex items-center justify-center">
                           <span className="text-[11px] font-black text-white">{t.duration_days}d</span>
                         </div>
 
-                        {/* Timeline Bar Area */}
                         <div className="relative flex">
-                          {/* Background Grid Lines */}
                           {gridDays.map((d, i) => (
                             <div key={i} className={`flex-shrink-0 border-r border-slate-800/30 h-full ${d.isWeekend ? 'bg-slate-900/20' : ''}`} style={{ width: COL_WIDTH }} />
                           ))}
 
-                          {/* Draggable Bar */}
                           {offsetDays >= 0 && (
                             <div 
                               className={`absolute top-1/2 -translate-y-1/2 h-8 md:h-10 rounded-xl flex items-center shadow-lg transition-colors group/bar ${
@@ -616,7 +577,6 @@ export default function ScheduleMaster() {
                               }`}
                               style={{ left: offsetDays * COL_WIDTH, width: Math.max(t.duration_days * COL_WIDTH, COL_WIDTH - 8) }}
                             >
-                              {/* Left Edge (For moving) */}
                               {!t.isOverlay && (
                                 <div 
                                   className="w-6 h-full flex items-center justify-center cursor-grab active:cursor-grabbing shrink-0"
@@ -628,7 +588,6 @@ export default function ScheduleMaster() {
                                 </div>
                               )}
 
-                              {/* Center Content */}
                               <div className="flex-1 truncate pointer-events-none px-1">
                                 <span className="text-[10px] font-black text-white">
                                   {t.dependencies?.length > 0 && <LinkIcon size={10} className="inline mr-1" />}
@@ -636,7 +595,6 @@ export default function ScheduleMaster() {
                                 </span>
                               </div>
 
-                              {/* Right Edge (For extending duration) */}
                               {!t.isOverlay && (
                                 <div 
                                   className="w-4 h-full cursor-col-resize shrink-0 hover:bg-white/20 rounded-r-xl"

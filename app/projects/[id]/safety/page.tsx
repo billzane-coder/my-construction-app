@@ -9,7 +9,7 @@ import {
   ChevronLeft, Plus, FileDown, ShieldAlert, ShieldCheck,
   CheckCircle, AlertTriangle, X, Search, FileText, 
   Save, Zap, PenTool, AlertCircle, CheckCircle2, XCircle, 
-  Info, ClipboardCheck, Loader2, Camera
+  Info, ClipboardCheck, Loader2, Camera, Trash2
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
@@ -106,7 +106,9 @@ export default function SafetyHub() {
   
   const [searchTerm, setSearchTerm] = useState('')
   const [searchQueryTrades, setSearchQueryTrades] = useState('')
-  const [selectedTradeId, setSelectedTradeId] = useState('')
+  
+  // --- UPGRADED: MULTI-SELECT TRADE STATE ---
+  const [selectedTradeIds, setSelectedTradeIds] = useState<string[]>([])
   const [exporting, setExporting] = useState(false)
 
   // Walk Modal & Photo State
@@ -155,6 +157,12 @@ export default function SafetyHub() {
     )
   })
 
+  const toggleTradeSelection = (tradeId: string) => {
+    setSelectedTradeIds(prev => 
+      prev.includes(tradeId) ? prev.filter(tid => tid !== tradeId) : [...prev, tradeId]
+    )
+  }
+
   const getSuggestions = () => {
     let suggestions: string[] = [];
     if (SAFETY_PROMPTS.walkTypes[activeWalkType as keyof typeof SAFETY_PROMPTS.walkTypes]) {
@@ -182,25 +190,51 @@ export default function SafetyHub() {
     });
   }
 
-  // --- EXPORT & SAVE LOGIC ---
+  // --- UPGRADED: ROBUST EXPORT ENGINE (DB + STORAGE BUCKET SCAN) ---
   const handleExportSafetyPackage = async () => {
-    const trade = contacts.find(t => t.id === selectedTradeId)
-    if (!trade) return alert("Select a trade first.")
+    if (selectedTradeIds.length === 0) return alert("Select at least one trade first.")
     setExporting(true)
     
-    const docs = [
-      { name: 'WSIB', url: trade.wsib_url },
-      { name: 'Insurance', url: trade.insurance_url },
-      { name: 'Form 1000', url: trade.form_1000_url },
-      { name: 'Certifications', url: trade.safety_cards_url }
-    ].filter(d => d.url)
+    const tradesToExport = contacts.filter(t => selectedTradeIds.includes(t.id))
+    let allDocs: { url: string, name: string }[] = []
 
-    if (docs.length === 0) {
-      alert("No documents found in this trade's safety bucket.")
-    } else {
-      docs.forEach(doc => window.open(doc.url, '_blank'))
+    for (const trade of tradesToExport) {
+      // 1. Grab URLs stored in the Database Columns
+      if (trade.wsib_url) allDocs.push({ url: trade.wsib_url, name: `${trade.company}_WSIB` })
+      if (trade.insurance_url) allDocs.push({ url: trade.insurance_url, name: `${trade.company}_Insurance` })
+      if (trade.form_1000_url) allDocs.push({ url: trade.form_1000_url, name: `${trade.company}_Form1000` })
+      if (trade.safety_cards_url) allDocs.push({ url: trade.safety_cards_url, name: `${trade.company}_SafetyCards` })
+
+      // 2. Scan the Storage Bucket Directory directly to catch unlinked files!
+      const { data: folderFiles } = await supabase.storage.from('project-files').list(`${id}/trades/${trade.id}/Safety`)
+      
+      if (folderFiles && folderFiles.length > 0) {
+         folderFiles.forEach(file => {
+           // Ignore empty folder placeholders
+           if (file.name !== '.emptyFolderPlaceholder') {
+             const { data } = supabase.storage.from('project-files').getPublicUrl(`${id}/trades/${trade.id}/Safety/${file.name}`)
+             // Check if we didn't already push this exact URL from the DB columns
+             if (!allDocs.find(d => d.url === data.publicUrl)) {
+               allDocs.push({ url: data.publicUrl, name: `${trade.company}_${file.name}` })
+             }
+           }
+         })
+      }
     }
+
+    if (allDocs.length === 0) {
+      alert("No safety documents were found in the database or the storage directory for the selected trades.")
+    } else {
+      // Sequentially open tabs with a delay to prevent pop-up blockers from killing the batch
+      allDocs.forEach((doc, index) => {
+        setTimeout(() => {
+           window.open(doc.url, '_blank')
+        }, index * 400) // 400ms delay between each opening
+      })
+    }
+    
     setExporting(false)
+    setSelectedTradeIds([]) // Clear selection after export
   }
 
   const handleCreateWalk = async (e: React.FormEvent) => {
@@ -328,7 +362,7 @@ export default function SafetyHub() {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
               <div>
                 <h3 className="text-2xl font-black text-white uppercase italic tracking-tighter">Trade Compliance</h3>
-                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Export mandatory safety docs</p>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Multi-Select trades to batch export safety docs</p>
               </div>
               <div className="relative w-full md:w-64">
                 <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" />
@@ -341,29 +375,38 @@ export default function SafetyHub() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[300px] overflow-y-auto pr-2 no-scrollbar">
-              {filteredTrades.map((trade: any) => (
-                <div 
-                  key={trade.id} onClick={() => setSelectedTradeId(trade.id)}
-                  className={`p-5 rounded-[28px] border transition-all cursor-pointer group flex flex-col justify-between min-h-[140px] ${selectedTradeId === trade.id ? 'bg-emerald-950/20 border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.1)]' : 'bg-slate-950 border-slate-800 hover:border-slate-600'}`}
-                >
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h4 className="font-black uppercase italic text-lg leading-tight text-white group-hover:text-emerald-400 transition-colors">{trade.company}</h4>
-                      <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-1">{trade.trade_role}</p>
+              {filteredTrades.map((trade: any) => {
+                const isSelected = selectedTradeIds.includes(trade.id)
+                return (
+                  <div 
+                    key={trade.id} 
+                    onClick={() => toggleTradeSelection(trade.id)}
+                    className={`p-5 rounded-[28px] border transition-all cursor-pointer group flex flex-col justify-between min-h-[140px] ${isSelected ? 'bg-emerald-950/40 border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.15)]' : 'bg-slate-950 border-slate-800 hover:border-slate-600'}`}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="font-black uppercase italic text-lg leading-tight text-white group-hover:text-emerald-400 transition-colors">{trade.company}</h4>
+                        <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-1">{trade.trade_role}</p>
+                      </div>
+                      <div className={`h-6 w-6 rounded-full border-2 flex items-center justify-center transition-all ${isSelected ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-700 text-transparent'}`}>
+                         <CheckCircle2 size={14} className={isSelected ? 'block' : 'hidden'} />
+                      </div>
                     </div>
-                    {trade.wsib_url && trade.insurance_url ? <CheckCircle2 size={18} className="text-emerald-500" /> : <XCircle size={18} className="text-red-500" />}
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
 
-            <div className={`mt-8 p-6 rounded-3xl border transition-all flex flex-col md:flex-row items-center justify-between gap-6 ${selectedTradeId ? 'bg-emerald-600 border-emerald-500 shadow-2xl' : 'bg-slate-950 border-slate-800 opacity-50 grayscale pointer-events-none'}`}>
+            <div className={`mt-8 p-6 rounded-3xl border transition-all flex flex-col md:flex-row items-center justify-between gap-6 ${selectedTradeIds.length > 0 ? 'bg-emerald-600 border-emerald-500 shadow-2xl' : 'bg-slate-950 border-slate-800 opacity-50 grayscale pointer-events-none'}`}>
               <div className="flex items-center gap-4 text-center md:text-left">
                 <div className="bg-white/20 p-3 rounded-2xl"><ShieldCheck size={24} className="text-white" /></div>
-                <p className="text-sm font-black text-white uppercase italic tracking-tight">Export Compliance File</p>
+                <div>
+                  <p className="text-[10px] font-black uppercase text-emerald-200 tracking-widest">{selectedTradeIds.length} Trades Selected</p>
+                  <p className="text-sm font-black text-white uppercase italic tracking-tight">Export Compliance Files</p>
+                </div>
               </div>
               <button onClick={handleExportSafetyPackage} disabled={exporting} className="bg-white text-emerald-600 px-8 py-4 rounded-2xl font-black text-[11px] uppercase tracking-widest shadow-xl hover:scale-105 transition-all flex items-center gap-2">
-                {exporting ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={18} />} Generate Package
+                {exporting ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={18} />} Generate Batch
               </button>
             </div>
           </div>
