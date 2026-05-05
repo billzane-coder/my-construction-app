@@ -243,13 +243,10 @@ export default function ScheduleMaster() {
     let currentY = 64; 
     const coords: Record<string, { xStart: number, xEnd: number, yCenter: number }> = {};
     
-    Object.entries(globalGrouped).forEach(([cat, tradesObj]) => {
+Object.entries(globalGrouped).forEach(([cat, tradesObj]) => {
       currentY += 48; // Cat Header Height
       if (!collapsedCats.has(cat)) {
         Object.entries(tradesObj).forEach(([tradeId, tradeData]) => {
-            currentY += 36; // Trade Sub-Header Height
-            if (!collapsedTrades.has(`${cat}-${tradeId}`)) {
-                tradeData.tasks.forEach((t: any) => {
                     const startMs = parseDate(t.start_date).getTime();
                     const offsetDays = Math.floor((startMs - gridStartDate.getTime()) / DAY_MS);
                     const durDays = t.duration_days;
@@ -652,7 +649,7 @@ export default function ScheduleMaster() {
               </div>
 
               {/* TRADE GROUPINGS */}
-              {!isCollapsed && Object.entries(tradesObj).map(([tradeId, tradeData]) => {
+{!isCollapsed && Object.entries(tradesObj as Record<string, any>).map(([tradeId, tradeData]: [string, any]) => {
                 const isTradeCollapsed = collapsedTrades.has(`${category}-${tradeId}`);
 
                 return (
