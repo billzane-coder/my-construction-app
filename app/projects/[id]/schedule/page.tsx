@@ -12,10 +12,10 @@ import {
 
 const parseDate = (d: string) => new Date(d + 'T00:00:00')
 const DAY_MS = 86400000
-// 1. CONDENSE SCREEN: Reduce column width
+
+// 1. CONDENSED SCREEN: Smaller columns to fit more days on mobile
 const COL_WIDTH = 32 
 
-// --- CATEGORIES ---
 const DEFAULT_CATEGORIES = [
   'Pre-con', 'General & Prep', 'Substructure', 'Exterior Shell', 
   'MEP Rough-ins', 'Interior Finishes', 'MEP Trim-out', 'Final & Handover'
@@ -30,14 +30,13 @@ export default function ScheduleMaster() {
   const [tasks, setTasks] = useState<any[]>([])
   const [trades, setTrades] = useState<any[]>([])
   
-  // --- UPGRADED: SPECIFIC OVERLAY SELECTION ---
   const [overlayProjects, setOverlayProjects] = useState<string[]>([])
   const [overlayTasks, setOverlayTasks] = useState<any[]>([])
   const [otherProjects, setOtherProjects] = useState<any[]>([])
   
   const [gridStartDate, setGridStartDate] = useState(new Date())
   
-  // 2. PERSIST COLLAPSE STATE: Initialize from localStorage if available
+  // 2. PERSISTENT CATEGORY TOGGLES
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(() => {
      if (typeof window !== 'undefined') {
        const saved = localStorage.getItem(`schedule_collapsed_${id}`);
@@ -46,26 +45,23 @@ export default function ScheduleMaster() {
      return new Set();
   });
   
-  // Drag State (Horizontal)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragType, setDragType] = useState<'move' | 'extendEnd'>('move')
   const [dragStartX, setDragStartX] = useState(0)
   const [dragStartValue, setDragStartValue] = useState(0)
   
-  // Drag State (Vertical Tasks & Categories)
   const [reorderingId, setReorderingId] = useState<string | null>(null)
   const [reorderingCategory, setReorderingCategory] = useState<string | null>(null)
   
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Modals
   const [showNewTask, setShowNewTask] = useState(false)
   const [newTask, setNewTask] = useState({ name: '', trade: '', start: '', duration: 1, deps: [] as string[], category: 'Pre-con' })
   const [editingTask, setEditingTask] = useState<any>(null)
   
+  // Export Theme State
   const [isPrinting, setIsPrinting] = useState(false)
 
-  // Save collapsed state to local storage whenever it changes
   useEffect(() => {
      if (typeof window !== 'undefined') {
        localStorage.setItem(`schedule_collapsed_${id}`, JSON.stringify(Array.from(collapsedCats)));
@@ -106,7 +102,6 @@ export default function ScheduleMaster() {
           if (overlayData) setOverlayTasks(overlayData)
         }
       }
-      
       setLoading(false)
     }
     fetchData()
@@ -118,8 +113,8 @@ export default function ScheduleMaster() {
     )
   }
 
-  // --- ENGINE ---
-  const { processedTasks, projectEndDate, criticalPathIds, groupedTasks, globalGroupedTasks } = useMemo(() => {
+  // --- UPGRADED ENGINE: NOW CALCULATES SVG ARROW COORDINATES ---
+  const { processedTasks, projectEndDate, criticalPathIds, groupedTasks, globalGroupedTasks, taskCoordinates } = useMemo(() => {
     let pTasks = [...tasks]
     let maxEnd = 0
     let endMap: Record<string, number> = {}
@@ -144,7 +139,6 @@ export default function ScheduleMaster() {
         if (drivingDep) findCriticalChain(drivingDep)
       }
     }
-
     pTasks.filter(t => endMap[t.id] === maxEnd).forEach(t => findCriticalChain(t.id))
 
     const grouped = pTasks.reduce((acc, task) => {
@@ -154,7 +148,6 @@ export default function ScheduleMaster() {
       return acc
     }, {} as Record<string, any[]>)
 
-    // Apply Specific Overlays
     let globalGrouped = { ...grouped }
     if (overlayProjects.length > 0) {
       const activeOverlayTasks = overlayTasks.filter(t => overlayProjects.includes(t.project_id))
@@ -165,10 +158,31 @@ export default function ScheduleMaster() {
       })
     }
 
-    return { processedTasks: pTasks, projectEndDate: maxEnd, criticalPathIds: cPath, groupedTasks: grouped, globalGroupedTasks: globalGrouped }
-  }, [tasks, overlayTasks, overlayProjects])
+    // MAP Y AND X COORDINATES FOR SVG ARROWS
+    let currentY = 64; // Header height is 64px (h-16 total)
+    const coords: Record<string, { xStart: number, xEnd: number, yCenter: number }> = {};
+    
+    Object.entries(globalGrouped).forEach(([cat, catTasks]) => {
+      currentY += 48; // Category header is 48px (h-12)
+      if (!collapsedCats.has(cat)) {
+        catTasks.forEach(t => {
+          const startMs = parseDate(t.start_date).getTime();
+          const offsetDays = Math.floor((startMs - gridStartDate.getTime()) / DAY_MS);
+          const durDays = t.duration_days;
+          
+          coords[t.id] = {
+            xStart: offsetDays * COL_WIDTH,
+            xEnd: (offsetDays + durDays) * COL_WIDTH,
+            yCenter: currentY + 28 // Center of 56px (h-14) task row
+          };
+          currentY += 56; 
+        });
+      }
+    });
 
-  // --- HORIZONTAL DRAG LOGIC ---
+    return { processedTasks: pTasks, projectEndDate: maxEnd, criticalPathIds: cPath, groupedTasks: grouped, globalGroupedTasks: globalGrouped, taskCoordinates: coords }
+  }, [tasks, overlayTasks, overlayProjects, gridStartDate, collapsedCats])
+
   const handleHPointerDown = (e: React.PointerEvent, taskId: string, start_date: string, type: 'move' | 'extendEnd', duration: number) => {
     e.stopPropagation()
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -217,16 +231,12 @@ export default function ScheduleMaster() {
   const applyCascadeUpdate = (movedTaskId: string, newStartDateStr: string, forceDuration?: number) => {
     setTasks(prev => {
       let draft = JSON.parse(JSON.stringify(prev)) 
-      
       const updateDownstream = (taskId: string, startStr: string, dur?: number) => {
         const taskIndex = draft.findIndex((t: any) => t.id === taskId)
         if (taskIndex === -1) return
-        
         draft[taskIndex].start_date = startStr
         if(dur) draft[taskIndex].duration_days = dur
-        
         const endMs = parseDate(startStr).getTime() + (draft[taskIndex].duration_days * DAY_MS)
-
         draft.forEach((child: any) => {
           if (child.dependencies?.includes(taskId)) {
             const childStartMs = parseDate(child.start_date).getTime()
@@ -237,21 +247,17 @@ export default function ScheduleMaster() {
           }
         })
       }
-      
       updateDownstream(movedTaskId, newStartDateStr, forceDuration)
       return draft
     })
   }
 
-  // --- VERTICAL DRAG LOGIC (Tasks & Categories) ---
   const handleDragStartTask = (e: React.DragEvent, taskId: string) => {
     setReorderingId(taskId)
     setReorderingCategory(null)
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('dragType', 'task')
-    if (e.target instanceof HTMLElement) {
-      e.dataTransfer.setDragImage(e.target.closest('.task-row') || e.target, 20, 20)
-    }
+    if (e.target instanceof HTMLElement) e.dataTransfer.setDragImage(e.target.closest('.task-row') || e.target, 20, 20)
   }
 
   const handleDragStartCategory = (e: React.DragEvent, category: string) => {
@@ -267,42 +273,29 @@ export default function ScheduleMaster() {
 
     const dragType = e.dataTransfer.getData('dragType') || (reorderingCategory ? 'category' : 'task')
 
-    // 1. Handle Dropping an Entire Category
     if (dragType === 'category' && reorderingCategory) {
       if (reorderingCategory === targetCategory) return
-
       setTasks(prev => {
         let newTasks = [...prev]
-        
         const draggedCats = newTasks.filter(t => t.category === reorderingCategory)
         newTasks = newTasks.filter(t => t.category !== reorderingCategory)
-
         const targetIndex = newTasks.findIndex(t => t.category === targetCategory)
-
-        if (targetIndex !== -1) {
-          newTasks.splice(targetIndex, 0, ...draggedCats)
-        } else {
-          newTasks.push(...draggedCats)
-        }
-
+        if (targetIndex !== -1) newTasks.splice(targetIndex, 0, ...draggedCats)
+        else newTasks.push(...draggedCats)
         return newTasks.map((t, i) => ({ ...t, sort_order: i }))
       })
-      
       setReorderingCategory(null)
       setTimeout(saveAllTasks, 100)
       return
     }
 
-    // 2. Handle Dropping a Single Task
     if (dragType === 'task' && reorderingId && reorderingId !== targetTaskId) {
       setTasks(prev => {
         let newTasks = [...prev]
         const draggedTaskIndex = newTasks.findIndex(t => t.id === reorderingId)
         if (draggedTaskIndex === -1) return prev
-
         const draggedTask = { ...newTasks[draggedTaskIndex], category: targetCategory }
         newTasks.splice(draggedTaskIndex, 1)
-
         if (targetTaskId) {
           const targetIndex = newTasks.findIndex(t => t.id === targetTaskId)
           newTasks.splice(targetIndex, 0, draggedTask)
@@ -311,10 +304,8 @@ export default function ScheduleMaster() {
           const lastCatIndex = catTasks.length > 0 ? newTasks.indexOf(catTasks[catTasks.length - 1]) : newTasks.length
           newTasks.splice(lastCatIndex + 1, 0, draggedTask)
         }
-
         return newTasks.map((t, i) => ({ ...t, sort_order: i }))
       })
-      
       setReorderingId(null)
       setTimeout(saveAllTasks, 100) 
     }
@@ -355,7 +346,6 @@ export default function ScheduleMaster() {
       dependencies: editingTask.dependencies || [],
       category: editingTask.category
     }).eq('id', editingTask.id)
-    
     if (!error) { setEditingTask(null); window.location.reload(); }
     setSaving(false)
   }
@@ -377,23 +367,22 @@ export default function ScheduleMaster() {
     })
   }
 
+  // 3. SOFTER PRINT THEME ENGINE
   const handlePrint = async () => {
     const element = document.getElementById('gantt-canvas')
     if (!element) return
     
     setSaving(true)
-    setIsPrinting(true) // Trigger print styles
+    setIsPrinting(true) 
 
     try {
-      // Small delay to allow react to render print styles before capture
-      await new Promise(r => setTimeout(r, 100));
-
+      await new Promise(r => setTimeout(r, 100)); // allow DOM to flip to soft-print mode
       const { toJpeg } = await import('html-to-image')
       const { jsPDF } = await import('jspdf')
 
       const imgData = await toJpeg(element, {
         quality: 0.9,
-        backgroundColor: '#ffffff', // Force white background for capture
+        backgroundColor: '#f8fafc', // Softer slate-50 background instead of blinding white
         pixelRatio: 2, 
       })
 
@@ -413,17 +402,15 @@ export default function ScheduleMaster() {
     }
   }
 
-  // 4. FIX INFINITE ABYSS: Calculate required timeline length dynamically
+  // 4. FIX INFINITE ABYSS: Calculate days dynamically
   const calculateTotalDays = () => {
-      if (projectEndDate === 0) return 120; // Default if no tasks
-      // Calculate days between start of grid and end of project, plus a 30 day buffer
+      if (projectEndDate === 0) return 120;
       const diffMs = projectEndDate - gridStartDate.getTime();
-      const requiredDays = Math.ceil(diffMs / DAY_MS) + 30;
-      return Math.max(requiredDays, 120); // At least 120 days
+      const requiredDays = Math.ceil(diffMs / DAY_MS) + 45; // 45 day visual buffer at end of project
+      return Math.max(requiredDays, 120); 
   };
 
   const totalDays = calculateTotalDays();
-
   const gridDays = Array.from({ length: totalDays }).map((_, i) => {
     const d = new Date(gridStartDate.getTime() + (i * DAY_MS))
     return { date: d, isWeekend: d.getDay() === 0 || d.getDay() === 6, month: d.toLocaleString('en-US', { month: 'long', year: 'numeric' }) }
@@ -439,7 +426,6 @@ export default function ScheduleMaster() {
   })
   monthSpans.push({ name: currentMonth, colSpan: currentCount })
 
-  // 5. CALCULATE CATEGORY DATES: Helper function
   const getCategoryDates = (tasksInCategory: any[]) => {
       if (!tasksInCategory || tasksInCategory.length === 0) return null;
       let earliest = Infinity;
@@ -461,21 +447,20 @@ export default function ScheduleMaster() {
   const activeTaskMap = overlayProjects.length > 0 ? globalGroupedTasks : groupedTasks;
 
   return (
-    <div className={`max-w-[1800px] mx-auto p-4 md:p-8 min-h-screen font-sans pb-32 transition-colors duration-300 ${isPrinting ? 'bg-white text-slate-900' : 'bg-slate-950 text-slate-100'}`}>
+    <div className={`max-w-[1800px] mx-auto p-4 md:p-8 min-h-screen font-sans pb-32 transition-colors duration-300 ${isPrinting ? 'bg-slate-50 text-slate-900' : 'bg-slate-950 text-slate-100'}`}>
       
       {/* HEADER */}
-      <div className={`mb-8 border-b-4 pb-6 flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 ${isPrinting ? 'border-slate-800' : 'border-blue-600'}`}>
+      <div className={`mb-8 border-b-4 pb-6 flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 ${isPrinting ? 'border-slate-300' : 'border-blue-600'}`}>
         <div>
           <button onClick={() => router.back()} className={`text-[10px] font-black uppercase mb-4 flex items-center gap-1 transition-all ${isPrinting ? 'text-slate-600' : 'text-slate-500 hover:text-white'}`}><ChevronLeft size={12}/> War Room</button>
           <h1 className={`text-4xl font-black tracking-tighter uppercase italic leading-none ${isPrinting ? 'text-slate-900' : 'text-white'}`}>Master <span className="text-blue-500">Schedule</span></h1>
           {projectEndDate > 0 && (
              <p className={`text-[10px] font-black uppercase tracking-widest mt-3 flex items-center gap-2 ${isPrinting ? 'text-slate-600' : 'text-slate-500'}`}>
-               Target Completion: <span className={isPrinting ? 'text-slate-900' : 'text-emerald-500'}>{new Date(projectEndDate).toLocaleDateString()}</span>
+               Target Completion: <span className={isPrinting ? 'text-slate-800' : 'text-emerald-500'}>{new Date(projectEndDate).toLocaleDateString()}</span>
              </p>
           )}
         </div>
         <div className="flex flex-wrap gap-3">
-          
           <button onClick={handlePrint} disabled={saving} className={`text-[10px] font-black px-6 py-4 rounded-2xl uppercase transition-all flex items-center gap-2 shadow-xl ${isPrinting ? 'hidden' : 'bg-slate-800 text-white hover:bg-slate-700'}`}>
             {saving ? <Loader2 size={14} className="animate-spin"/> : <Printer size={14}/>} Export
           </button>
@@ -488,7 +473,6 @@ export default function ScheduleMaster() {
         </div>
       </div>
 
-      {/* --- SPECIFIC PROJECT OVERLAY SELECTOR --- */}
       {otherProjects.length > 0 && !isPrinting && (
         <div className="mb-6 flex flex-wrap items-center gap-2 bg-slate-900 border border-slate-800 p-2 rounded-2xl shadow-xl">
           <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2 pr-4 flex items-center gap-1">
@@ -497,13 +481,10 @@ export default function ScheduleMaster() {
           {otherProjects.map(p => {
             const isActive = overlayProjects.includes(p.id);
             return (
-              <button 
-                key={p.id}
-                onClick={() => toggleOverlayProject(p.id)}
+              <button key={p.id} onClick={() => toggleOverlayProject(p.id)}
                 className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border flex items-center gap-2 ${isActive ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-700'}`}
               >
-                {isActive && <Check size={10} />}
-                {p.name}
+                {isActive && <Check size={10} />}{p.name}
               </button>
             )
           })}
@@ -511,18 +492,58 @@ export default function ScheduleMaster() {
       )}
 
       {/* PC GANTT CANVAS */}
-      <div className={`rounded-[32px] border shadow-2xl overflow-hidden relative z-0 transition-colors duration-300 ${isPrinting ? 'bg-white border-slate-300 shadow-none' : 'bg-slate-900 border-slate-800'}`}>
+      <div className={`rounded-[32px] border shadow-2xl overflow-hidden relative z-0 transition-colors duration-300 ${isPrinting ? 'bg-slate-50 border-slate-300 shadow-none' : 'bg-slate-900 border-slate-800'}`}>
         <div className={`overflow-auto custom-scrollbar max-h-[75vh] relative ${isPrinting ? 'max-h-none overflow-visible' : ''}`} ref={containerRef}>
-          <div id="gantt-canvas" className={`w-max min-w-full transition-colors duration-300 ${isPrinting ? 'bg-white' : 'bg-slate-900'}`}>
+          <div id="gantt-canvas" className={`w-max min-w-full relative transition-colors duration-300 ${isPrinting ? 'bg-slate-50' : 'bg-slate-900'}`}>
 
-            {/* STICKY HEADER ROW */}
-            <div className={`flex sticky top-0 z-40 border-b shadow-sm transition-colors duration-300 ${isPrinting ? 'bg-slate-100 border-slate-300' : 'bg-slate-900 border-slate-800'}`}>
-              <div className={`w-40 md:w-[280px] shrink-0 sticky left-0 z-50 p-2 md:p-4 border-r flex flex-col justify-end font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-colors duration-300 ${isPrinting ? 'bg-slate-100 border-slate-300 text-slate-700' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>Trade / Task</div>
-              <div className={`w-[60px] md:w-[80px] shrink-0 p-2 md:p-4 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-colors duration-300 ${isPrinting ? 'border-slate-300 text-slate-700' : 'border-slate-800 text-slate-500'}`}>Start</div>
-              <div className={`w-[60px] md:w-[80px] shrink-0 p-2 md:p-4 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-colors duration-300 ${isPrinting ? 'border-slate-300 text-slate-700' : 'border-slate-800 text-slate-500'}`}>End</div>
-              <div className={`w-[40px] md:w-[60px] shrink-0 p-2 md:p-4 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-colors duration-300 ${isPrinting ? 'border-slate-300 text-slate-700' : 'border-slate-800 text-slate-500'}`}>Dur.</div>
+            {/* DEPENDENCY ARROW SVG OVERLAY */}
+            <div className="absolute top-0 bottom-0 left-[310px] md:left-[500px] right-0 z-10 pointer-events-none overflow-hidden">
+              <svg className="w-full h-full">
+                <defs>
+                  <marker id="arrowHead" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L6,3 z" fill={isPrinting ? "#94a3b8" : "#475569"} />
+                  </marker>
+                </defs>
+                {processedTasks.flatMap(task => {
+                  if (!task.dependencies || task.dependencies.length === 0 || task.isOverlay) return [];
+                  const endCoords = taskCoordinates[task.id];
+                  if (!endCoords) return []; 
 
-              <div className="flex flex-col">
+                  return task.dependencies.map((depId: string) => {
+                    const startCoords = taskCoordinates[depId];
+                    if (!startCoords) return null; 
+
+                    const startX = startCoords.xEnd;
+                    const startY = startCoords.yCenter;
+                    const endX = endCoords.xStart;
+                    const endY = endCoords.yCenter;
+
+                    let pathD = "";
+                    if (endX >= startX + 10) {
+                        const midX = startX + 10;
+                        pathD = `M ${startX},${startY} L ${midX},${startY} L ${midX},${endY} L ${endX},${endY}`;
+                    } else {
+                        const dropY = startY + (endY > startY ? 14 : -14); 
+                        const midX = endX - 10;
+                        pathD = `M ${startX},${startY} L ${startX + 10},${startY} L ${startX + 10},${dropY} L ${midX},${dropY} L ${midX},${endY} L ${endX},${endY}`;
+                    }
+
+                    return (
+                      <path key={`${depId}->${task.id}`} d={pathD} fill="none" stroke={isPrinting ? "#94a3b8" : "#475569"} strokeWidth="1.5" markerEnd="url(#arrowHead)" className="opacity-80" />
+                    );
+                  });
+                })}
+              </svg>
+            </div>
+
+            {/* STICKY HEADER ROW (Fixed to 64px height) */}
+            <div className={`flex sticky top-0 z-40 border-b shadow-sm h-16 transition-colors duration-300 ${isPrinting ? 'bg-slate-100 border-slate-300' : 'bg-slate-900 border-slate-800'}`}>
+              <div className={`w-[150px] md:w-[280px] shrink-0 sticky left-0 z-50 p-2 md:p-4 border-r flex flex-col justify-end font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-colors duration-300 ${isPrinting ? 'bg-slate-100 border-slate-300 text-slate-600' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>Trade / Task</div>
+              <div className={`w-[60px] md:w-[80px] shrink-0 p-2 md:p-4 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-colors duration-300 ${isPrinting ? 'border-slate-300 text-slate-600' : 'border-slate-800 text-slate-500'}`}>Start</div>
+              <div className={`w-[60px] md:w-[80px] shrink-0 p-2 md:p-4 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-colors duration-300 ${isPrinting ? 'border-slate-300 text-slate-600' : 'border-slate-800 text-slate-500'}`}>End</div>
+              <div className={`w-[40px] md:w-[60px] shrink-0 p-2 md:p-4 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-colors duration-300 ${isPrinting ? 'border-slate-300 text-slate-600' : 'border-slate-800 text-slate-500'}`}>Dur.</div>
+
+              <div className="flex flex-col h-full">
                 <div className={`flex border-b h-8 transition-colors duration-300 ${isPrinting ? 'border-slate-300' : 'border-slate-800/50'}`}>
                   {monthSpans.map((m, i) => (
                     <div key={i} className={`px-2 md:px-4 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border-r truncate transition-colors duration-300 ${isPrinting ? 'text-slate-800 border-slate-300' : 'text-blue-500 border-slate-800/50'}`} style={{ width: m.colSpan * COL_WIDTH }}>{m.name}</div>
@@ -530,7 +551,7 @@ export default function ScheduleMaster() {
                 </div>
                 <div className="flex h-8">
                   {gridDays.map((d, i) => (
-                    <div key={i} className={`flex-shrink-0 flex items-center justify-center border-r transition-colors duration-300 ${isPrinting ? `border-slate-200 ${d.isWeekend ? 'bg-slate-50' : ''}` : `border-slate-800/50 ${d.isWeekend ? 'bg-slate-950/50' : ''}`}`} style={{ width: COL_WIDTH }}>
+                    <div key={i} className={`flex-shrink-0 flex items-center justify-center border-r transition-colors duration-300 ${isPrinting ? `border-slate-200 ${d.isWeekend ? 'bg-slate-100' : ''}` : `border-slate-800/50 ${d.isWeekend ? 'bg-slate-950/50' : ''}`}`} style={{ width: COL_WIDTH }}>
                       <span className={`text-[8px] md:text-[9px] font-black ${isPrinting ? (d.isWeekend ? 'text-slate-400' : 'text-slate-700') : (d.isWeekend ? 'text-slate-600' : 'text-slate-300')}`}>{d.date.getDate()}</span>
                     </div>
                   ))}
@@ -548,35 +569,32 @@ export default function ScheduleMaster() {
               const catDates = getCategoryDates(catTasks);
               
               return (
-                <div 
-                  key={category} 
-                  className={`group ${isDraggedCategory ? 'opacity-50' : ''}`}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => { e.preventDefault(); handleDrop(e, category); }}
-                >
-                  <div draggable onDragStart={(e) => handleDragStartCategory(e, category)} className={`flex border-b sticky left-0 z-30 transition-colors duration-300 ${isPrinting ? 'bg-slate-50 border-slate-300' : 'bg-slate-950/50 border-slate-800/50'}`}>
-                    <div className={`w-40 md:w-[280px] shrink-0 sticky left-0 z-30 flex items-stretch border-r transition-colors duration-300 ${isPrinting ? 'bg-slate-100 border-slate-300' : 'bg-slate-950/80 border-slate-800'}`}>
-                      <div className={`hidden md:flex w-8 items-center justify-center cursor-grab active:cursor-grabbing border-r transition-colors duration-300 ${isPrinting ? 'text-slate-400 border-slate-300' : 'hover:bg-slate-900 text-slate-600 hover:text-white border-slate-800/50'}`}>
+                <div key={category} className={`group ${isDraggedCategory ? 'opacity-50' : ''}`} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); handleDrop(e, category); }}>
+                  {/* CATEGORY HEADER (Fixed to 48px height) */}
+                  <div draggable onDragStart={(e) => handleDragStartCategory(e, category)} className={`flex border-b h-12 sticky left-0 z-30 transition-colors duration-300 ${isPrinting ? 'bg-slate-100 border-slate-300' : 'bg-slate-950/50 border-slate-800/50'}`}>
+                    <div className={`w-[150px] md:w-[280px] shrink-0 sticky left-0 z-30 flex items-stretch border-r transition-colors duration-300 ${isPrinting ? 'bg-slate-200 border-slate-300' : 'bg-slate-950/80 border-slate-800'}`}>
+                      <div className={`hidden md:flex w-8 items-center justify-center cursor-grab active:cursor-grabbing border-r transition-colors duration-300 ${isPrinting ? 'border-slate-300 text-slate-400' : 'hover:bg-slate-900 text-slate-600 hover:text-white border-slate-800/50'}`}>
                         <GripVertical size={14} />
                       </div>
                       <button onClick={() => toggleCategory(category)} className={`flex-1 p-2 md:p-3 flex items-center gap-1 md:gap-2 transition-colors text-left overflow-hidden ${isPrinting ? '' : 'hover:bg-slate-900'}`}>
                         {isCollapsed ? <ChevronRight size={14} className={isPrinting ? 'text-slate-500' : 'text-slate-500 shrink-0'} /> : <ChevronDown size={14} className={isPrinting ? 'text-slate-500' : 'text-slate-500 shrink-0'} />}
                         <span className={`text-[10px] md:text-xs font-black uppercase tracking-widest truncate ${isPrinting ? 'text-slate-900' : 'text-white'}`}>{category}</span>
-                        <span className={`text-[8px] md:text-[9px] font-bold ml-auto px-2 py-0.5 rounded hidden sm:inline-block transition-colors duration-300 ${isPrinting ? 'text-slate-500 bg-slate-200' : 'text-slate-500 bg-slate-900'}`}>{catTasks.length}</span>
+                        <span className={`text-[8px] md:text-[9px] font-bold ml-auto px-2 py-0.5 rounded hidden sm:inline-block transition-colors duration-300 ${isPrinting ? 'text-slate-600 bg-slate-300' : 'text-slate-500 bg-slate-900'}`}>{catTasks.length}</span>
                       </button>
                     </div>
-                    {/* 5. ADD CATEGORY DATES: Display date range in category header */}
-                    <div className={`flex-1 flex pointer-events-none transition-colors duration-300 ${isPrinting ? 'bg-slate-50' : 'bg-slate-950/50'}`}>
+                    {/* Category Dates Display */}
+                    <div className={`flex-1 flex pointer-events-none transition-colors duration-300 ${isPrinting ? 'bg-slate-100' : 'bg-slate-950/50'}`}>
                       <div className={`w-[60px] md:w-[80px] shrink-0 border-r flex items-center justify-center transition-colors duration-300 ${isPrinting ? 'border-slate-300' : 'border-slate-800'}`}>
-                         {catDates && <span className={`text-[9px] font-bold ${isPrinting ? 'text-slate-600' : 'text-slate-500'}`}>{catDates.start}</span>}
+                         {catDates && <span className={`text-[9px] font-bold ${isPrinting ? 'text-slate-500' : 'text-slate-600'}`}>{catDates.start}</span>}
                       </div>
                       <div className={`w-[60px] md:w-[80px] shrink-0 border-r flex items-center justify-center transition-colors duration-300 ${isPrinting ? 'border-slate-300' : 'border-slate-800'}`}>
-                         {catDates && <span className={`text-[9px] font-bold ${isPrinting ? 'text-slate-600' : 'text-slate-500'}`}>{catDates.end}</span>}
+                         {catDates && <span className={`text-[9px] font-bold ${isPrinting ? 'text-slate-500' : 'text-slate-600'}`}>{catDates.end}</span>}
                       </div>
                       <div className={`w-[40px] md:w-[60px] shrink-0 border-r transition-colors duration-300 ${isPrinting ? 'border-slate-300' : 'border-slate-800'}`} />
                     </div>
                   </div>
 
+                  {/* TASK ROWS (Fixed to 56px height) */}
                   {!isCollapsed && catTasks.map((t: any) => {
                     const startMs = parseDate(t.start_date).getTime()
                     const endMs = startMs + (t.duration_days * DAY_MS)
@@ -587,18 +605,18 @@ export default function ScheduleMaster() {
                     return (
                       <div 
                         key={`${t.id}-${t.isOverlay ? 'overlay' : 'base'}`} 
-                        className={`flex border-b relative h-12 md:h-16 task-row transition-colors duration-300 ${isPrinting ? 'border-slate-200 bg-white' : 'border-slate-800/50 hover:bg-slate-800/20'} ${isDraggedTask ? 'opacity-50' : ''} ${t.isOverlay ? (isPrinting ? 'opacity-70 bg-slate-50' : 'opacity-60 bg-slate-950/50') : ''}`}
+                        className={`flex border-b relative h-14 task-row transition-colors duration-300 ${isPrinting ? 'border-slate-200 bg-slate-50' : 'border-slate-800/50 hover:bg-slate-800/20'} ${isDraggedTask ? 'opacity-50' : ''} ${t.isOverlay ? (isPrinting ? 'opacity-70 bg-slate-100' : 'opacity-60 bg-slate-950/50') : ''}`}
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={(e) => { e.preventDefault(); handleDrop(e, category, t.id) }}
                       >
                         
-                        <div className={`w-40 md:w-[280px] shrink-0 sticky left-0 z-20 border-r flex items-stretch transition-colors duration-300 ${isPrinting ? 'bg-white border-slate-300' : 'bg-slate-950 border-slate-800'}`}>
+                        <div className={`w-[150px] md:w-[280px] shrink-0 sticky left-0 z-20 border-r flex items-stretch transition-colors duration-300 ${isPrinting ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800'}`}>
                           {!t.isOverlay && (
                             <div draggable onDragStart={(e) => handleDragStartTask(e, t.id)} className={`hidden md:flex w-8 items-center justify-center border-r cursor-grab active:cursor-grabbing transition-colors duration-300 ${isPrinting ? 'border-slate-300 text-slate-300' : 'border-slate-800/50 hover:bg-slate-800 text-slate-600 hover:text-white'}`}>
                               <GripVertical size={14} />
                             </div>
                           )}
-                          {t.isOverlay && <div className={`hidden md:block w-8 border-r transition-colors duration-300 ${isPrinting ? 'border-slate-300 bg-slate-50' : 'border-slate-800/50 bg-slate-950/30'}`} />}
+                          {t.isOverlay && <div className={`hidden md:block w-8 border-r transition-colors duration-300 ${isPrinting ? 'border-slate-300 bg-slate-100' : 'border-slate-800/50 bg-slate-950/30'}`} />}
                           
                           <button onClick={() => !t.isOverlay && setEditingTask(t)} className={`flex-1 p-2 md:p-3 flex flex-col justify-center text-left transition-colors overflow-hidden ${t.isOverlay ? 'cursor-default pointer-events-none' : (isPrinting ? '' : 'hover:bg-slate-900')}`}>
                             <div className="flex justify-between items-center w-full">
@@ -608,7 +626,7 @@ export default function ScheduleMaster() {
                             {t.isOverlay ? (
                               <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrinting ? 'text-indigo-400' : 'text-indigo-500'}`}>{t.projects?.name}</p>
                             ) : (
-                              <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrinting ? 'text-slate-500' : 'text-slate-500'}`}>{t.project_contacts?.company || 'General'}</p>
+                              <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrinting ? 'text-slate-400' : 'text-slate-500'}`}>{t.project_contacts?.company || 'General'}</p>
                             )}
                           </button>
                         </div>
@@ -627,14 +645,14 @@ export default function ScheduleMaster() {
 
                         <div className="relative flex">
                           {gridDays.map((d, i) => (
-                            <div key={i} className={`flex-shrink-0 border-r h-full transition-colors duration-300 ${isPrinting ? `border-slate-200 ${d.isWeekend ? 'bg-slate-50' : ''}` : `border-slate-800/30 ${d.isWeekend ? 'bg-slate-900/20' : ''}`}`} style={{ width: COL_WIDTH }} />
+                            <div key={i} className={`flex-shrink-0 border-r h-full transition-colors duration-300 ${isPrinting ? `border-slate-200 ${d.isWeekend ? 'bg-slate-100' : ''}` : `border-slate-800/30 ${d.isWeekend ? 'bg-slate-900/20' : ''}`}`} style={{ width: COL_WIDTH }} />
                           ))}
 
                           {offsetDays >= 0 && (
                             <div 
-                              className={`absolute top-1/2 -translate-y-1/2 h-6 md:h-8 rounded flex items-center transition-colors group/bar overflow-hidden ${
+                              className={`absolute top-1/2 -translate-y-1/2 h-8 rounded-lg flex items-center transition-colors group/bar overflow-hidden z-20 ${
                                 isPrinting ? 
-                                    (t.isOverlay ? 'bg-indigo-100 border border-indigo-300 border-dashed' : isCritical ? 'bg-red-200 border border-red-400' : 'bg-blue-200 border border-blue-400') 
+                                    (t.isOverlay ? 'bg-indigo-100 border border-indigo-300 border-dashed' : isCritical ? 'bg-red-100 border border-red-300' : 'bg-blue-100 border border-blue-300') 
                                 :
                                     (t.isOverlay ? 'bg-indigo-600/30 border border-indigo-400 border-dashed pointer-events-none' : isCritical ? 'bg-red-600 hover:bg-red-500 border border-red-400 shadow-lg' : 'bg-blue-600 hover:bg-blue-500 border border-blue-400 shadow-lg')
                               }`}
@@ -651,9 +669,8 @@ export default function ScheduleMaster() {
                                 </div>
                               )}
 
-                              <div className="flex-1 truncate pointer-events-none px-1 flex items-center">
-                                <span className={`text-[8px] md:text-[9px] font-black leading-none ${isPrinting ? 'text-slate-800' : 'text-white'}`}>
-                                  {/* Ensure link icon is visible on print */}
+                              <div className="flex-1 truncate pointer-events-none px-2 flex items-center">
+                                <span className={`text-[8px] md:text-[9px] font-black leading-none ${isPrinting ? 'text-slate-700' : 'text-white'}`}>
                                   {t.dependencies?.length > 0 && <LinkIcon size={8} className="inline mr-1 opacity-70" />}
                                   {t.isOverlay && t.project_contacts?.company}
                                 </span>
@@ -670,7 +687,6 @@ export default function ScheduleMaster() {
                             </div>
                           )}
                         </div>
-
                       </div>
                     )
                   })}
