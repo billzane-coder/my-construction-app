@@ -42,11 +42,18 @@ export default function ScheduleMaster() {
      return new Set();
   });
 
-  const [leftColWidths, setLeftColWidths] = useState({
-    task: typeof window !== 'undefined' && window.innerWidth < 768 ? 160 : 260,
-    start: 55,
-    end: 55,
-    dur: 40
+  // --- UPGRADED: COLUMN RESIZING STATE ---
+  const [leftColWidths, setLeftColWidths] = useState(() => {
+    if (typeof window !== 'undefined') {
+       const saved = localStorage.getItem(`schedule_cols_${id}`);
+       if (saved) return JSON.parse(saved);
+    }
+    return {
+      task: typeof window !== 'undefined' && window.innerWidth < 768 ? 160 : 260,
+      start: 60,
+      end: 60,
+      dur: 45
+    }
   })
   
   const [resizingCol, setResizingCol] = useState<keyof typeof leftColWidths | null>(null)
@@ -67,15 +74,15 @@ export default function ScheduleMaster() {
   const [newTask, setNewTask] = useState({ name: '', trade: '', start: '', duration: 1, deps: [] as string[], category: 'Pre-con' })
   const [editingTask, setEditingTask] = useState<any>(null)
   
-  // Export Theme State
-  const [isPrinting, setIsPrinting] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
 
+  // Save layout preferences
   useEffect(() => {
      if (typeof window !== 'undefined') {
        localStorage.setItem(`schedule_collapsed_${id}`, JSON.stringify(Array.from(collapsedCats)));
+       localStorage.setItem(`schedule_cols_${id}`, JSON.stringify(leftColWidths));
      }
-  }, [collapsedCats, id]);
+  }, [collapsedCats, leftColWidths, id]);
 
   useEffect(() => {
     async function fetchData() {
@@ -122,26 +129,36 @@ export default function ScheduleMaster() {
     )
   }
 
-  const handleColResizeStart = (e: React.PointerEvent, colName: keyof typeof leftColWidths) => {
-    e.stopPropagation()
-    e.currentTarget.setPointerCapture(e.pointerId)
-    setResizingCol(colName)
-    setResizeStartX(e.clientX)
-    setResizeStartWidth(leftColWidths[colName])
-  }
+  // --- UPGRADED: NATIVE WINDOW RESIZING ENGINE ---
+  useEffect(() => {
+    const handleMove = (e: PointerEvent) => {
+      if (!resizingCol) return;
+      const deltaX = e.clientX - resizeStartX;
+      const newWidth = Math.max(40, resizeStartWidth + deltaX);
+      setLeftColWidths(prev => ({ ...prev, [resizingCol]: newWidth }));
+    };
 
-  const handleColResizeMove = (e: React.PointerEvent) => {
-    if (!resizingCol) return
-    const deltaX = e.clientX - resizeStartX
-    const newWidth = Math.max(30, resizeStartWidth + deltaX) 
-    setLeftColWidths(prev => ({ ...prev, [resizingCol]: newWidth }))
-  }
+    const handleUp = () => {
+      setResizingCol(null);
+    };
 
-  const handleColResizeEnd = (e: React.PointerEvent) => {
-    if (!resizingCol) return
-    e.currentTarget.releasePointerCapture(e.pointerId)
-    setResizingCol(null)
-  }
+    if (resizingCol) {
+      window.addEventListener('pointermove', handleMove);
+      window.addEventListener('pointerup', handleUp);
+    }
+
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+  }, [resizingCol, resizeStartX, resizeStartWidth]);
+
+  const startColResize = (e: React.PointerEvent, colName: keyof typeof leftColWidths) => {
+    e.preventDefault();
+    setResizingCol(colName);
+    setResizeStartX(e.clientX);
+    setResizeStartWidth(leftColWidths[colName]);
+  };
 
   const totalLeftWidth = leftColWidths.task + leftColWidths.start + leftColWidths.end + leftColWidths.dur;
 
@@ -190,8 +207,7 @@ export default function ScheduleMaster() {
       })
     }
 
-    // MAP Y AND X COORDINATES FOR SVG ARROWS
-    let currentY = 64 + (isPrinting ? 100 : 0); // Offset for PDF header if printing
+    let currentY = 64; 
     const coords: Record<string, { xStart: number, xEnd: number, yCenter: number }> = {};
     
     Object.entries(globalGrouped as Record<string, any[]>).forEach(([cat, catTasks]) => {
@@ -213,7 +229,7 @@ export default function ScheduleMaster() {
     });
 
     return { processedTasks: pTasks, projectEndDate: maxEnd, criticalPathIds: cPath, groupedTasks: grouped, globalGroupedTasks: globalGrouped, taskCoordinates: coords }
-  }, [tasks, overlayTasks, overlayProjects, gridStartDate, collapsedCats, isPrinting])
+  }, [tasks, overlayTasks, overlayProjects, gridStartDate, collapsedCats])
 
   const handleHPointerDown = (e: React.PointerEvent, taskId: string, start_date: string, type: 'move' | 'extendEnd', duration: number) => {
     e.stopPropagation()
@@ -399,56 +415,44 @@ export default function ScheduleMaster() {
     })
   }
 
-  // --- THE CURTAIN METHOD EXPORT ---
+  // --- BULLETPROOF EXPORT METHOD (html2canvas) ---
   const handlePrint = async () => {
-    const element = document.getElementById('gantt-export-clone');
-    if (!element) return;
-    
-    setIsExporting(true); // Drop the curtain
+    setIsExporting(true);
     setSaving(true);
 
-    try {
-      await new Promise(r => setTimeout(r, 100)); // Allow curtain to render
-      setIsPrinting(true); // Flip to light mode behind the curtain
-      await new Promise(r => setTimeout(r, 600)); // Wait for styles to settle and DOM to expand fully
+    setTimeout(async () => {
+      try {
+        const element = document.getElementById('gantt-export-clone');
+        if (!element) throw new Error("Export container missing");
 
-      const { toPng } = await import('html-to-image');
-      const { jsPDF } = await import('jspdf');
+        // Switch to html2canvas, which parses SVGs and complex layouts much better
+        const html2canvas = (await import('html2canvas')).default;
+        const { jsPDF } = await import('jspdf');
 
-      const width = element.scrollWidth;
-      const height = element.scrollHeight;
+        const canvas = await html2canvas(element, {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff'
+        });
 
-      const imgData = await toPng(element, {
-        quality: 1.0,
-        backgroundColor: '#ffffff', // Clean white background for the PDF
-        pixelRatio: 2, 
-        width: width,
-        height: height,
-        style: {
-           transform: 'scale(1)',
-           transformOrigin: 'top left',
-           width: `${width}px`,
-           height: `${height}px`
-        },
-        filter: (node) => node.tagName !== 'IMG' // Prevent CORS pollution
-      });
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
+        
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
 
-      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (height * pdfWidth) / width;
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+        pdf.save(`Project_Schedule_${id}.pdf`);
 
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`Project_Schedule_${id}.pdf`);
-
-    } catch (error) {
-      console.error('PDF Export Error:', error);
-      alert('Failed to generate PDF. Check console.');
-    } finally {
-        setIsPrinting(false); // Flip back to dark mode
-        await new Promise(r => setTimeout(r, 100)); // Let styles revert
-        setIsExporting(false); // Pull curtain back up
+      } catch (error) {
+        console.error('PDF Export Error:', error);
+        alert('Failed to generate PDF. Check console.');
+      } finally {
+        setIsExporting(false);
         setSaving(false);
-    }
+      }
+    }, 1500); 
   }
 
   const calculateTotalDays = () => {
@@ -495,40 +499,40 @@ export default function ScheduleMaster() {
     const activeTaskMap = overlayProjects.length > 0 ? globalGroupedTasks : groupedTasks;
 
     return (
-      <div className={`w-max min-w-full relative ${isPrintMode ? 'bg-white' : 'bg-slate-900'}`}>
+      <div className={`w-max min-w-full relative ${isPrintMode ? 'bg-white text-slate-900' : 'bg-slate-900 text-slate-100'}`}>
 
         {/* STICKY HEADER ROW */}
-        <div className={`flex sticky top-0 z-40 border-b shadow-sm h-16 ${isPrintMode ? 'bg-slate-100 border-slate-300' : 'bg-slate-900 border-slate-800'}`}>
+        <div className={`flex sticky top-0 z-50 border-b shadow-sm h-16 ${isPrintMode ? 'bg-slate-100 border-slate-300' : 'bg-slate-900 border-slate-800'}`}>
           
-          <div className={`sticky left-0 z-50 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.3)] ${isPrintMode ? 'bg-slate-100 border-slate-300 text-slate-600' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
-            <div style={{ width: leftColWidths.task }} className="relative shrink-0 p-2 border-r flex flex-col justify-end font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
+          <div className={`sticky left-0 z-50 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.4)] ${isPrintMode ? 'bg-slate-100 border-slate-300' : 'bg-slate-900 border-slate-800'}`}>
+            <div style={{ width: leftColWidths.task }} className={`relative shrink-0 p-2 border-r flex flex-col justify-end font-black text-[9px] md:text-[10px] uppercase tracking-widest ${isPrintMode ? 'border-slate-300 text-slate-700' : 'border-slate-800 text-slate-500'}`}>
               Trade / Task
-              {!isPrintMode && <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => handleColResizeStart(e, 'task')} onPointerMove={handleColResizeMove} onPointerUp={handleColResizeEnd} />}
+              {!isPrintMode && <div className="absolute right-[-4px] top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => startColResize(e, 'task')} />}
             </div>
-            <div style={{ width: leftColWidths.start }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
+            <div style={{ width: leftColWidths.start }} className={`relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest ${isPrintMode ? 'border-slate-300 text-slate-700' : 'border-slate-800 text-slate-500'}`}>
               Start
-              {!isPrintMode && <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => handleColResizeStart(e, 'start')} onPointerMove={handleColResizeMove} onPointerUp={handleColResizeEnd} />}
+              {!isPrintMode && <div className="absolute right-[-4px] top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => startColResize(e, 'start')} />}
             </div>
-            <div style={{ width: leftColWidths.end }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
+            <div style={{ width: leftColWidths.end }} className={`relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest ${isPrintMode ? 'border-slate-300 text-slate-700' : 'border-slate-800 text-slate-500'}`}>
               End
-              {!isPrintMode && <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => handleColResizeStart(e, 'end')} onPointerMove={handleColResizeMove} onPointerUp={handleColResizeEnd} />}
+              {!isPrintMode && <div className="absolute right-[-4px] top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => startColResize(e, 'end')} />}
             </div>
-            <div style={{ width: leftColWidths.dur }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
+            <div style={{ width: leftColWidths.dur }} className={`relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest ${isPrintMode ? 'border-slate-300 text-slate-700' : 'border-slate-800 text-slate-500'}`}>
               Dur.
-              {!isPrintMode && <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => handleColResizeStart(e, 'dur')} onPointerMove={handleColResizeMove} onPointerUp={handleColResizeEnd} />}
+              {!isPrintMode && <div className="absolute right-[-4px] top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => startColResize(e, 'dur')} />}
             </div>
           </div>
 
           <div className="flex flex-col h-full">
-            <div className={`flex border-b h-8 ${isPrintMode ? 'border-slate-300 text-slate-800' : 'border-slate-800/50 text-blue-500'}`}>
+            <div className={`flex border-b h-8 ${isPrintMode ? 'border-slate-300' : 'border-slate-800/50'}`}>
               {monthSpans.map((m, i) => (
-                <div key={i} className="px-2 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border-r truncate border-[inherit]" style={{ width: m.colSpan * COL_WIDTH }}>{m.name}</div>
+                <div key={i} className={`px-2 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border-r truncate ${isPrintMode ? 'border-slate-300 text-slate-800' : 'border-slate-800/50 text-blue-500'}`} style={{ width: m.colSpan * COL_WIDTH }}>{m.name}</div>
               ))}
             </div>
             <div className="flex h-8">
               {gridDays.map((d, i) => (
-                <div key={i} className={`flex-shrink-0 flex items-center justify-center border-r ${isPrintMode ? `border-slate-300 ${d.isWeekend ? 'bg-slate-100' : ''}` : `border-slate-800/50 ${d.isWeekend ? 'bg-slate-950/50' : ''}`}`} style={{ width: COL_WIDTH }}>
-                  <span className={`text-[8px] md:text-[9px] font-black ${isPrintMode ? (d.isWeekend ? 'text-slate-500' : 'text-slate-700') : (d.isWeekend ? 'text-slate-600' : 'text-slate-300')}`}>{d.date.getDate()}</span>
+                <div key={i} className={`flex-shrink-0 flex items-center justify-center border-r ${isPrintMode ? `border-slate-300 ${d.isWeekend ? 'bg-slate-200' : 'bg-slate-50'}` : `border-slate-800/50 ${d.isWeekend ? 'bg-slate-950/50' : ''}`}`} style={{ width: COL_WIDTH }}>
+                  <span className={`text-[8px] md:text-[9px] font-black ${isPrintMode ? (d.isWeekend ? 'text-slate-500' : 'text-slate-800') : (d.isWeekend ? 'text-slate-600' : 'text-slate-300')}`}>{d.date.getDate()}</span>
                 </div>
               ))}
             </div>
@@ -536,7 +540,7 @@ export default function ScheduleMaster() {
         </div>
 
         {Object.keys(activeTaskMap).length === 0 && (
-           <div className={`p-12 text-center text-[10px] font-black uppercase tracking-widest ${isPrintMode ? 'text-slate-400' : 'text-slate-600'}`}>No tasks scheduled yet.</div>
+           <div className={`p-12 text-center text-[10px] font-black uppercase tracking-widest ${isPrintMode ? 'text-slate-500' : 'text-slate-600'}`}>No tasks scheduled yet.</div>
         )}
         
         {Object.entries(activeTaskMap as Record<string, any[]>).map(([category, catTasks]) => {
@@ -548,28 +552,28 @@ export default function ScheduleMaster() {
             <div key={category} className={`group ${isDraggedCategory && !isPrintMode ? 'opacity-50' : ''}`} onDragOver={(e) => !isPrintMode && e.preventDefault()} onDrop={(e) => { if(!isPrintMode) {e.preventDefault(); handleDrop(e, category);} }}>
               
               {/* CATEGORY HEADER */}
-              <div draggable={!isPrintMode} onDragStart={(e) => !isPrintMode && handleDragStartCategory(e, category)} className={`flex border-b h-12 sticky left-0 z-30 ${isPrintMode ? 'bg-slate-100 border-slate-300' : 'bg-slate-950/50 border-slate-800/50'}`}>
+              <div draggable={!isPrintMode} onDragStart={(e) => !isPrintMode && handleDragStartCategory(e, category)} className={`flex border-b h-12 sticky left-0 z-40 ${isPrintMode ? 'bg-slate-200 border-slate-300' : 'bg-slate-950 border-slate-800/50'}`}>
                 
-                <div className={`sticky left-0 z-30 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.3)] ${isPrintMode ? 'bg-slate-200 border-slate-300' : 'bg-slate-950/80 border-slate-800'}`}>
-                  <div style={{ width: leftColWidths.task }} className="shrink-0 flex items-stretch border-r border-[inherit]">
+                <div className={`sticky left-0 z-40 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.4)] ${isPrintMode ? 'bg-slate-200' : 'bg-slate-950'}`}>
+                  <div style={{ width: leftColWidths.task }} className={`shrink-0 flex items-stretch border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
                     {!isPrintMode && (
                       <div className="hidden md:flex w-8 items-center justify-center cursor-grab active:cursor-grabbing border-r hover:bg-slate-900 text-slate-600 hover:text-white border-slate-800/50">
                         <GripVertical size={14} />
                       </div>
                     )}
-                    <button onClick={() => !isPrintMode && toggleCategory(category)} className={`flex-1 p-2 flex items-center gap-1 text-left overflow-hidden ${isPrintMode ? 'cursor-default pointer-events-none' : 'hover:bg-slate-900'}`}>
+                    <button onClick={() => !isPrintMode && toggleCategory(category)} className={`flex-1 p-2 flex items-center gap-1 text-left overflow-hidden ${isPrintMode ? '' : 'hover:bg-slate-900'}`}>
                       {!isPrintMode && (isCollapsed ? <ChevronRight size={14} className="text-slate-500 shrink-0" /> : <ChevronDown size={14} className="text-slate-500 shrink-0" />)}
                       <span className={`text-[10px] md:text-xs font-black uppercase tracking-widest truncate ${isPrintMode ? 'text-slate-900' : 'text-white'}`}>{category}</span>
                       <span className={`text-[8px] md:text-[9px] font-bold ml-auto px-2 py-0.5 rounded hidden sm:inline-block ${isPrintMode ? 'text-slate-600 bg-slate-300' : 'text-slate-500 bg-slate-900'}`}>{catTasks.length}</span>
                     </button>
                   </div>
-                  <div style={{ width: leftColWidths.start }} className={`shrink-0 border-r flex items-center justify-center border-[inherit]`}>
-                     {catDates && <span className={`text-[9px] font-bold ${isPrintMode ? 'text-slate-500' : 'text-slate-600'}`}>{catDates.start}</span>}
+                  <div style={{ width: leftColWidths.start }} className={`shrink-0 flex items-center justify-center border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
+                     {catDates && <span className={`text-[9px] font-bold ${isPrintMode ? 'text-slate-600' : 'text-slate-500'}`}>{catDates.start}</span>}
                   </div>
-                  <div style={{ width: leftColWidths.end }} className={`shrink-0 border-r flex items-center justify-center border-[inherit]`}>
-                     {catDates && <span className={`text-[9px] font-bold ${isPrintMode ? 'text-slate-500' : 'text-slate-600'}`}>{catDates.end}</span>}
+                  <div style={{ width: leftColWidths.end }} className={`shrink-0 flex items-center justify-center border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
+                     {catDates && <span className={`text-[9px] font-bold ${isPrintMode ? 'text-slate-600' : 'text-slate-500'}`}>{catDates.end}</span>}
                   </div>
-                  <div style={{ width: leftColWidths.dur }} className={`shrink-0 border-r border-[inherit]`} />
+                  <div style={{ width: leftColWidths.dur }} className={`shrink-0 border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`} />
                 </div>
                 
                 <div className="flex-1 flex pointer-events-none" />
@@ -591,10 +595,11 @@ export default function ScheduleMaster() {
                     onDrop={(e) => { if(!isPrintMode){ e.preventDefault(); handleDrop(e, category, t.id) } }}
                   >
                     
-                    <div className={`sticky left-0 z-20 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.3)] ${isPrintMode ? 'bg-white border-slate-300' : 'bg-slate-950 border-slate-800'}`}>
-                      <div style={{ width: leftColWidths.task }} className="shrink-0 flex items-stretch border-r border-[inherit]">
+                    {/* --- THE FIX: THIS Z-INDEX MUST BE HIGHER THAN THE TASK BAR Z-INDEX (20) --- */}
+                    <div className={`sticky left-0 z-40 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.4)] ${isPrintMode ? 'bg-white' : 'bg-slate-950'}`}>
+                      <div style={{ width: leftColWidths.task }} className={`shrink-0 flex items-stretch border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
                         {!t.isOverlay && !isPrintMode && (
-                          <div draggable onDragStart={(e) => handleDragStartTask(e, t.id)} className="hidden md:flex w-8 items-center justify-center border-r cursor-grab active:cursor-grabbing border-[inherit] hover:bg-slate-800 text-slate-600 hover:text-white">
+                          <div draggable onDragStart={(e) => handleDragStartTask(e, t.id)} className="hidden md:flex w-8 items-center justify-center border-r cursor-grab active:cursor-grabbing border-slate-800/50 hover:bg-slate-800 text-slate-600 hover:text-white">
                             <GripVertical size={14} />
                           </div>
                         )}
@@ -602,27 +607,27 @@ export default function ScheduleMaster() {
                         
                         <button onClick={() => !t.isOverlay && !isPrintMode && setEditingTask(t)} className={`flex-1 p-2 flex flex-col justify-center text-left overflow-hidden ${t.isOverlay || isPrintMode ? 'cursor-default pointer-events-none' : 'hover:bg-slate-900'}`}>
                           <div className="flex justify-between items-center w-full">
-                            <p className={`text-[9px] md:text-[11px] font-bold truncate pr-2 ${isPrintMode ? (t.isOverlay ? 'text-indigo-600' : 'text-slate-800') : (t.isOverlay ? 'text-indigo-300' : 'text-white')}`}>{t.task_name}</p>
+                            <p className={`text-[9px] md:text-[11px] font-bold truncate pr-2 ${isPrintMode ? (t.isOverlay ? 'text-indigo-600' : 'text-slate-900') : (t.isOverlay ? 'text-indigo-300' : 'text-white')}`}>{t.task_name}</p>
                             {!t.isOverlay && !isPrintMode && <Edit2 size={12} className="text-slate-600 shrink-0 hover:text-white hidden sm:block" />}
                           </div>
                           {t.isOverlay ? (
-                            <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrintMode ? 'text-indigo-400' : 'text-indigo-500'}`}>{t.projects?.name}</p>
+                            <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrintMode ? 'text-indigo-500' : 'text-indigo-500'}`}>{t.projects?.name}</p>
                           ) : (
-                            <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrintMode ? 'text-slate-500' : 'text-slate-400'}`}>{t.project_contacts?.company || 'General'}</p>
+                            <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrintMode ? 'text-slate-500' : 'text-slate-500'}`}>{t.project_contacts?.company || 'General'}</p>
                           )}
                         </button>
                       </div>
                       
-                      <div style={{ width: leftColWidths.start }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
-                        <span className={`text-[8px] md:text-[10px] font-bold ${isPrintMode ? 'text-slate-600' : 'text-slate-400'}`}>{new Date(startMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
+                      <div style={{ width: leftColWidths.start }} className={`shrink-0 p-2 border-r flex items-center justify-center ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
+                        <span className={`text-[8px] md:text-[10px] font-bold ${isPrintMode ? 'text-slate-700' : 'text-slate-400'}`}>{new Date(startMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
                       </div>
 
-                      <div style={{ width: leftColWidths.end }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
-                        <span className={`text-[8px] md:text-[10px] font-bold ${isPrintMode ? 'text-slate-600' : 'text-slate-400'}`}>{new Date(endMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
+                      <div style={{ width: leftColWidths.end }} className={`shrink-0 p-2 border-r flex items-center justify-center ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
+                        <span className={`text-[8px] md:text-[10px] font-bold ${isPrintMode ? 'text-slate-700' : 'text-slate-400'}`}>{new Date(endMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
                       </div>
 
-                      <div style={{ width: leftColWidths.dur }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
-                        <span className={`text-[9px] md:text-[11px] font-black ${isPrintMode ? 'text-slate-800' : 'text-white'}`}>{t.duration_days}d</span>
+                      <div style={{ width: leftColWidths.dur }} className={`shrink-0 p-2 border-r flex items-center justify-center ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
+                        <span className={`text-[9px] md:text-[11px] font-black ${isPrintMode ? 'text-slate-900' : 'text-white'}`}>{t.duration_days}d</span>
                       </div>
                     </div>
 
@@ -635,7 +640,7 @@ export default function ScheduleMaster() {
                         <div 
                           className={`absolute top-1/2 -translate-y-1/2 h-8 rounded flex items-center group/bar overflow-hidden z-20 ${
                             isPrintMode ? 
-                                (t.isOverlay ? 'bg-indigo-600 border-2 border-indigo-800 border-dashed' : isCritical ? 'bg-red-600 border-2 border-red-900' : 'bg-blue-600 border-2 border-blue-900') 
+                                (t.isOverlay ? 'bg-indigo-100 border-2 border-indigo-400 border-dashed' : isCritical ? 'bg-red-500 border-2 border-red-700' : 'bg-blue-500 border-2 border-blue-700') 
                             :
                                 (t.isOverlay ? 'bg-indigo-600/30 border border-indigo-400 border-dashed pointer-events-none' : isCritical ? 'bg-red-600 hover:bg-red-500 border border-red-400 shadow-lg' : 'bg-blue-600 hover:bg-blue-500 border border-blue-400 shadow-lg')
                           }`}
@@ -653,7 +658,7 @@ export default function ScheduleMaster() {
                           )}
 
                           <div className="flex-1 truncate pointer-events-none px-2 flex items-center">
-                            <span className={`text-[8px] md:text-[9px] font-black leading-none text-white`}>
+                            <span className={`text-[8px] md:text-[9px] font-black leading-none ${isPrintMode && t.isOverlay ? 'text-indigo-900' : 'text-white'}`}>
                               {t.dependencies?.length > 0 && <LinkIcon size={8} className="inline mr-1 opacity-70" />}
                               {t.isOverlay && t.project_contacts?.company}
                             </span>
@@ -678,11 +683,7 @@ export default function ScheduleMaster() {
           )
         })}
 
-        {/* 
-            CRITICAL FIX: DEPENDENCY ARROWS MUST BE RENDERED LAST 
-            By placing the absolute overlay here at the end of the container, 
-            it renders on top of the row backgrounds but underneath the z-20 task bars.
-        */}
+        {/* DEPENDENCY ARROW SVG OVERLAY - RENDERED AT THE BOTTOM SO IT DRAWS OVER ROWS BUT UNDER LEFT PANEL */}
         <div className="absolute top-0 bottom-0 right-0 z-10 pointer-events-none overflow-hidden" style={{ left: totalLeftWidth }}>
           <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
             <defs>
@@ -748,18 +749,21 @@ export default function ScheduleMaster() {
         </div>
       )}
 
-      {/* --- HIDDEN CLONE FOR PDF EXPORT --- */}
-      {isExporting && (
-        <div className="absolute top-0 left-0 z-[9998] w-max min-w-full bg-white" id="gantt-export-clone">
-           <div className="p-8 border border-slate-300">
-              <div className="mb-8 border-b-2 border-slate-300 pb-4">
-                <h1 className="text-4xl font-black text-slate-900 tracking-tighter uppercase italic leading-none">Master Schedule</h1>
-                <p className="text-xs font-black text-slate-500 uppercase tracking-widest mt-2">Generated: {new Date().toLocaleDateString()}</p>
-              </div>
-              <GanttChartContent isPrintMode={true} />
-           </div>
-        </div>
-      )}
+      {/* --- FIXED OFF-SCREEN CLONE FOR PDF EXPORT --- */}
+      {/* 
+        This is absolutely positioned far off-screen (-9999px).
+        It is fully rendered and takes up physical dimensions so html2canvas can capture it perfectly,
+        but the user never sees the white flash. 
+      */}
+      <div style={{ position: 'fixed', top: '-9999px', left: '-9999px', width: '2400px' }} id="gantt-export-clone">
+         <div className="p-8 border border-slate-300 bg-white">
+            <div className="mb-8 border-b-2 border-slate-300 pb-4">
+              <h1 className="text-4xl font-black text-slate-900 tracking-tighter uppercase italic leading-none">Master Schedule</h1>
+              <p className="text-xs font-black text-slate-500 uppercase tracking-widest mt-2">Generated: {new Date().toLocaleDateString()}</p>
+            </div>
+            <GanttChartContent isPrintMode={true} />
+         </div>
+      </div>
 
       {/* HEADER */}
       <div className="mb-8 border-b-4 border-blue-600 pb-6 flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6">
