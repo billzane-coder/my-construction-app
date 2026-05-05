@@ -68,7 +68,6 @@ export default function ScheduleMaster() {
   const [editingTask, setEditingTask] = useState<any>(null)
   
   // Export Theme State
-  const [isPrinting, setIsPrinting] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
 
   useEffect(() => {
@@ -191,7 +190,7 @@ export default function ScheduleMaster() {
     }
 
     // MAP Y AND X COORDINATES FOR SVG ARROWS
-    let currentY = 64 + (isPrinting ? 100 : 0); // Offset for PDF header if printing
+    let currentY = 64; 
     const coords: Record<string, { xStart: number, xEnd: number, yCenter: number }> = {};
     
     Object.entries(globalGrouped as Record<string, any[]>).forEach(([cat, catTasks]) => {
@@ -213,7 +212,7 @@ export default function ScheduleMaster() {
     });
 
     return { processedTasks: pTasks, projectEndDate: maxEnd, criticalPathIds: cPath, groupedTasks: grouped, globalGroupedTasks: globalGrouped, taskCoordinates: coords }
-  }, [tasks, overlayTasks, overlayProjects, gridStartDate, collapsedCats, isPrinting])
+  }, [tasks, overlayTasks, overlayProjects, gridStartDate, collapsedCats])
 
   const handleHPointerDown = (e: React.PointerEvent, taskId: string, start_date: string, type: 'move' | 'extendEnd', duration: number) => {
     e.stopPropagation()
@@ -399,45 +398,53 @@ export default function ScheduleMaster() {
     })
   }
 
-  // --- THE CURTAIN METHOD EXPORT ---
+  // --- THE BULLETPROOF EXPORT ENGINE ---
   const handlePrint = async () => {
-    const element = document.getElementById('gantt-canvas');
-    if (!element) return;
-    
-    setIsExporting(true); // Drop the curtain
+    setIsExporting(true); // Drops the curtain, exposes the clone behind it
     setSaving(true);
 
-    try {
-      await new Promise(r => setTimeout(r, 100)); // Allow curtain to render
-      setIsPrinting(true); // Flip to light mode behind the curtain
-      await new Promise(r => setTimeout(r, 500)); // Wait for styles to settle and DOM to expand
+    // Provide ample time (1.5s) for React to mount the hidden clone and the browser to paint it
+    setTimeout(async () => {
+      try {
+        const element = document.getElementById('gantt-export-clone');
+        if (!element) throw new Error("Export element missing");
 
-      const { toJpeg } = await import('html-to-image');
-      const { jsPDF } = await import('jspdf');
+        // We use toPng instead of toJpeg to handle SVGs/Transparency better
+        const { toPng } = await import('html-to-image');
+        const { jsPDF } = await import('jspdf');
 
-      const imgData = await toJpeg(element, {
-        quality: 0.9,
-        backgroundColor: '#f8fafc', // Soft slate-50
-        pixelRatio: 2, 
-        filter: (node) => node.tagName !== 'IMG' // Prevent CORS pollution
-      });
+        const width = element.scrollWidth;
+        const height = element.scrollHeight;
 
-      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (element.scrollHeight * pdfWidth) / element.scrollWidth;
+        const imgData = await toPng(element, {
+          quality: 1.0,
+          backgroundColor: '#f8fafc',
+          pixelRatio: 2, 
+          width: width,
+          height: height,
+          style: {
+             transform: 'scale(1)',
+             transformOrigin: 'top left',
+             width: `${width}px`,
+             height: `${height}px`
+          }
+        });
 
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`Project_Schedule_${id}.pdf`);
+        const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = (height * pdfWidth) / width;
 
-    } catch (error) {
-      console.error('PDF Export Error:', error);
-      alert('Failed to generate PDF. Check console.');
-    } finally {
-        setIsPrinting(false); // Flip back to dark mode
-        await new Promise(r => setTimeout(r, 100)); // Let styles revert
-        setIsExporting(false); // Pull curtain back up
-        setSaving(false);
-    }
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+        pdf.save(`Project_Schedule_${id}.pdf`);
+
+      } catch (error) {
+        console.error('PDF Export Error:', error);
+        alert('Failed to generate PDF. Check console.');
+      } finally {
+          setIsExporting(false); // Pull curtain back up, destroy clone
+          setSaving(false);
+      }
+    }, 1500); 
   }
 
   const calculateTotalDays = () => {
@@ -479,19 +486,268 @@ export default function ScheduleMaster() {
       };
   }
 
+  // --- REUSABLE GANTT COMPONENT ---
+  const GanttChartContent = ({ isPrintMode }: { isPrintMode: boolean }) => {
+    const activeTaskMap = overlayProjects.length > 0 ? globalGroupedTasks : groupedTasks;
+
+    return (
+      <div className={`w-max min-w-full relative ${isPrintMode ? 'bg-slate-50' : 'bg-slate-900'}`}>
+
+        {/* DEPENDENCY ARROW SVG OVERLAY - Added xmlns attribute to prevent PDF blanking */}
+        <div className="absolute top-0 bottom-0 right-0 z-10 pointer-events-none overflow-hidden" style={{ left: totalLeftWidth }}>
+          <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id={isPrintMode ? "arrowHeadPrint" : "arrowHeadScreen"} markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L6,3 z" fill={isPrintMode ? "#94a3b8" : "#475569"} />
+              </marker>
+            </defs>
+            {processedTasks.flatMap(task => {
+              if (!task.dependencies || task.dependencies.length === 0 || task.isOverlay) return [];
+              const endCoords = taskCoordinates[task.id];
+              if (!endCoords) return []; 
+
+              return task.dependencies.map((depId: string) => {
+                const startCoords = taskCoordinates[depId];
+                if (!startCoords) return null; 
+
+                const startX = startCoords.xEnd;
+                const startY = startCoords.yCenter;
+                const endX = endCoords.xStart;
+                const endY = endCoords.yCenter;
+
+                let pathD = "";
+                if (endX >= startX + 10) {
+                    const midX = startX + 10;
+                    pathD = `M ${startX},${startY} L ${midX},${startY} L ${midX},${endY} L ${endX},${endY}`;
+                } else {
+                    const dropY = startY + (endY > startY ? 14 : -14); 
+                    const midX = endX - 10;
+                    pathD = `M ${startX},${startY} L ${startX + 10},${startY} L ${startX + 10},${dropY} L ${midX},${dropY} L ${midX},${endY} L ${endX},${endY}`;
+                }
+
+                return (
+                  <path 
+                    key={`${depId}->${task.id}`} 
+                    d={pathD} 
+                    fill="none" 
+                    stroke={isPrintMode ? "#cbd5e1" : "#334155"} 
+                    strokeWidth="1.5" 
+                    markerEnd={`url(#${isPrintMode ? "arrowHeadPrint" : "arrowHeadScreen"})`} 
+                  />
+                );
+              });
+            })}
+          </svg>
+        </div>
+
+        {/* STICKY HEADER ROW */}
+        <div className={`flex sticky top-0 z-40 border-b shadow-sm h-16 ${isPrintMode ? 'bg-slate-100 border-slate-300' : 'bg-slate-900 border-slate-800'}`}>
+          
+          <div className={`sticky left-0 z-50 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.3)] ${isPrintMode ? 'bg-slate-100 border-slate-300 text-slate-600' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
+            <div style={{ width: leftColWidths.task }} className="relative shrink-0 p-2 border-r flex flex-col justify-end font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
+              Trade / Task
+              {!isPrintMode && <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => handleColResizeStart(e, 'task')} onPointerMove={handleColResizeMove} onPointerUp={handleColResizeEnd} />}
+            </div>
+            <div style={{ width: leftColWidths.start }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
+              Start
+              {!isPrintMode && <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => handleColResizeStart(e, 'start')} onPointerMove={handleColResizeMove} onPointerUp={handleColResizeEnd} />}
+            </div>
+            <div style={{ width: leftColWidths.end }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
+              End
+              {!isPrintMode && <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => handleColResizeStart(e, 'end')} onPointerMove={handleColResizeMove} onPointerUp={handleColResizeEnd} />}
+            </div>
+            <div style={{ width: leftColWidths.dur }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
+              Dur.
+              {!isPrintMode && <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => handleColResizeStart(e, 'dur')} onPointerMove={handleColResizeMove} onPointerUp={handleColResizeEnd} />}
+            </div>
+          </div>
+
+          <div className="flex flex-col h-full">
+            <div className={`flex border-b h-8 ${isPrintMode ? 'border-slate-300 text-slate-800' : 'border-slate-800/50 text-blue-500'}`}>
+              {monthSpans.map((m, i) => (
+                <div key={i} className="px-2 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border-r truncate border-[inherit]" style={{ width: m.colSpan * COL_WIDTH }}>{m.name}</div>
+              ))}
+            </div>
+            <div className="flex h-8">
+              {gridDays.map((d, i) => (
+                <div key={i} className={`flex-shrink-0 flex items-center justify-center border-r ${isPrintMode ? `border-slate-300 ${d.isWeekend ? 'bg-slate-200' : ''}` : `border-slate-800/50 ${d.isWeekend ? 'bg-slate-950/50' : ''}`}`} style={{ width: COL_WIDTH }}>
+                  <span className={`text-[8px] md:text-[9px] font-black ${isPrintMode ? (d.isWeekend ? 'text-slate-500' : 'text-slate-700') : (d.isWeekend ? 'text-slate-600' : 'text-slate-300')}`}>{d.date.getDate()}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {Object.keys(activeTaskMap).length === 0 && (
+           <div className={`p-12 text-center text-[10px] font-black uppercase tracking-widest ${isPrintMode ? 'text-slate-400' : 'text-slate-600'}`}>No tasks scheduled yet.</div>
+        )}
+        
+        {Object.entries(activeTaskMap as Record<string, any[]>).map(([category, catTasks]) => {
+          const isCollapsed = collapsedCats.has(category)
+          const isDraggedCategory = reorderingCategory === category
+          const catDates = getCategoryDates(catTasks);
+          
+          return (
+            <div key={category} className={`group ${isDraggedCategory && !isPrintMode ? 'opacity-50' : ''}`} onDragOver={(e) => !isPrintMode && e.preventDefault()} onDrop={(e) => { if(!isPrintMode) {e.preventDefault(); handleDrop(e, category);} }}>
+              
+              {/* CATEGORY HEADER */}
+              <div draggable={!isPrintMode} onDragStart={(e) => !isPrintMode && handleDragStartCategory(e, category)} className={`flex border-b h-12 sticky left-0 z-30 ${isPrintMode ? 'bg-slate-100 border-slate-300' : 'bg-slate-950/50 border-slate-800/50'}`}>
+                
+                <div className={`sticky left-0 z-30 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.3)] ${isPrintMode ? 'bg-slate-200 border-slate-300' : 'bg-slate-950/80 border-slate-800'}`}>
+                  <div style={{ width: leftColWidths.task }} className="shrink-0 flex items-stretch border-r border-[inherit]">
+                    {!isPrintMode && (
+                      <div className="hidden md:flex w-8 items-center justify-center cursor-grab active:cursor-grabbing border-r hover:bg-slate-900 text-slate-600 hover:text-white border-slate-800/50">
+                        <GripVertical size={14} />
+                      </div>
+                    )}
+                    <button onClick={() => !isPrintMode && toggleCategory(category)} className={`flex-1 p-2 flex items-center gap-1 text-left overflow-hidden ${isPrintMode ? 'cursor-default pointer-events-none' : 'hover:bg-slate-900'}`}>
+                      {!isPrintMode && (isCollapsed ? <ChevronRight size={14} className="text-slate-500 shrink-0" /> : <ChevronDown size={14} className="text-slate-500 shrink-0" />)}
+                      <span className={`text-[10px] md:text-xs font-black uppercase tracking-widest truncate ${isPrintMode ? 'text-slate-900' : 'text-white'}`}>{category}</span>
+                      <span className={`text-[8px] md:text-[9px] font-bold ml-auto px-2 py-0.5 rounded hidden sm:inline-block ${isPrintMode ? 'text-slate-600 bg-slate-300' : 'text-slate-500 bg-slate-900'}`}>{catTasks.length}</span>
+                    </button>
+                  </div>
+                  <div style={{ width: leftColWidths.start }} className={`shrink-0 border-r flex items-center justify-center border-[inherit]`}>
+                     {catDates && <span className={`text-[9px] font-bold ${isPrintMode ? 'text-slate-500' : 'text-slate-600'}`}>{catDates.start}</span>}
+                  </div>
+                  <div style={{ width: leftColWidths.end }} className={`shrink-0 border-r flex items-center justify-center border-[inherit]`}>
+                     {catDates && <span className={`text-[9px] font-bold ${isPrintMode ? 'text-slate-500' : 'text-slate-600'}`}>{catDates.end}</span>}
+                  </div>
+                  <div style={{ width: leftColWidths.dur }} className={`shrink-0 border-r border-[inherit]`} />
+                </div>
+                
+                <div className="flex-1 flex pointer-events-none" />
+              </div>
+
+              {/* TASK ROWS */}
+              {!isCollapsed && catTasks.map((t: any) => {
+                const startMs = parseDate(t.start_date).getTime()
+                const endMs = startMs + (t.duration_days * DAY_MS)
+                const offsetDays = Math.floor((startMs - gridStartDate.getTime()) / DAY_MS)
+                const isCritical = criticalPathIds.has(t.id) && !t.isOverlay
+                const isDraggedTask = reorderingId === t.id
+
+                return (
+                  <div 
+                    key={`${t.id}-${t.isOverlay ? 'overlay' : 'base'}`} 
+                    className={`flex border-b relative h-14 task-row ${isPrintMode ? 'border-slate-300 bg-white' : 'border-slate-800/50 hover:bg-slate-800/20'} ${isDraggedTask && !isPrintMode ? 'opacity-50' : ''} ${t.isOverlay ? (isPrintMode ? 'opacity-70 bg-slate-50' : 'opacity-60 bg-slate-950/50') : ''}`}
+                    onDragOver={(e) => !isPrintMode && e.preventDefault()}
+                    onDrop={(e) => { if(!isPrintMode){ e.preventDefault(); handleDrop(e, category, t.id) } }}
+                  >
+                    
+                    <div className={`sticky left-0 z-20 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.3)] ${isPrintMode ? 'bg-white border-slate-300' : 'bg-slate-950 border-slate-800'}`}>
+                      <div style={{ width: leftColWidths.task }} className="shrink-0 flex items-stretch border-r border-[inherit]">
+                        {!t.isOverlay && !isPrintMode && (
+                          <div draggable onDragStart={(e) => handleDragStartTask(e, t.id)} className="hidden md:flex w-8 items-center justify-center border-r cursor-grab active:cursor-grabbing border-[inherit] hover:bg-slate-800 text-slate-600 hover:text-white">
+                            <GripVertical size={14} />
+                          </div>
+                        )}
+                        {t.isOverlay && !isPrintMode && <div className="hidden md:block w-8 border-r border-[inherit] bg-slate-950/30" />}
+                        
+                        <button onClick={() => !t.isOverlay && !isPrintMode && setEditingTask(t)} className={`flex-1 p-2 flex flex-col justify-center text-left overflow-hidden ${t.isOverlay || isPrintMode ? 'cursor-default pointer-events-none' : 'hover:bg-slate-900'}`}>
+                          <div className="flex justify-between items-center w-full">
+                            <p className={`text-[9px] md:text-[11px] font-bold truncate pr-2 ${isPrintMode ? (t.isOverlay ? 'text-indigo-600' : 'text-slate-800') : (t.isOverlay ? 'text-indigo-300' : 'text-white')}`}>{t.task_name}</p>
+                            {!t.isOverlay && !isPrintMode && <Edit2 size={12} className="text-slate-600 shrink-0 hover:text-white hidden sm:block" />}
+                          </div>
+                          {t.isOverlay ? (
+                            <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrintMode ? 'text-indigo-400' : 'text-indigo-500'}`}>{t.projects?.name}</p>
+                          ) : (
+                            <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrintMode ? 'text-slate-400' : 'text-slate-500'}`}>{t.project_contacts?.company || 'General'}</p>
+                          )}
+                        </button>
+                      </div>
+                      
+                      <div style={{ width: leftColWidths.start }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
+                        <span className={`text-[8px] md:text-[10px] font-bold ${isPrintMode ? 'text-slate-600' : 'text-slate-400'}`}>{new Date(startMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
+                      </div>
+
+                      <div style={{ width: leftColWidths.end }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
+                        <span className={`text-[8px] md:text-[10px] font-bold ${isPrintMode ? 'text-slate-600' : 'text-slate-400'}`}>{new Date(endMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
+                      </div>
+
+                      <div style={{ width: leftColWidths.dur }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
+                        <span className={`text-[9px] md:text-[11px] font-black ${isPrintMode ? 'text-slate-800' : 'text-white'}`}>{t.duration_days}d</span>
+                      </div>
+                    </div>
+
+                    <div className="relative flex">
+                      {gridDays.map((d, i) => (
+                        <div key={i} className={`flex-shrink-0 border-r h-full ${isPrintMode ? `border-slate-300 ${d.isWeekend ? 'bg-slate-100' : ''}` : `border-slate-800/30 ${d.isWeekend ? 'bg-slate-900/20' : ''}`}`} style={{ width: COL_WIDTH }} />
+                      ))}
+
+                      {offsetDays >= 0 && (
+                        <div 
+                          className={`absolute top-1/2 -translate-y-1/2 h-8 rounded flex items-center group/bar overflow-hidden z-20 shadow-sm ${
+                            isPrintMode ? 
+                                (t.isOverlay ? 'bg-indigo-50 border border-indigo-300 border-dashed' : isCritical ? 'bg-red-100 border border-red-300' : 'bg-blue-100 border border-blue-300') 
+                            :
+                                (t.isOverlay ? 'bg-indigo-600/30 border border-indigo-400 border-dashed pointer-events-none' : isCritical ? 'bg-red-600 hover:bg-red-500 border border-red-400' : 'bg-blue-600 hover:bg-blue-500 border border-blue-400')
+                          }`}
+                          style={{ left: offsetDays * COL_WIDTH, width: Math.max(t.duration_days * COL_WIDTH, COL_WIDTH - 4) }}
+                        >
+                          {!t.isOverlay && !isPrintMode && (
+                            <div 
+                              className="w-4 md:w-6 h-full flex items-center justify-center cursor-grab active:cursor-grabbing shrink-0"
+                              onPointerDown={(e) => handleHPointerDown(e, t.id, t.start_date, 'move', t.duration_days)}
+                              onPointerMove={handleHPointerMove}
+                              onPointerUp={handleHPointerUp}
+                            >
+                              <GripVertical size={10} className="text-white/50 hidden md:block" />
+                            </div>
+                          )}
+
+                          <div className="flex-1 truncate pointer-events-none px-2 flex items-center">
+                            <span className={`text-[8px] md:text-[9px] font-black leading-none ${isPrintMode ? 'text-slate-700' : 'text-white'}`}>
+                              {t.dependencies?.length > 0 && <LinkIcon size={8} className="inline mr-1 opacity-70" />}
+                              {t.isOverlay && t.project_contacts?.company}
+                            </span>
+                          </div>
+
+                          {!t.isOverlay && !isPrintMode && (
+                            <div 
+                              className="w-3 md:w-4 h-full cursor-col-resize shrink-0 hover:bg-white/20 rounded-r"
+                              onPointerDown={(e) => handleHPointerDown(e, t.id, t.start_date, 'extendEnd', t.duration_days)}
+                              onPointerMove={handleHPointerMove}
+                              onPointerUp={handleHPointerUp}
+                            />
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-widest">Rendering Timeline...</div>
 
-  const activeTaskMap = overlayProjects.length > 0 ? globalGroupedTasks : groupedTasks;
-
   return (
-    <div className="max-w-[1800px] mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32">
+    <div className="max-w-[1800px] mx-auto p-4 md:p-8 bg-slate-950 min-h-screen font-sans text-slate-100 pb-32 relative">
       
       {/* THE EXPORT CURTAIN */}
       {isExporting && (
         <div className="fixed inset-0 z-[9999] bg-slate-950 flex flex-col items-center justify-center">
           <Loader2 size={64} className="animate-spin text-blue-500 mb-6" />
           <h2 className="text-3xl font-black text-white uppercase italic tracking-widest">Generating PDF</h2>
-          <p className="text-slate-400 mt-2 font-bold text-sm">Optimizing schedule layout for print. Please wait...</p>
+          <p className="text-slate-400 mt-2 font-bold text-sm">Drafting perfect blueprint. Please wait...</p>
+        </div>
+      )}
+
+      {/* --- HIDDEN CLONE FOR PDF EXPORT --- */}
+      {isExporting && (
+        <div className="absolute top-0 left-0 z-[9998] w-max min-w-full bg-slate-50" id="gantt-export-clone">
+           <div className="p-8 border border-slate-300">
+              <div className="mb-8 border-b-2 border-slate-300 pb-4">
+                <h1 className="text-4xl font-black text-slate-900 tracking-tighter uppercase italic leading-none">Master Schedule</h1>
+                <p className="text-xs font-black text-slate-500 uppercase tracking-widest mt-2">Generated: {new Date().toLocaleDateString()}</p>
+              </div>
+              <GanttChartContent isPrintMode={true} />
+           </div>
         </div>
       )}
 
@@ -538,250 +794,9 @@ export default function ScheduleMaster() {
       )}
 
       {/* --- LIVE SCREEN GANTT CANVAS --- */}
-      <div className={`rounded-[32px] border transition-all duration-0 overflow-hidden relative z-0 ${isPrinting ? 'bg-slate-50 border-slate-300 shadow-none' : 'bg-slate-900 border-slate-800 shadow-2xl'}`}>
-        {/* We remove overflow-auto and max-height during print to let the div expand fully for capture */}
-        <div className={`custom-scrollbar ${isPrinting ? 'overflow-visible' : 'overflow-auto max-h-[75vh]'}`} ref={containerRef}>
-          <div id="gantt-canvas" className={`w-max min-w-full relative ${isPrinting ? 'bg-slate-50' : 'bg-slate-900'}`}>
-
-            {/* PDF HEADER (Only injected into DOM during capture) */}
-            {isPrinting && (
-              <div className="p-8 pb-4 bg-slate-50">
-                 <h1 className="text-4xl font-black text-slate-900 tracking-tighter uppercase italic leading-none">Master Schedule</h1>
-                 <p className="text-xs font-black text-slate-500 uppercase tracking-widest mt-2 border-b border-slate-300 pb-4">Generated: {new Date().toLocaleDateString()}</p>
-              </div>
-            )}
-
-            {/* DEPENDENCY ARROW SVG OVERLAY */}
-            <div className="absolute top-0 bottom-0 right-0 z-10 pointer-events-none overflow-hidden" style={{ left: totalLeftWidth }}>
-              <svg className="w-full h-full">
-                <defs>
-                  <marker id={isPrinting ? "arrowHeadPrint" : "arrowHeadScreen"} markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto">
-                    <path d="M0,0 L0,6 L6,3 z" fill={isPrinting ? "#94a3b8" : "#475569"} />
-                  </marker>
-                </defs>
-                {processedTasks.flatMap(task => {
-                  if (!task.dependencies || task.dependencies.length === 0 || task.isOverlay) return [];
-                  const endCoords = taskCoordinates[task.id];
-                  if (!endCoords) return []; 
-
-                  return task.dependencies.map((depId: string) => {
-                    const startCoords = taskCoordinates[depId];
-                    if (!startCoords) return null; 
-
-                    const startX = startCoords.xEnd;
-                    const startY = startCoords.yCenter;
-                    const endX = endCoords.xStart;
-                    const endY = endCoords.yCenter;
-
-                    let pathD = "";
-                    if (endX >= startX + 10) {
-                        const midX = startX + 10;
-                        pathD = `M ${startX},${startY} L ${midX},${startY} L ${midX},${endY} L ${endX},${endY}`;
-                    } else {
-                        const dropY = startY + (endY > startY ? 14 : -14); 
-                        const midX = endX - 10;
-                        pathD = `M ${startX},${startY} L ${startX + 10},${startY} L ${startX + 10},${dropY} L ${midX},${dropY} L ${midX},${endY} L ${endX},${endY}`;
-                    }
-
-                    return (
-                      <path 
-                        key={`${depId}->${task.id}`} 
-                        d={pathD} 
-                        fill="none" 
-                        stroke={isPrinting ? "#cbd5e1" : "#334155"} 
-                        strokeWidth="1.5" 
-                        markerEnd={`url(#${isPrinting ? "arrowHeadPrint" : "arrowHeadScreen"})`} 
-                      />
-                    );
-                  });
-                })}
-              </svg>
-            </div>
-
-            {/* STICKY HEADER ROW (Fixed to 64px height) */}
-            <div className={`flex sticky top-0 z-40 border-b shadow-sm h-16 ${isPrinting ? 'bg-slate-100 border-slate-300' : 'bg-slate-900 border-slate-800'}`}>
-              
-              {/* THE LOCKED, STICKY LEFT PANEL */}
-              <div className={`sticky left-0 z-50 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.3)] ${isPrinting ? 'bg-slate-100 border-slate-300 text-slate-600' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
-                <div style={{ width: leftColWidths.task }} className="relative shrink-0 p-2 border-r flex flex-col justify-end font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
-                  Trade / Task
-                  <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => handleColResizeStart(e, 'task')} onPointerMove={handleColResizeMove} onPointerUp={handleColResizeEnd} />
-                </div>
-                <div style={{ width: leftColWidths.start }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
-                  Start
-                  <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => handleColResizeStart(e, 'start')} onPointerMove={handleColResizeMove} onPointerUp={handleColResizeEnd} />
-                </div>
-                <div style={{ width: leftColWidths.end }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
-                  End
-                  <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => handleColResizeStart(e, 'end')} onPointerMove={handleColResizeMove} onPointerUp={handleColResizeEnd} />
-                </div>
-                <div style={{ width: leftColWidths.dur }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
-                  Dur.
-                  <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => handleColResizeStart(e, 'dur')} onPointerMove={handleColResizeMove} onPointerUp={handleColResizeEnd} />
-                </div>
-              </div>
-
-              <div className="flex flex-col h-full">
-                <div className={`flex border-b h-8 ${isPrinting ? 'border-slate-300 text-slate-800' : 'border-slate-800/50 text-blue-500'}`}>
-                  {monthSpans.map((m, i) => (
-                    <div key={i} className="px-2 py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest border-r truncate border-[inherit]" style={{ width: m.colSpan * COL_WIDTH }}>{m.name}</div>
-                  ))}
-                </div>
-                <div className="flex h-8">
-                  {gridDays.map((d, i) => (
-                    <div key={i} className={`flex-shrink-0 flex items-center justify-center border-r ${isPrinting ? `border-slate-300 ${d.isWeekend ? 'bg-slate-200' : ''}` : `border-slate-800/50 ${d.isWeekend ? 'bg-slate-950/50' : ''}`}`} style={{ width: COL_WIDTH }}>
-                      <span className={`text-[8px] md:text-[9px] font-black ${isPrinting ? (d.isWeekend ? 'text-slate-500' : 'text-slate-700') : (d.isWeekend ? 'text-slate-600' : 'text-slate-300')}`}>{d.date.getDate()}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {Object.keys(activeTaskMap).length === 0 && (
-               <div className={`p-12 text-center text-[10px] font-black uppercase tracking-widest ${isPrinting ? 'text-slate-400' : 'text-slate-600'}`}>No tasks scheduled yet.</div>
-            )}
-            
-            {Object.entries(activeTaskMap as Record<string, any[]>).map(([category, catTasks]) => {
-              const isCollapsed = collapsedCats.has(category)
-              const isDraggedCategory = reorderingCategory === category
-              const catDates = getCategoryDates(catTasks);
-              
-              return (
-                <div key={category} className={`group ${isDraggedCategory && !isPrinting ? 'opacity-50' : ''}`} onDragOver={(e) => !isPrinting && e.preventDefault()} onDrop={(e) => { if(!isPrinting) {e.preventDefault(); handleDrop(e, category);} }}>
-                  
-                  {/* CATEGORY HEADER (Fixed to 48px height) */}
-                  <div draggable={!isPrinting} onDragStart={(e) => !isPrinting && handleDragStartCategory(e, category)} className={`flex border-b h-12 sticky left-0 z-30 ${isPrinting ? 'bg-slate-100 border-slate-300' : 'bg-slate-950/50 border-slate-800/50'}`}>
-                    
-                    {/* THE LOCKED, STICKY LEFT PANEL */}
-                    <div className={`sticky left-0 z-30 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.3)] ${isPrinting ? 'bg-slate-200 border-slate-300' : 'bg-slate-950/80 border-slate-800'}`}>
-                      <div style={{ width: leftColWidths.task }} className="shrink-0 flex items-stretch border-r border-[inherit]">
-                        {!isPrinting && (
-                          <div className="hidden md:flex w-8 items-center justify-center cursor-grab active:cursor-grabbing border-r hover:bg-slate-900 text-slate-600 hover:text-white border-slate-800/50">
-                            <GripVertical size={14} />
-                          </div>
-                        )}
-                        <button onClick={() => !isPrinting && toggleCategory(category)} className={`flex-1 p-2 flex items-center gap-1 text-left overflow-hidden ${isPrinting ? '' : 'hover:bg-slate-900'}`}>
-                          {!isPrinting && (isCollapsed ? <ChevronRight size={14} className="text-slate-500 shrink-0" /> : <ChevronDown size={14} className="text-slate-500 shrink-0" />)}
-                          <span className={`text-[10px] md:text-xs font-black uppercase tracking-widest truncate ${isPrinting ? 'text-slate-900' : 'text-white'}`}>{category}</span>
-                          <span className={`text-[8px] md:text-[9px] font-bold ml-auto px-2 py-0.5 rounded hidden sm:inline-block ${isPrinting ? 'text-slate-600 bg-slate-300' : 'text-slate-500 bg-slate-900'}`}>{catTasks.length}</span>
-                        </button>
-                      </div>
-                      <div style={{ width: leftColWidths.start }} className={`shrink-0 border-r flex items-center justify-center border-[inherit]`}>
-                         {catDates && <span className={`text-[9px] font-bold ${isPrinting ? 'text-slate-500' : 'text-slate-600'}`}>{catDates.start}</span>}
-                      </div>
-                      <div style={{ width: leftColWidths.end }} className={`shrink-0 border-r flex items-center justify-center border-[inherit]`}>
-                         {catDates && <span className={`text-[9px] font-bold ${isPrinting ? 'text-slate-500' : 'text-slate-600'}`}>{catDates.end}</span>}
-                      </div>
-                      <div style={{ width: leftColWidths.dur }} className={`shrink-0 border-r border-[inherit]`} />
-                    </div>
-                    
-                    <div className="flex-1 flex pointer-events-none" />
-                  </div>
-
-                  {/* TASK ROWS (Fixed to 56px height) */}
-                  {!isCollapsed && catTasks.map((t: any) => {
-                    const startMs = parseDate(t.start_date).getTime()
-                    const endMs = startMs + (t.duration_days * DAY_MS)
-                    const offsetDays = Math.floor((startMs - gridStartDate.getTime()) / DAY_MS)
-                    const isCritical = criticalPathIds.has(t.id) && !t.isOverlay
-                    const isDraggedTask = reorderingId === t.id
-
-                    return (
-                      <div 
-                        key={`${t.id}-${t.isOverlay ? 'overlay' : 'base'}`} 
-                        className={`flex border-b relative h-14 task-row ${isPrinting ? 'border-slate-200 bg-white' : 'border-slate-800/50 hover:bg-slate-800/20'} ${isDraggedTask && !isPrinting ? 'opacity-50' : ''} ${t.isOverlay ? (isPrinting ? 'opacity-70 bg-slate-50' : 'opacity-60 bg-slate-950/50') : ''}`}
-                        onDragOver={(e) => !isPrinting && e.preventDefault()}
-                        onDrop={(e) => { if(!isPrinting){ e.preventDefault(); handleDrop(e, category, t.id) } }}
-                      >
-                        
-                        {/* THE LOCKED, STICKY LEFT PANEL */}
-                        <div className={`sticky left-0 z-20 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.3)] ${isPrinting ? 'bg-white border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
-                          <div style={{ width: leftColWidths.task }} className="shrink-0 flex items-stretch border-r border-[inherit]">
-                            {!t.isOverlay && !isPrinting && (
-                              <div draggable onDragStart={(e) => handleDragStartTask(e, t.id)} className="hidden md:flex w-8 items-center justify-center border-r cursor-grab active:cursor-grabbing border-[inherit] hover:bg-slate-800 text-slate-600 hover:text-white">
-                                <GripVertical size={14} />
-                              </div>
-                            )}
-                            {t.isOverlay && !isPrinting && <div className="hidden md:block w-8 border-r border-[inherit] bg-slate-950/30" />}
-                            
-                            <button onClick={() => !t.isOverlay && !isPrinting && setEditingTask(t)} className={`flex-1 p-2 flex flex-col justify-center text-left overflow-hidden ${t.isOverlay || isPrinting ? 'cursor-default pointer-events-none' : 'hover:bg-slate-900'}`}>
-                              <div className="flex justify-between items-center w-full">
-                                <p className={`text-[9px] md:text-[11px] font-bold truncate pr-2 ${isPrinting ? (t.isOverlay ? 'text-indigo-600' : 'text-slate-800') : (t.isOverlay ? 'text-indigo-300' : 'text-white')}`}>{t.task_name}</p>
-                                {!t.isOverlay && !isPrinting && <Edit2 size={12} className="text-slate-600 shrink-0 hover:text-white hidden sm:block" />}
-                              </div>
-                              {t.isOverlay ? (
-                                <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrinting ? 'text-indigo-400' : 'text-indigo-500'}`}>{t.projects?.name}</p>
-                              ) : (
-                                <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrinting ? 'text-slate-400' : 'text-slate-500'}`}>{t.project_contacts?.company || 'General'}</p>
-                              )}
-                            </button>
-                          </div>
-                          
-                          <div style={{ width: leftColWidths.start }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
-                            <span className={`text-[8px] md:text-[10px] font-bold ${isPrinting ? 'text-slate-500' : 'text-slate-400'}`}>{new Date(startMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
-                          </div>
-
-                          <div style={{ width: leftColWidths.end }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
-                            <span className={`text-[8px] md:text-[10px] font-bold ${isPrinting ? 'text-slate-500' : 'text-slate-400'}`}>{new Date(endMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
-                          </div>
-
-                          <div style={{ width: leftColWidths.dur }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
-                            <span className={`text-[9px] md:text-[11px] font-black ${isPrinting ? 'text-slate-800' : 'text-white'}`}>{t.duration_days}d</span>
-                          </div>
-                        </div>
-
-                        <div className="relative flex">
-                          {gridDays.map((d, i) => (
-                            <div key={i} className={`flex-shrink-0 border-r h-full ${isPrinting ? `border-slate-200 ${d.isWeekend ? 'bg-slate-100' : ''}` : `border-slate-800/30 ${d.isWeekend ? 'bg-slate-900/20' : ''}`}`} style={{ width: COL_WIDTH }} />
-                          ))}
-
-                          {offsetDays >= 0 && (
-                            <div 
-                              className={`absolute top-1/2 -translate-y-1/2 h-8 rounded flex items-center group/bar overflow-hidden z-20 shadow-sm ${
-                                isPrinting ? 
-                                    (t.isOverlay ? 'bg-indigo-100 border border-indigo-300 border-dashed' : isCritical ? 'bg-red-100 border border-red-300' : 'bg-blue-100 border border-blue-300') 
-                                :
-                                    (t.isOverlay ? 'bg-indigo-600/30 border border-indigo-400 border-dashed pointer-events-none' : isCritical ? 'bg-red-600 hover:bg-red-500 border border-red-400' : 'bg-blue-600 hover:bg-blue-500 border border-blue-400')
-                              }`}
-                              style={{ left: offsetDays * COL_WIDTH, width: Math.max(t.duration_days * COL_WIDTH, COL_WIDTH - 4) }}
-                            >
-                              {!t.isOverlay && !isPrinting && (
-                                <div 
-                                  className="w-4 md:w-6 h-full flex items-center justify-center cursor-grab active:cursor-grabbing shrink-0"
-                                  onPointerDown={(e) => handleHPointerDown(e, t.id, t.start_date, 'move', t.duration_days)}
-                                  onPointerMove={handleHPointerMove}
-                                  onPointerUp={handleHPointerUp}
-                                >
-                                  <GripVertical size={10} className="text-white/50 hidden md:block" />
-                                </div>
-                              )}
-
-                              <div className="flex-1 truncate pointer-events-none px-2 flex items-center">
-                                <span className={`text-[8px] md:text-[9px] font-black leading-none ${isPrinting ? 'text-slate-700' : 'text-white'}`}>
-                                  {t.dependencies?.length > 0 && <LinkIcon size={8} className="inline mr-1 opacity-70" />}
-                                  {t.isOverlay && t.project_contacts?.company}
-                                </span>
-                              </div>
-
-                              {!t.isOverlay && !isPrinting && (
-                                <div 
-                                  className="w-3 md:w-4 h-full cursor-col-resize shrink-0 hover:bg-white/20 rounded-r"
-                                  onPointerDown={(e) => handleHPointerDown(e, t.id, t.start_date, 'extendEnd', t.duration_days)}
-                                  onPointerMove={handleHPointerMove}
-                                  onPointerUp={handleHPointerUp}
-                                />
-                              )}
-                            </div>
-                          )}
-                        </div>
-
-                      </div>
-                    )
-                  })}
-                </div>
-              )
-            })}
-          </div>
+      <div className="bg-slate-900 rounded-[32px] border border-slate-800 shadow-2xl overflow-hidden relative z-0">
+        <div className="overflow-auto custom-scrollbar max-h-[75vh]" ref={containerRef}>
+          <GanttChartContent isPrintMode={false} />
         </div>
       </div>
 
