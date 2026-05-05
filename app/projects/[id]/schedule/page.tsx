@@ -68,6 +68,7 @@ export default function ScheduleMaster() {
   const [editingTask, setEditingTask] = useState<any>(null)
   
   // Export Theme State
+  const [isPrinting, setIsPrinting] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
 
   useEffect(() => {
@@ -190,7 +191,7 @@ export default function ScheduleMaster() {
     }
 
     // MAP Y AND X COORDINATES FOR SVG ARROWS
-    let currentY = 64; 
+    let currentY = 64 + (isPrinting ? 100 : 0); // Offset for PDF header if printing
     const coords: Record<string, { xStart: number, xEnd: number, yCenter: number }> = {};
     
     Object.entries(globalGrouped as Record<string, any[]>).forEach(([cat, catTasks]) => {
@@ -212,7 +213,7 @@ export default function ScheduleMaster() {
     });
 
     return { processedTasks: pTasks, projectEndDate: maxEnd, criticalPathIds: cPath, groupedTasks: grouped, globalGroupedTasks: globalGrouped, taskCoordinates: coords }
-  }, [tasks, overlayTasks, overlayProjects, gridStartDate, collapsedCats])
+  }, [tasks, overlayTasks, overlayProjects, gridStartDate, collapsedCats, isPrinting])
 
   const handleHPointerDown = (e: React.PointerEvent, taskId: string, start_date: string, type: 'move' | 'extendEnd', duration: number) => {
     e.stopPropagation()
@@ -398,53 +399,56 @@ export default function ScheduleMaster() {
     })
   }
 
-  // --- THE BULLETPROOF EXPORT ENGINE ---
+  // --- THE CURTAIN METHOD EXPORT ---
   const handlePrint = async () => {
-    setIsExporting(true); // Drops the curtain, exposes the clone behind it
+    const element = document.getElementById('gantt-export-clone');
+    if (!element) return;
+    
+    setIsExporting(true); // Drop the curtain
     setSaving(true);
 
-    // Provide ample time (1.5s) for React to mount the hidden clone and the browser to paint it
-    setTimeout(async () => {
-      try {
-        const element = document.getElementById('gantt-export-clone');
-        if (!element) throw new Error("Export element missing");
+    try {
+      await new Promise(r => setTimeout(r, 100)); // Allow curtain to render
+      setIsPrinting(true); // Flip to light mode behind the curtain
+      await new Promise(r => setTimeout(r, 600)); // Wait for styles to settle and DOM to expand fully
 
-        // We use toPng instead of toJpeg to handle SVGs/Transparency better
-        const { toPng } = await import('html-to-image');
-        const { jsPDF } = await import('jspdf');
+      const { toPng } = await import('html-to-image');
+      const { jsPDF } = await import('jspdf');
 
-        const width = element.scrollWidth;
-        const height = element.scrollHeight;
+      const width = element.scrollWidth;
+      const height = element.scrollHeight;
 
-        const imgData = await toPng(element, {
-          quality: 1.0,
-          backgroundColor: '#f8fafc',
-          pixelRatio: 2, 
-          width: width,
-          height: height,
-          style: {
-             transform: 'scale(1)',
-             transformOrigin: 'top left',
-             width: `${width}px`,
-             height: `${height}px`
-          }
-        });
+      const imgData = await toPng(element, {
+        quality: 1.0,
+        backgroundColor: '#ffffff', // Clean white background for the PDF
+        pixelRatio: 2, 
+        width: width,
+        height: height,
+        style: {
+           transform: 'scale(1)',
+           transformOrigin: 'top left',
+           width: `${width}px`,
+           height: `${height}px`
+        },
+        filter: (node) => node.tagName !== 'IMG' // Prevent CORS pollution
+      });
 
-        const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = (height * pdfWidth) / width;
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (height * pdfWidth) / width;
 
-        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-        pdf.save(`Project_Schedule_${id}.pdf`);
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`Project_Schedule_${id}.pdf`);
 
-      } catch (error) {
-        console.error('PDF Export Error:', error);
-        alert('Failed to generate PDF. Check console.');
-      } finally {
-          setIsExporting(false); // Pull curtain back up, destroy clone
-          setSaving(false);
-      }
-    }, 1500); 
+    } catch (error) {
+      console.error('PDF Export Error:', error);
+      alert('Failed to generate PDF. Check console.');
+    } finally {
+        setIsPrinting(false); // Flip back to dark mode
+        await new Promise(r => setTimeout(r, 100)); // Let styles revert
+        setIsExporting(false); // Pull curtain back up
+        setSaving(false);
+    }
   }
 
   const calculateTotalDays = () => {
@@ -491,54 +495,7 @@ export default function ScheduleMaster() {
     const activeTaskMap = overlayProjects.length > 0 ? globalGroupedTasks : groupedTasks;
 
     return (
-      <div className={`w-max min-w-full relative ${isPrintMode ? 'bg-slate-50' : 'bg-slate-900'}`}>
-
-        {/* DEPENDENCY ARROW SVG OVERLAY - Added xmlns attribute to prevent PDF blanking */}
-        <div className="absolute top-0 bottom-0 right-0 z-10 pointer-events-none overflow-hidden" style={{ left: totalLeftWidth }}>
-          <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <marker id={isPrintMode ? "arrowHeadPrint" : "arrowHeadScreen"} markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto">
-                <path d="M0,0 L0,6 L6,3 z" fill={isPrintMode ? "#94a3b8" : "#475569"} />
-              </marker>
-            </defs>
-            {processedTasks.flatMap(task => {
-              if (!task.dependencies || task.dependencies.length === 0 || task.isOverlay) return [];
-              const endCoords = taskCoordinates[task.id];
-              if (!endCoords) return []; 
-
-              return task.dependencies.map((depId: string) => {
-                const startCoords = taskCoordinates[depId];
-                if (!startCoords) return null; 
-
-                const startX = startCoords.xEnd;
-                const startY = startCoords.yCenter;
-                const endX = endCoords.xStart;
-                const endY = endCoords.yCenter;
-
-                let pathD = "";
-                if (endX >= startX + 10) {
-                    const midX = startX + 10;
-                    pathD = `M ${startX},${startY} L ${midX},${startY} L ${midX},${endY} L ${endX},${endY}`;
-                } else {
-                    const dropY = startY + (endY > startY ? 14 : -14); 
-                    const midX = endX - 10;
-                    pathD = `M ${startX},${startY} L ${startX + 10},${startY} L ${startX + 10},${dropY} L ${midX},${dropY} L ${midX},${endY} L ${endX},${endY}`;
-                }
-
-                return (
-                  <path 
-                    key={`${depId}->${task.id}`} 
-                    d={pathD} 
-                    fill="none" 
-                    stroke={isPrintMode ? "#cbd5e1" : "#334155"} 
-                    strokeWidth="1.5" 
-                    markerEnd={`url(#${isPrintMode ? "arrowHeadPrint" : "arrowHeadScreen"})`} 
-                  />
-                );
-              });
-            })}
-          </svg>
-        </div>
+      <div className={`w-max min-w-full relative ${isPrintMode ? 'bg-white' : 'bg-slate-900'}`}>
 
         {/* STICKY HEADER ROW */}
         <div className={`flex sticky top-0 z-40 border-b shadow-sm h-16 ${isPrintMode ? 'bg-slate-100 border-slate-300' : 'bg-slate-900 border-slate-800'}`}>
@@ -570,7 +527,7 @@ export default function ScheduleMaster() {
             </div>
             <div className="flex h-8">
               {gridDays.map((d, i) => (
-                <div key={i} className={`flex-shrink-0 flex items-center justify-center border-r ${isPrintMode ? `border-slate-300 ${d.isWeekend ? 'bg-slate-200' : ''}` : `border-slate-800/50 ${d.isWeekend ? 'bg-slate-950/50' : ''}`}`} style={{ width: COL_WIDTH }}>
+                <div key={i} className={`flex-shrink-0 flex items-center justify-center border-r ${isPrintMode ? `border-slate-300 ${d.isWeekend ? 'bg-slate-100' : ''}` : `border-slate-800/50 ${d.isWeekend ? 'bg-slate-950/50' : ''}`}`} style={{ width: COL_WIDTH }}>
                   <span className={`text-[8px] md:text-[9px] font-black ${isPrintMode ? (d.isWeekend ? 'text-slate-500' : 'text-slate-700') : (d.isWeekend ? 'text-slate-600' : 'text-slate-300')}`}>{d.date.getDate()}</span>
                 </div>
               ))}
@@ -651,7 +608,7 @@ export default function ScheduleMaster() {
                           {t.isOverlay ? (
                             <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrintMode ? 'text-indigo-400' : 'text-indigo-500'}`}>{t.projects?.name}</p>
                           ) : (
-                            <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrintMode ? 'text-slate-400' : 'text-slate-500'}`}>{t.project_contacts?.company || 'General'}</p>
+                            <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrintMode ? 'text-slate-500' : 'text-slate-400'}`}>{t.project_contacts?.company || 'General'}</p>
                           )}
                         </button>
                       </div>
@@ -676,11 +633,11 @@ export default function ScheduleMaster() {
 
                       {offsetDays >= 0 && (
                         <div 
-                          className={`absolute top-1/2 -translate-y-1/2 h-8 rounded flex items-center group/bar overflow-hidden z-20 shadow-sm ${
+                          className={`absolute top-1/2 -translate-y-1/2 h-8 rounded flex items-center group/bar overflow-hidden z-20 ${
                             isPrintMode ? 
-                                (t.isOverlay ? 'bg-indigo-50 border border-indigo-300 border-dashed' : isCritical ? 'bg-red-100 border border-red-300' : 'bg-blue-100 border border-blue-300') 
+                                (t.isOverlay ? 'bg-indigo-600 border-2 border-indigo-800 border-dashed' : isCritical ? 'bg-red-600 border-2 border-red-900' : 'bg-blue-600 border-2 border-blue-900') 
                             :
-                                (t.isOverlay ? 'bg-indigo-600/30 border border-indigo-400 border-dashed pointer-events-none' : isCritical ? 'bg-red-600 hover:bg-red-500 border border-red-400' : 'bg-blue-600 hover:bg-blue-500 border border-blue-400')
+                                (t.isOverlay ? 'bg-indigo-600/30 border border-indigo-400 border-dashed pointer-events-none' : isCritical ? 'bg-red-600 hover:bg-red-500 border border-red-400 shadow-lg' : 'bg-blue-600 hover:bg-blue-500 border border-blue-400 shadow-lg')
                           }`}
                           style={{ left: offsetDays * COL_WIDTH, width: Math.max(t.duration_days * COL_WIDTH, COL_WIDTH - 4) }}
                         >
@@ -696,7 +653,7 @@ export default function ScheduleMaster() {
                           )}
 
                           <div className="flex-1 truncate pointer-events-none px-2 flex items-center">
-                            <span className={`text-[8px] md:text-[9px] font-black leading-none ${isPrintMode ? 'text-slate-700' : 'text-white'}`}>
+                            <span className={`text-[8px] md:text-[9px] font-black leading-none text-white`}>
                               {t.dependencies?.length > 0 && <LinkIcon size={8} className="inline mr-1 opacity-70" />}
                               {t.isOverlay && t.project_contacts?.company}
                             </span>
@@ -720,6 +677,59 @@ export default function ScheduleMaster() {
             </div>
           )
         })}
+
+        {/* 
+            CRITICAL FIX: DEPENDENCY ARROWS MUST BE RENDERED LAST 
+            By placing the absolute overlay here at the end of the container, 
+            it renders on top of the row backgrounds but underneath the z-20 task bars.
+        */}
+        <div className="absolute top-0 bottom-0 right-0 z-10 pointer-events-none overflow-hidden" style={{ left: totalLeftWidth }}>
+          <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id={isPrintMode ? "arrowHeadPrint" : "arrowHeadScreen"} markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L6,3 z" fill={isPrintMode ? "#0f172a" : "#475569"} />
+              </marker>
+            </defs>
+            {processedTasks.flatMap(task => {
+              if (!task.dependencies || task.dependencies.length === 0 || task.isOverlay) return [];
+              const endCoords = taskCoordinates[task.id];
+              if (!endCoords) return []; 
+
+              return task.dependencies.map((depId: string) => {
+                const startCoords = taskCoordinates[depId];
+                if (!startCoords) return null; 
+
+                const startX = startCoords.xEnd;
+                const startY = startCoords.yCenter;
+                const endX = endCoords.xStart;
+                const endY = endCoords.yCenter;
+
+                let pathD = "";
+                if (endX >= startX + 10) {
+                    const midX = startX + 10;
+                    pathD = `M ${startX},${startY} L ${midX},${startY} L ${midX},${endY} L ${endX},${endY}`;
+                } else {
+                    const dropY = startY + (endY > startY ? 14 : -14); 
+                    const midX = endX - 10;
+                    pathD = `M ${startX},${startY} L ${startX + 10},${startY} L ${startX + 10},${dropY} L ${midX},${dropY} L ${midX},${endY} L ${endX},${endY}`;
+                }
+
+                return (
+                  <path 
+                    key={`${depId}->${task.id}`} 
+                    d={pathD} 
+                    fill="none" 
+                    stroke={isPrintMode ? "#0f172a" : "#334155"} 
+                    strokeWidth={isPrintMode ? "2" : "1.5"} 
+                    markerEnd={`url(#${isPrintMode ? "arrowHeadPrint" : "arrowHeadScreen"})`} 
+                    className={isPrintMode ? "opacity-100" : "opacity-80"}
+                  />
+                );
+              });
+            })}
+          </svg>
+        </div>
+
       </div>
     )
   }
@@ -740,7 +750,7 @@ export default function ScheduleMaster() {
 
       {/* --- HIDDEN CLONE FOR PDF EXPORT --- */}
       {isExporting && (
-        <div className="absolute top-0 left-0 z-[9998] w-max min-w-full bg-slate-50" id="gantt-export-clone">
+        <div className="absolute top-0 left-0 z-[9998] w-max min-w-full bg-white" id="gantt-export-clone">
            <div className="p-8 border border-slate-300">
               <div className="mb-8 border-b-2 border-slate-300 pb-4">
                 <h1 className="text-4xl font-black text-slate-900 tracking-tighter uppercase italic leading-none">Master Schedule</h1>
