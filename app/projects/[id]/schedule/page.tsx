@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import { 
   ChevronLeft, Plus, Save, Loader2, GripVertical, 
-  CalendarDays, HardHat, AlertTriangle, Link as LinkIcon, Edit2, Trash2, Printer, ChevronDown, ChevronRight, Layers, Check
+  Link as LinkIcon, Edit2, Trash2, Printer, ChevronDown, ChevronRight, Layers, Check
 } from 'lucide-react'
 
 const parseDate = (d: string) => new Date(d + 'T00:00:00')
@@ -19,7 +19,6 @@ const DEFAULT_CATEGORIES = [
   'MEP Rough-ins', 'Interior Finishes', 'MEP Trim-out', 'Final & Handover'
 ]
 
-// --- THE FIX: Explicitly define the shape of our column widths ---
 type ColWidths = {
   task: number;
   start: number;
@@ -50,7 +49,15 @@ export default function ScheduleMaster() {
      return new Set();
   });
 
-  // --- THE FIX: Apply the type to our state ---
+  // --- NEW: Sub-category Collapse State ---
+  const [collapsedTrades, setCollapsedTrades] = useState<Set<string>>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(`schedule_collapsed_trades_${id}`);
+      if (saved) return new Set(JSON.parse(saved));
+    }
+    return new Set();
+  });
+
   const [leftColWidths, setLeftColWidths] = useState<ColWidths>(() => {
     if (typeof window !== 'undefined') {
        const saved = localStorage.getItem(`schedule_cols_${id}`);
@@ -84,31 +91,44 @@ export default function ScheduleMaster() {
   
   const [isExporting, setIsExporting] = useState(false)
 
+  // --- Dynamic Categories Extractor ---
+  const dynamicCategories = useMemo(() => {
+    const cats = new Set(DEFAULT_CATEGORIES);
+    tasks.forEach(t => { if(t.category) cats.add(t.category) });
+    return Array.from(cats);
+  }, [tasks]);
+
   useEffect(() => {
      if (typeof window !== 'undefined') {
        localStorage.setItem(`schedule_collapsed_${id}`, JSON.stringify(Array.from(collapsedCats)));
+       localStorage.setItem(`schedule_collapsed_trades_${id}`, JSON.stringify(Array.from(collapsedTrades)));
        localStorage.setItem(`schedule_cols_${id}`, JSON.stringify(leftColWidths));
      }
-  }, [collapsedCats, leftColWidths, id]);
+  }, [collapsedCats, collapsedTrades, leftColWidths, id]);
+
+  const fetchFreshData = async () => {
+    if (!id) return;
+    const { data } = await supabase.from('project_schedule').select('*, project_contacts(company)').eq('project_id', id).order('sort_order', { ascending: true })
+    if (data) {
+        setTasks(data)
+        if (data.length > 0 && loading) {
+          const earliest = new Date(Math.min(...data.map(t => parseDate(t.start_date).getTime())))
+          earliest.setDate(earliest.getDate() - 3)
+          setGridStartDate(earliest)
+        }
+    }
+  }
 
   useEffect(() => {
-    async function fetchData() {
+    async function initFetch() {
+      await fetchFreshData()
       if (!id) return
       
-      const [tData, trData, projectsData] = await Promise.all([
-        supabase.from('project_schedule').select('*, project_contacts(company)').eq('project_id', id).order('sort_order', { ascending: true }),
+      const [trData, projectsData] = await Promise.all([
         supabase.from('project_contacts').select('id, company').eq('project_id', id),
         supabase.from('projects').select('id, name, status').neq('status', 'Closed')
       ])
       
-      if (tData.data) {
-        setTasks(tData.data)
-        if (tData.data.length > 0) {
-          const earliest = new Date(Math.min(...tData.data.map(t => parseDate(t.start_date).getTime())))
-          earliest.setDate(earliest.getDate() - 3)
-          setGridStartDate(earliest)
-        }
-      }
       if (trData.data) setTrades(trData.data)
       
       if (projectsData.data) {
@@ -127,7 +147,7 @@ export default function ScheduleMaster() {
       }
       setLoading(false)
     }
-    fetchData()
+    initFetch()
   }, [id])
 
   const toggleOverlayProject = (projectId: string) => {
@@ -141,7 +161,6 @@ export default function ScheduleMaster() {
       if (!resizingCol) return;
       const deltaX = e.clientX - resizeStartX;
       const newWidth = Math.max(40, resizeStartWidth + deltaX);
-      // --- THE FIX: Explicitly type `prev` as ColWidths ---
       setLeftColWidths((prev: ColWidths) => ({ ...prev, [resizingCol]: newWidth }));
     };
 
@@ -162,6 +181,7 @@ export default function ScheduleMaster() {
 
   const startColResize = (e: React.PointerEvent, colName: keyof ColWidths) => {
     e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
     setResizingCol(colName);
     setResizeStartX(e.clientX);
     setResizeStartWidth(leftColWidths[colName]);
@@ -169,8 +189,8 @@ export default function ScheduleMaster() {
 
   const totalLeftWidth = leftColWidths.task + leftColWidths.start + leftColWidths.end + leftColWidths.dur;
 
-  // --- ENGINE ---
-  const { processedTasks, projectEndDate, criticalPathIds, groupedTasks, globalGroupedTasks, taskCoordinates } = useMemo(() => {
+  // --- UPGRADED ENGINE: Groups by Category AND Trade ---
+  const { processedTasks, projectEndDate, criticalPathIds, globalGroupedTasks, taskCoordinates } = useMemo(() => {
     let pTasks = [...tasks]
     let maxEnd = 0
     let endMap: Record<string, number> = {}
@@ -197,46 +217,57 @@ export default function ScheduleMaster() {
     }
     pTasks.filter(t => endMap[t.id] === maxEnd).forEach(t => findCriticalChain(t.id))
 
-    const grouped = pTasks.reduce((acc, task) => {
-      const cat = task.category || 'Pre-con'
-      if (!acc[cat]) acc[cat] = []
-      acc[cat].push(task)
-      return acc
-    }, {} as Record<string, any[]>)
-
-    let globalGrouped = { ...grouped }
+    // Build base dataset
+    let compositeTasks = [...pTasks]
     if (overlayProjects.length > 0) {
       const activeOverlayTasks = overlayTasks.filter(t => overlayProjects.includes(t.project_id))
       activeOverlayTasks.forEach(task => {
-        const cat = task.category || 'Pre-con'
-        if (!globalGrouped[cat]) globalGrouped[cat] = []
-        globalGrouped[cat].push({ ...task, isOverlay: true })
+        compositeTasks.push({ ...task, isOverlay: true })
       })
     }
 
+    // Grouping by Category -> Trade
+    const globalGrouped = compositeTasks.reduce((acc, task) => {
+      const cat = task.category || 'Pre-con'
+      const tradeId = task.trade_id || 'unassigned'
+      const tradeName = task.project_contacts?.company || 'General / Internal'
+      
+      if (!acc[cat]) acc[cat] = {}
+      if (!acc[cat][tradeId]) acc[cat][tradeId] = { name: tradeName, tasks: [] }
+      
+      acc[cat][tradeId].tasks.push(task)
+      return acc
+    }, {} as Record<string, Record<string, { name: string, tasks: any[] }>>)
+
+    // Calculate Y coordinates for dependency arrows bridging the new grouped headers
     let currentY = 64; 
     const coords: Record<string, { xStart: number, xEnd: number, yCenter: number }> = {};
     
-    Object.entries(globalGrouped as Record<string, any[]>).forEach(([cat, catTasks]) => {
-      currentY += 48; 
+    Object.entries(globalGrouped).forEach(([cat, tradesObj]) => {
+      currentY += 48; // Cat Header Height
       if (!collapsedCats.has(cat)) {
-        catTasks.forEach((t: any) => {
-          const startMs = parseDate(t.start_date).getTime();
-          const offsetDays = Math.floor((startMs - gridStartDate.getTime()) / DAY_MS);
-          const durDays = t.duration_days;
-          
-          coords[t.id] = {
-            xStart: offsetDays * COL_WIDTH,
-            xEnd: (offsetDays + durDays) * COL_WIDTH,
-            yCenter: currentY + 28 
-          };
-          currentY += 56; 
+        Object.entries(tradesObj).forEach(([tradeId, tradeData]) => {
+            currentY += 36; // Trade Sub-Header Height
+            if (!collapsedTrades.has(`${cat}-${tradeId}`)) {
+                tradeData.tasks.forEach((t: any) => {
+                    const startMs = parseDate(t.start_date).getTime();
+                    const offsetDays = Math.floor((startMs - gridStartDate.getTime()) / DAY_MS);
+                    const durDays = t.duration_days;
+                    
+                    coords[t.id] = {
+                        xStart: offsetDays * COL_WIDTH,
+                        xEnd: (offsetDays + durDays) * COL_WIDTH,
+                        yCenter: currentY + 28 
+                    };
+                    currentY += 56; // Task Row Height
+                });
+            }
         });
       }
     });
 
-    return { processedTasks: pTasks, projectEndDate: maxEnd, criticalPathIds: cPath, groupedTasks: grouped, globalGroupedTasks: globalGrouped, taskCoordinates: coords }
-  }, [tasks, overlayTasks, overlayProjects, gridStartDate, collapsedCats])
+    return { processedTasks: pTasks, projectEndDate: maxEnd, criticalPathIds: cPath, globalGroupedTasks: globalGrouped, taskCoordinates: coords }
+  }, [tasks, overlayTasks, overlayProjects, gridStartDate, collapsedCats, collapsedTrades])
 
   const handleHPointerDown = (e: React.PointerEvent, taskId: string, start_date: string, type: 'move' | 'extendEnd', duration: number) => {
     e.stopPropagation()
@@ -322,7 +353,7 @@ export default function ScheduleMaster() {
     e.dataTransfer.setData('dragType', 'category')
   }
 
-  const handleDrop = async (e: React.DragEvent, targetCategory: string, targetTaskId?: string) => {
+  const handleDrop = async (e: React.DragEvent, targetCategory: string, targetTradeId?: string, targetTaskId?: string) => {
     e.preventDefault()
     e.stopPropagation() 
 
@@ -349,15 +380,17 @@ export default function ScheduleMaster() {
         let newTasks = [...prev]
         const draggedTaskIndex = newTasks.findIndex(t => t.id === reorderingId)
         if (draggedTaskIndex === -1) return prev
-        const draggedTask = { ...newTasks[draggedTaskIndex], category: targetCategory }
+        
+        // Inherit correct trade layout when dropping
+        const mappedTradeId = targetTradeId === 'unassigned' || !targetTradeId ? null : targetTradeId;
+        const draggedTask = { ...newTasks[draggedTaskIndex], category: targetCategory, trade_id: mappedTradeId }
+        
         newTasks.splice(draggedTaskIndex, 1)
         if (targetTaskId) {
           const targetIndex = newTasks.findIndex(t => t.id === targetTaskId)
           newTasks.splice(targetIndex, 0, draggedTask)
         } else {
-          const catTasks = newTasks.filter(t => t.category === targetCategory)
-          const lastCatIndex = catTasks.length > 0 ? newTasks.indexOf(catTasks[catTasks.length - 1]) : newTasks.length
-          newTasks.splice(lastCatIndex + 1, 0, draggedTask)
+          newTasks.push(draggedTask)
         }
         return newTasks.map((t, i) => ({ ...t, sort_order: i }))
       })
@@ -371,7 +404,7 @@ export default function ScheduleMaster() {
     const updates = tasks.map((t, i) => ({ 
       id: t.id, project_id: id, start_date: t.start_date, 
       task_name: t.task_name, duration_days: t.duration_days,
-      category: t.category, sort_order: i
+      category: t.category, trade_id: t.trade_id, sort_order: i
     }))
     const { error } = await supabase.from('project_schedule').upsert(updates)
     if (error) alert(`Sync failed: ${error.message}`)
@@ -386,7 +419,10 @@ export default function ScheduleMaster() {
       start_date: newTask.start, duration_days: newTask.duration, dependencies: newTask.deps,
       category: newTask.category, sort_order: tasks.length
     }])
-    if (!error) { setShowNewTask(false); window.location.reload(); }
+    if (!error) { 
+        setShowNewTask(false); 
+        await fetchFreshData(); // Updates without throwing your scroll away!
+    }
     setSaving(false)
   }
 
@@ -401,7 +437,10 @@ export default function ScheduleMaster() {
       dependencies: editingTask.dependencies || [],
       category: editingTask.category
     }).eq('id', editingTask.id)
-    if (!error) { setEditingTask(null); window.location.reload(); }
+    if (!error) { 
+        setEditingTask(null); 
+        await fetchFreshData(); 
+    }
     setSaving(false)
   }
 
@@ -410,7 +449,8 @@ export default function ScheduleMaster() {
     setSaving(true)
     await supabase.from('project_schedule').delete().eq('id', editingTask.id)
     setEditingTask(null)
-    window.location.reload()
+    await fetchFreshData()
+    setSaving(false)
   }
 
   const toggleCategory = (cat: string) => {
@@ -422,7 +462,15 @@ export default function ScheduleMaster() {
     })
   }
 
-  // --- THE CURTAIN METHOD EXPORT ---
+  const toggleTradeGroup = (catTradeKey: string) => {
+    setCollapsedTrades(prev => {
+        const next = new Set(prev)
+        if (next.has(catTradeKey)) next.delete(catTradeKey)
+        else next.add(catTradeKey)
+        return next
+    })
+  }
+
   const handlePrint = async () => {
     const element = document.getElementById('gantt-export-clone');
     if (!element) return;
@@ -430,44 +478,51 @@ export default function ScheduleMaster() {
     setIsExporting(true);
     setSaving(true);
 
-    setTimeout(async () => {
-      try {
-        const { toPng } = await import('html-to-image');
-        const { jsPDF } = await import('jspdf');
+    try {
+      const { toPng } = await import('html-to-image');
+      const { jsPDF } = await import('jspdf');
 
-        const width = element.scrollWidth;
-        const height = element.scrollHeight;
+      setTimeout(async () => {
+        try {
+          const width = element.scrollWidth;
+          const height = element.scrollHeight;
 
-        const imgData = await toPng(element, {
-          quality: 1.0,
-          backgroundColor: '#ffffff', 
-          pixelRatio: 2, 
-          width: width,
-          height: height,
-          style: {
-             transform: 'scale(1)',
-             transformOrigin: 'top left',
-             width: `${width}px`,
-             height: `${height}px`
-          },
-          filter: (node) => node.tagName !== 'IMG' 
-        });
+          const imgData = await toPng(element, {
+            quality: 1.0,
+            backgroundColor: '#ffffff', 
+            pixelRatio: 2, 
+            width: width,
+            height: height,
+            style: {
+                transform: 'scale(1)',
+                transformOrigin: 'top left',
+                width: `${width}px`,
+                height: `${height}px`
+            },
+            filter: (node) => node.tagName !== 'IMG' 
+          });
 
-        const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = (height * pdfWidth) / width;
+          const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
+          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfHeight = (height * pdfWidth) / width;
 
-        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-        pdf.save(`Project_Schedule_${id}.pdf`);
+          pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+          pdf.save(`Project_Schedule_${id}.pdf`);
 
-      } catch (error) {
-        console.error('PDF Export Error:', error);
-        alert('Failed to generate PDF. Check console.');
-      } finally {
-          setIsExporting(false); 
-          setSaving(false);
-      }
-    }, 1500); 
+        } catch (error) {
+          console.error('PDF Export Error:', error);
+          alert('Failed to generate PDF. Check console.');
+        } finally {
+            setIsExporting(false); 
+            setSaving(false);
+        }
+      }, 1500); 
+
+    } catch (e) {
+      alert("Missing libraries for export. Please run: npm install html-to-image jspdf");
+      setIsExporting(false);
+      setSaving(false);
+    }
   }
 
   const calculateTotalDays = () => {
@@ -493,46 +548,49 @@ export default function ScheduleMaster() {
   })
   monthSpans.push({ name: currentMonth, colSpan: currentCount })
 
-  const getCategoryDates = (tasksInCategory: any[]) => {
-      if (!tasksInCategory || tasksInCategory.length === 0) return null;
+  const getCategoryDates = (tradesObj: Record<string, any>) => {
+      if (!tradesObj || Object.keys(tradesObj).length === 0) return null;
       let earliest = Infinity;
       let latest = 0;
-      tasksInCategory.forEach(t => {
-          const s = parseDate(t.start_date).getTime();
-          const e = s + (t.duration_days * DAY_MS);
-          if (s < earliest) earliest = s;
-          if (e > latest) latest = e;
+      let hasTasks = false;
+      Object.values(tradesObj).forEach(tradeData => {
+         tradeData.tasks.forEach((t: any) => {
+            hasTasks = true;
+            const s = parseDate(t.start_date).getTime();
+            const e = s + (t.duration_days * DAY_MS);
+            if (s < earliest) earliest = s;
+            if (e > latest) latest = e;
+         });
       });
+      if (!hasTasks) return null;
       return {
           start: new Date(earliest).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
           end: new Date(latest).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       };
   }
 
-  // --- REUSABLE GANTT COMPONENT ---
   const GanttChartContent = ({ isPrintMode }: { isPrintMode: boolean }) => {
-    const activeTaskMap = overlayProjects.length > 0 ? globalGroupedTasks : groupedTasks;
-
     return (
       <div className={`w-max min-w-full relative ${isPrintMode ? 'bg-slate-50' : 'bg-slate-900'}`}>
 
-        {/* STICKY HEADER ROW */}
-        <div className={`flex sticky top-0 z-40 border-b shadow-sm h-16 ${isPrintMode ? 'bg-slate-100 border-slate-300' : 'bg-slate-900 border-slate-800'}`}>
+        {/* STICKY HEADER ROW - HIGHEST Z-INDEX */}
+        <div className={`flex sticky top-0 z-50 border-b shadow-sm h-16 ${isPrintMode ? 'bg-slate-100 border-slate-300' : 'bg-slate-900 border-slate-800'}`}>
           
           <div className={`sticky left-0 z-50 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.3)] ${isPrintMode ? 'bg-slate-100 border-slate-300 text-slate-600' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
-            <div style={{ width: leftColWidths.task }} className="relative shrink-0 p-2 border-r flex flex-col justify-end font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
+            {/* Added minWidth and maxWidth fixes for explicit sizing */}
+            <div style={{ width: leftColWidths.task, minWidth: leftColWidths.task, maxWidth: leftColWidths.task }} className="relative shrink-0 p-2 border-r flex flex-col justify-end font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
               Trade / Task
               {!isPrintMode && <div className="absolute right-[-4px] top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => startColResize(e, 'task')} />}
             </div>
-            <div style={{ width: leftColWidths.start }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
+            <div style={{ width: leftColWidths.start, minWidth: leftColWidths.start, maxWidth: leftColWidths.start }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
               Start
               {!isPrintMode && <div className="absolute right-[-4px] top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => startColResize(e, 'start')} />}
             </div>
-            <div style={{ width: leftColWidths.end }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
+            <div style={{ width: leftColWidths.end, minWidth: leftColWidths.end, maxWidth: leftColWidths.end }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
               End
               {!isPrintMode && <div className="absolute right-[-4px] top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => startColResize(e, 'end')} />}
             </div>
-            <div style={{ width: leftColWidths.dur }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
+            <div style={{ width: leftColWidths.dur, minWidth: leftColWidths.dur, maxWidth: leftColWidths.dur }} className="relative shrink-0 p-2 border-r flex flex-col justify-end items-center font-black text-[9px] md:text-[10px] uppercase tracking-widest border-[inherit]">
               Dur.
               {!isPrintMode && <div className="absolute right-[-4px] top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500 z-50 opacity-0 hover:opacity-100 transition-opacity" onPointerDown={(e) => startColResize(e, 'dur')} />}
             </div>
@@ -554,23 +612,23 @@ export default function ScheduleMaster() {
           </div>
         </div>
 
-        {Object.keys(activeTaskMap).length === 0 && (
+        {Object.keys(globalGroupedTasks).length === 0 && (
            <div className={`p-12 text-center text-[10px] font-black uppercase tracking-widest ${isPrintMode ? 'text-slate-400' : 'text-slate-600'}`}>No tasks scheduled yet.</div>
         )}
         
-        {Object.entries(activeTaskMap as Record<string, any[]>).map(([category, catTasks]) => {
+        {Object.entries(globalGroupedTasks).map(([category, tradesObj]) => {
           const isCollapsed = collapsedCats.has(category)
           const isDraggedCategory = reorderingCategory === category
-          const catDates = getCategoryDates(catTasks);
+          const catDates = getCategoryDates(tradesObj);
           
           return (
             <div key={category} className={`group ${isDraggedCategory && !isPrintMode ? 'opacity-50' : ''}`} onDragOver={(e) => !isPrintMode && e.preventDefault()} onDrop={(e) => { if(!isPrintMode) {e.preventDefault(); handleDrop(e, category);} }}>
               
-              {/* CATEGORY HEADER */}
+              {/* CATEGORY HEADER (z-40) */}
               <div draggable={!isPrintMode} onDragStart={(e) => !isPrintMode && handleDragStartCategory(e, category)} className={`flex border-b h-12 sticky left-0 z-40 ${isPrintMode ? 'bg-slate-200 border-slate-300' : 'bg-slate-950 border-slate-800/50'}`}>
                 
                 <div className={`sticky left-0 z-40 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.4)] ${isPrintMode ? 'bg-slate-200' : 'bg-slate-950'}`}>
-                  <div style={{ width: leftColWidths.task }} className={`shrink-0 flex items-stretch border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
+                  <div style={{ width: leftColWidths.task, minWidth: leftColWidths.task, maxWidth: leftColWidths.task }} className={`shrink-0 flex items-stretch border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
                     {!isPrintMode && (
                       <div className="hidden md:flex w-8 items-center justify-center cursor-grab active:cursor-grabbing border-r hover:bg-slate-900 text-slate-600 hover:text-white border-slate-800/50">
                         <GripVertical size={14} />
@@ -579,117 +637,137 @@ export default function ScheduleMaster() {
                     <button onClick={() => !isPrintMode && toggleCategory(category)} className={`flex-1 p-2 flex items-center gap-1 text-left overflow-hidden ${isPrintMode ? 'cursor-default pointer-events-none' : 'hover:bg-slate-900'}`}>
                       {!isPrintMode && (isCollapsed ? <ChevronRight size={14} className="text-slate-500 shrink-0" /> : <ChevronDown size={14} className="text-slate-500 shrink-0" />)}
                       <span className={`text-[10px] md:text-xs font-black uppercase tracking-widest truncate ${isPrintMode ? 'text-slate-900' : 'text-white'}`}>{category}</span>
-                      <span className={`text-[8px] md:text-[9px] font-bold ml-auto px-2 py-0.5 rounded hidden sm:inline-block ${isPrintMode ? 'text-slate-600 bg-slate-300' : 'text-slate-500 bg-slate-900'}`}>{catTasks.length}</span>
                     </button>
                   </div>
-                  <div style={{ width: leftColWidths.start }} className={`shrink-0 flex items-center justify-center border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
+                  <div style={{ width: leftColWidths.start, minWidth: leftColWidths.start, maxWidth: leftColWidths.start }} className={`shrink-0 flex items-center justify-center border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
                      {catDates && <span className={`text-[9px] font-bold ${isPrintMode ? 'text-slate-600' : 'text-slate-500'}`}>{catDates.start}</span>}
                   </div>
-                  <div style={{ width: leftColWidths.end }} className={`shrink-0 flex items-center justify-center border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
+                  <div style={{ width: leftColWidths.end, minWidth: leftColWidths.end, maxWidth: leftColWidths.end }} className={`shrink-0 flex items-center justify-center border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
                      {catDates && <span className={`text-[9px] font-bold ${isPrintMode ? 'text-slate-600' : 'text-slate-500'}`}>{catDates.end}</span>}
                   </div>
-                  <div style={{ width: leftColWidths.dur }} className={`shrink-0 border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`} />
+                  <div style={{ width: leftColWidths.dur, minWidth: leftColWidths.dur, maxWidth: leftColWidths.dur }} className={`shrink-0 border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`} />
                 </div>
                 
                 <div className="flex-1 flex pointer-events-none" />
               </div>
 
-              {/* TASK ROWS */}
-              {!isCollapsed && catTasks.map((t: any) => {
-                const startMs = parseDate(t.start_date).getTime()
-                const endMs = startMs + (t.duration_days * DAY_MS)
-                const offsetDays = Math.floor((startMs - gridStartDate.getTime()) / DAY_MS)
-                const isCritical = criticalPathIds.has(t.id) && !t.isOverlay
-                const isDraggedTask = reorderingId === t.id
+              {/* TRADE GROUPINGS */}
+              {!isCollapsed && Object.entries(tradesObj).map(([tradeId, tradeData]) => {
+                const isTradeCollapsed = collapsedTrades.has(`${category}-${tradeId}`);
 
                 return (
-                  <div 
-                    key={`${t.id}-${t.isOverlay ? 'overlay' : 'base'}`} 
-                    className={`flex border-b relative h-14 task-row ${isPrintMode ? 'border-slate-300 bg-white' : 'border-slate-800/50 hover:bg-slate-800/20'} ${isDraggedTask && !isPrintMode ? 'opacity-50' : ''} ${t.isOverlay ? (isPrintMode ? 'opacity-70 bg-slate-50' : 'opacity-60 bg-slate-950/50') : ''}`}
-                    onDragOver={(e) => !isPrintMode && e.preventDefault()}
-                    onDrop={(e) => { if(!isPrintMode){ e.preventDefault(); handleDrop(e, category, t.id) } }}
-                  >
-                    
-                    <div className={`sticky left-0 z-20 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.3)] ${isPrintMode ? 'bg-white border-slate-300' : 'bg-slate-950 border-slate-800'}`}>
-                      <div style={{ width: leftColWidths.task }} className="shrink-0 flex items-stretch border-r border-[inherit]">
-                        {!t.isOverlay && !isPrintMode && (
-                          <div draggable onDragStart={(e) => handleDragStartTask(e, t.id)} className="hidden md:flex w-8 items-center justify-center border-r cursor-grab active:cursor-grabbing border-[inherit] hover:bg-slate-800 text-slate-600 hover:text-white">
-                            <GripVertical size={14} />
-                          </div>
-                        )}
-                        {t.isOverlay && !isPrintMode && <div className="hidden md:block w-8 border-r border-[inherit] bg-slate-950/30" />}
-                        
-                        <button onClick={() => !t.isOverlay && !isPrintMode && setEditingTask(t)} className={`flex-1 p-2 flex flex-col justify-center text-left overflow-hidden ${t.isOverlay || isPrintMode ? 'cursor-default pointer-events-none' : 'hover:bg-slate-900'}`}>
-                          <div className="flex justify-between items-center w-full">
-                            <p className={`text-[9px] md:text-[11px] font-bold truncate pr-2 ${isPrintMode ? (t.isOverlay ? 'text-indigo-600' : 'text-slate-800') : (t.isOverlay ? 'text-indigo-300' : 'text-white')}`}>{t.task_name}</p>
-                            {!t.isOverlay && !isPrintMode && <Edit2 size={12} className="text-slate-600 shrink-0 hover:text-white hidden sm:block" />}
-                          </div>
-                          {t.isOverlay ? (
-                            <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrintMode ? 'text-indigo-400' : 'text-indigo-500'}`}>{t.projects?.name}</p>
-                          ) : (
-                            <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrintMode ? 'text-slate-500' : 'text-slate-400'}`}>{t.project_contacts?.company || 'General'}</p>
-                          )}
-                        </button>
-                      </div>
-                      
-                      <div style={{ width: leftColWidths.start }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
-                        <span className={`text-[8px] md:text-[10px] font-bold ${isPrintMode ? 'text-slate-600' : 'text-slate-400'}`}>{new Date(startMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
-                      </div>
-
-                      <div style={{ width: leftColWidths.end }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
-                        <span className={`text-[8px] md:text-[10px] font-bold ${isPrintMode ? 'text-slate-600' : 'text-slate-400'}`}>{new Date(endMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
-                      </div>
-
-                      <div style={{ width: leftColWidths.dur }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
-                        <span className={`text-[9px] md:text-[11px] font-black ${isPrintMode ? 'text-slate-800' : 'text-white'}`}>{t.duration_days}d</span>
-                      </div>
-                    </div>
-
-                    <div className="relative flex">
-                      {gridDays.map((d, i) => (
-                        <div key={i} className={`flex-shrink-0 border-r h-full ${isPrintMode ? `border-slate-300 ${d.isWeekend ? 'bg-slate-100' : ''}` : `border-slate-800/30 ${d.isWeekend ? 'bg-slate-900/20' : ''}`}`} style={{ width: COL_WIDTH }} />
-                      ))}
-
-                      {offsetDays >= 0 && (
-                        <div 
-                          className={`absolute top-1/2 -translate-y-1/2 h-8 rounded flex items-center group/bar overflow-hidden z-20 ${
-                            isPrintMode ? 
-                                (t.isOverlay ? 'bg-indigo-50 border-2 border-indigo-400 border-dashed' : isCritical ? 'bg-red-500 border-2 border-red-700' : 'bg-blue-500 border-2 border-blue-700') 
-                            :
-                                (t.isOverlay ? 'bg-indigo-600/30 border border-indigo-400 border-dashed pointer-events-none' : isCritical ? 'bg-red-600 hover:bg-red-500 border border-red-400 shadow-lg' : 'bg-blue-600 hover:bg-blue-500 border border-blue-400 shadow-lg')
-                          }`}
-                          style={{ left: offsetDays * COL_WIDTH, width: Math.max(t.duration_days * COL_WIDTH, COL_WIDTH - 4) }}
-                        >
-                          {!t.isOverlay && !isPrintMode && (
-                            <div 
-                              className="w-4 md:w-6 h-full flex items-center justify-center cursor-grab active:cursor-grabbing shrink-0"
-                              onPointerDown={(e) => handleHPointerDown(e, t.id, t.start_date, 'move', t.duration_days)}
-                              onPointerMove={handleHPointerMove}
-                              onPointerUp={handleHPointerUp}
-                            >
-                              <GripVertical size={10} className="text-white/50 hidden md:block" />
-                            </div>
-                          )}
-
-                          <div className="flex-1 truncate pointer-events-none px-2 flex items-center">
-                            <span className={`text-[8px] md:text-[9px] font-black leading-none ${isPrintMode && t.isOverlay ? 'text-indigo-900' : 'text-white'}`}>
-                              {t.dependencies?.length > 0 && <LinkIcon size={8} className="inline mr-1 opacity-70" />}
-                              {t.isOverlay && t.project_contacts?.company}
-                            </span>
-                          </div>
-
-                          {!t.isOverlay && !isPrintMode && (
-                            <div 
-                              className="w-3 md:w-4 h-full cursor-col-resize shrink-0 hover:bg-white/20 rounded-r"
-                              onPointerDown={(e) => handleHPointerDown(e, t.id, t.start_date, 'extendEnd', t.duration_days)}
-                              onPointerMove={handleHPointerMove}
-                              onPointerUp={handleHPointerUp}
-                            />
-                          )}
+                  <div key={tradeId} className="group/trade">
+                    {/* TRADE HEADER */}
+                    <div className={`flex border-b h-9 sticky left-0 z-30 ${isPrintMode ? 'bg-slate-100 border-slate-300' : 'bg-slate-900/40 border-slate-800/30'}`} onDragOver={(e) => !isPrintMode && e.preventDefault()} onDrop={(e) => { if(!isPrintMode) {e.preventDefault(); handleDrop(e, category, tradeId);} }}>
+                      <div className={`sticky left-0 z-30 flex w-full max-w-max shadow-[4px_0_15px_-3px_rgba(0,0,0,0.3)] ${isPrintMode ? 'bg-slate-100' : 'bg-slate-900'}`}>
+                        <div style={{ width: totalLeftWidth, minWidth: totalLeftWidth, maxWidth: totalLeftWidth }} className={`shrink-0 flex items-stretch border-r ${isPrintMode ? 'border-slate-300' : 'border-slate-800'}`}>
+                          <button onClick={() => !isPrintMode && toggleTradeGroup(`${category}-${tradeId}`)} className={`flex-1 pl-10 pr-2 flex items-center gap-1 text-left overflow-hidden ${isPrintMode ? 'cursor-default pointer-events-none' : 'hover:bg-slate-800'}`}>
+                            {!isPrintMode && (isTradeCollapsed ? <ChevronRight size={12} className="text-blue-500 shrink-0" /> : <ChevronDown size={12} className="text-blue-500 shrink-0" />)}
+                            <span className={`text-[9px] font-bold uppercase tracking-widest truncate ${isPrintMode ? 'text-slate-700' : 'text-blue-400'}`}>{tradeData.name}</span>
+                            <span className={`text-[7px] font-bold ml-auto px-1.5 py-0.5 rounded ${isPrintMode ? 'text-slate-500 bg-slate-200' : 'text-slate-400 bg-slate-950'}`}>{tradeData.tasks.length} items</span>
+                          </button>
                         </div>
-                      )}
+                      </div>
                     </div>
 
+                    {/* TASK ROWS */}
+                    {!isTradeCollapsed && tradeData.tasks.map((t: any) => {
+                      const startMs = parseDate(t.start_date).getTime()
+                      const endMs = startMs + (t.duration_days * DAY_MS)
+                      const offsetDays = Math.floor((startMs - gridStartDate.getTime()) / DAY_MS)
+                      const isCritical = criticalPathIds.has(t.id) && !t.isOverlay
+                      const isDraggedTask = reorderingId === t.id
+
+                      return (
+                        <div 
+                          key={`${t.id}-${t.isOverlay ? 'overlay' : 'base'}`} 
+                          className={`flex border-b relative h-14 task-row ${isPrintMode ? 'border-slate-300 bg-white' : 'border-slate-800/50 hover:bg-slate-800/20'} ${isDraggedTask && !isPrintMode ? 'opacity-50' : ''} ${t.isOverlay ? (isPrintMode ? 'opacity-70 bg-slate-50' : 'opacity-60 bg-slate-950/50') : ''}`}
+                          onDragOver={(e) => !isPrintMode && e.preventDefault()}
+                          onDrop={(e) => { if(!isPrintMode){ e.preventDefault(); handleDrop(e, category, tradeId, t.id) } }}
+                        >
+                          
+                          {/* TASK LEFT COLS (z-30 to clear bars) */}
+                          <div className={`sticky left-0 z-30 flex shadow-[4px_0_15px_-3px_rgba(0,0,0,0.3)] ${isPrintMode ? 'bg-white border-slate-300' : 'bg-slate-950 border-slate-800'}`}>
+                            <div style={{ width: leftColWidths.task, minWidth: leftColWidths.task, maxWidth: leftColWidths.task }} className="shrink-0 flex items-stretch border-r border-[inherit]">
+                              {!t.isOverlay && !isPrintMode && (
+                                <div draggable onDragStart={(e) => handleDragStartTask(e, t.id)} className="hidden md:flex w-8 items-center justify-center border-r cursor-grab active:cursor-grabbing border-[inherit] hover:bg-slate-800 text-slate-600 hover:text-white">
+                                  <GripVertical size={14} />
+                                </div>
+                              )}
+                              {t.isOverlay && !isPrintMode && <div className="hidden md:block w-8 border-r border-[inherit] bg-slate-950/30" />}
+                              
+                              <button onClick={() => !t.isOverlay && !isPrintMode && setEditingTask(t)} className={`flex-1 p-2 flex flex-col justify-center text-left overflow-hidden ${t.isOverlay || isPrintMode ? 'cursor-default pointer-events-none' : 'hover:bg-slate-900'}`}>
+                                <div className="flex justify-between items-center w-full">
+                                  <p className={`text-[9px] md:text-[11px] font-bold truncate pr-2 ${isPrintMode ? (t.isOverlay ? 'text-indigo-600' : 'text-slate-800') : (t.isOverlay ? 'text-indigo-300' : 'text-white')}`}>{t.task_name}</p>
+                                  {!t.isOverlay && !isPrintMode && <Edit2 size={12} className="text-slate-600 shrink-0 hover:text-white hidden sm:block" />}
+                                </div>
+                                {t.isOverlay && (
+                                  <p className={`text-[7px] md:text-[8px] font-black uppercase truncate tracking-widest mt-0.5 ${isPrintMode ? 'text-indigo-400' : 'text-indigo-500'}`}>{t.projects?.name}</p>
+                                )}
+                              </button>
+                            </div>
+                            
+                            <div style={{ width: leftColWidths.start, minWidth: leftColWidths.start, maxWidth: leftColWidths.start }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
+                              <span className={`text-[8px] md:text-[10px] font-bold ${isPrintMode ? 'text-slate-600' : 'text-slate-400'}`}>{new Date(startMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
+                            </div>
+
+                            <div style={{ width: leftColWidths.end, minWidth: leftColWidths.end, maxWidth: leftColWidths.end }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
+                              <span className={`text-[8px] md:text-[10px] font-bold ${isPrintMode ? 'text-slate-600' : 'text-slate-400'}`}>{new Date(endMs).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}</span>
+                            </div>
+
+                            <div style={{ width: leftColWidths.dur, minWidth: leftColWidths.dur, maxWidth: leftColWidths.dur }} className="shrink-0 p-2 border-r flex items-center justify-center border-[inherit]">
+                              <span className={`text-[9px] md:text-[11px] font-black ${isPrintMode ? 'text-slate-800' : 'text-white'}`}>{t.duration_days}d</span>
+                            </div>
+                          </div>
+
+                          <div className="relative flex">
+                            {gridDays.map((d, i) => (
+                              <div key={i} className={`flex-shrink-0 border-r h-full ${isPrintMode ? `border-slate-300 ${d.isWeekend ? 'bg-slate-100' : ''}` : `border-slate-800/30 ${d.isWeekend ? 'bg-slate-900/20' : ''}`}`} style={{ width: COL_WIDTH }} />
+                            ))}
+
+                            {/* TASK BARS (z-10 so they go under headers) */}
+                            {offsetDays >= 0 && (
+                              <div 
+                                className={`absolute top-1/2 -translate-y-1/2 h-8 rounded flex items-center group/bar overflow-hidden z-10 ${
+                                  isPrintMode ? 
+                                      (t.isOverlay ? 'bg-indigo-50 border-2 border-indigo-400 border-dashed' : isCritical ? 'bg-red-500 border-2 border-red-700' : 'bg-blue-500 border-2 border-blue-700') 
+                                  :
+                                      (t.isOverlay ? 'bg-indigo-600/30 border border-indigo-400 border-dashed pointer-events-none' : isCritical ? 'bg-red-600 hover:bg-red-500 border border-red-400 shadow-lg' : 'bg-blue-600 hover:bg-blue-500 border border-blue-400 shadow-lg')
+                                }`}
+                                style={{ left: offsetDays * COL_WIDTH, width: Math.max(t.duration_days * COL_WIDTH, COL_WIDTH - 4) }}
+                              >
+                                {!t.isOverlay && !isPrintMode && (
+                                  <div 
+                                    className="w-4 md:w-6 h-full flex items-center justify-center cursor-grab active:cursor-grabbing shrink-0"
+                                    onPointerDown={(e) => handleHPointerDown(e, t.id, t.start_date, 'move', t.duration_days)}
+                                    onPointerMove={handleHPointerMove}
+                                    onPointerUp={handleHPointerUp}
+                                  >
+                                    <GripVertical size={10} className="text-white/50 hidden md:block" />
+                                  </div>
+                                )}
+
+                                <div className="flex-1 truncate pointer-events-none px-2 flex items-center">
+                                  <span className={`text-[8px] md:text-[9px] font-black leading-none ${isPrintMode && t.isOverlay ? 'text-indigo-900' : 'text-white'}`}>
+                                    {t.dependencies?.length > 0 && <LinkIcon size={8} className="inline mr-1 opacity-70" />}
+                                  </span>
+                                </div>
+
+                                {!t.isOverlay && !isPrintMode && (
+                                  <div 
+                                    className="w-3 md:w-4 h-full cursor-col-resize shrink-0 hover:bg-white/20 rounded-r"
+                                    onPointerDown={(e) => handleHPointerDown(e, t.id, t.start_date, 'extendEnd', t.duration_days)}
+                                    onPointerMove={handleHPointerMove}
+                                    onPointerUp={handleHPointerUp}
+                                  />
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               })}
@@ -697,8 +775,8 @@ export default function ScheduleMaster() {
           )
         })}
 
-        {/* DEPENDENCY ARROW SVG OVERLAY - RENDERED AT THE BOTTOM */}
-        <div className="absolute top-0 bottom-0 right-0 z-10 pointer-events-none overflow-hidden" style={{ left: totalLeftWidth }}>
+        {/* DEPENDENCY ARROW SVG OVERLAY */}
+        <div className="absolute top-0 bottom-0 right-0 z-[5] pointer-events-none overflow-hidden" style={{ left: totalLeftWidth }}>
           <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
             <defs>
               <marker id={isPrintMode ? "arrowHeadPrint" : "arrowHeadScreen"} markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto">
@@ -762,7 +840,6 @@ export default function ScheduleMaster() {
         </div>
       )}
 
-      {/* --- FIXED OFF-SCREEN CLONE FOR PDF EXPORT --- */}
       {isExporting && (
         <div className="absolute top-0 left-0 z-[9998] w-max min-w-full bg-white" id="gantt-export-clone">
            <div className="p-8 border border-slate-300">
@@ -787,7 +864,7 @@ export default function ScheduleMaster() {
           )}
         </div>
         <div className="flex flex-wrap gap-3">
-          <button onClick={handlePrint} disabled={saving || isExporting} className="bg-slate-800 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all flex items-center gap-2 shadow-xl disabled:opacity-50">
+          <button onClick={handlePrint} disabled={saving || isExporting} className="cursor-pointer bg-slate-800 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all flex items-center gap-2 shadow-xl disabled:opacity-50">
             {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Printer size={14}/>} Export
           </button>
           <button onClick={saveAllTasks} disabled={saving} className="bg-slate-800 text-blue-400 border border-blue-900/50 text-[10px] font-black px-6 py-4 rounded-2xl uppercase hover:bg-slate-700 transition-all flex items-center gap-2 shadow-xl">
@@ -833,13 +910,19 @@ export default function ScheduleMaster() {
             <input value={editingTask.task_name} onChange={e => setEditingTask({...editingTask, task_name: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none" />
 
             <div className="grid grid-cols-2 gap-4">
-              <select 
-                value={editingTask.category || 'Pre-con'} 
-                onChange={e => setEditingTask({...editingTask, category: e.target.value})} 
-                className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-blue-400 outline-none"
-              >
-                {DEFAULT_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              {/* Native Combobox for Categories! */}
+              <div className="relative">
+                <input 
+                  list="category-options"
+                  value={editingTask.category || ''} 
+                  onChange={e => setEditingTask({...editingTask, category: e.target.value})} 
+                  placeholder="Type or select category..."
+                  className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-blue-400 outline-none"
+                />
+                <datalist id="category-options">
+                  {dynamicCategories.map(c => <option key={c} value={c} />)}
+                </datalist>
+              </div>
 
               <select 
                 value={editingTask.trade_id || ''} 
@@ -896,9 +979,16 @@ export default function ScheduleMaster() {
             <input required value={newTask.name} onChange={e => setNewTask({...newTask, name: e.target.value})} placeholder="Task Name (e.g. Rough Framing)" className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-white outline-none" />
             
             <div className="grid grid-cols-2 gap-4">
-              <select value={newTask.category} onChange={e => setNewTask({...newTask, category: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-blue-400 outline-none">
-                {DEFAULT_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <div className="relative">
+                <input 
+                  list="category-options"
+                  required
+                  value={newTask.category} 
+                  onChange={e => setNewTask({...newTask, category: e.target.value})} 
+                  placeholder="Type or select category..."
+                  className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-blue-400 outline-none"
+                />
+              </div>
 
               <select value={newTask.trade} onChange={e => setNewTask({...newTask, trade: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl font-bold text-slate-400 outline-none">
                 <option value="">No Trade Assigned</option>
