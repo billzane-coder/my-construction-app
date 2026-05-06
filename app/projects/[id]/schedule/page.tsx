@@ -145,23 +145,25 @@ export default function ScheduleMaster() {
     const { gantt } = await import('dhtmlx-gantt')
     const state = gantt.serialize()
     
-    const taskUpdates = state.data
-      .filter((t: any) => !String(t.id).startsWith('cat_'))
-      .map((t: any, index: number) => {
-        const liveTask = gantt.getTask(t.id);
-        const parentId = String(t.parent);
-        const resolvedCategory = parentId.startsWith('cat_') ? parentId.replace('cat_', '') : null;
+const taskUpdates = state.data
+  .filter((t: any) => !String(t.id).startsWith('cat_'))
+  .map((t: any, index: number) => {
+    const liveTask = gantt.getTask(t.id);
+    
+    const parentId = String(t.parent);
+    const resolvedCategory = parentId.startsWith('cat_') ? parentId.replace('cat_', '') : null;
 
-        return {
-          id: t.id, 
-          project_id: id, 
-          task_name: t.text,
-          start_date: gantt.templates.format_date(liveTask.start_date),
-          duration_days: t.duration, 
-          sort_order: index,
-          category: resolvedCategory
-        }
-      })
+    return {
+      id: t.id,
+      project_id: id,
+      task_name: t.text,
+      // UPDATE THIS LINE to safely cast as Date to satisfy Vercel
+      start_date: liveTask.start_date ? gantt.templates.format_date(liveTask.start_date as Date) : null,
+      duration_days: t.duration,
+      sort_order: index,
+      category: resolvedCategory
+    }
+  })
 
     // CRITICAL FIX: The 'id' is back, and everything is strictly formatted as text
     const linkUpdates = state.links

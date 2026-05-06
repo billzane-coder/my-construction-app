@@ -182,9 +182,6 @@ export default function BidMatrix() {
     setProcessing(null)
   }
 
-  /**
-   * PURGE HANDLER: Use this if you accidentally invited the wrong company entirely.
-   */
   const handleRemoveBidder = async (bidderId: string) => {
     if (!confirm("Permanently remove this bidder from the matrix?")) return
     setProcessing(bidderId)
@@ -194,9 +191,6 @@ export default function BidMatrix() {
     setProcessing(null)
   }
 
-  /**
-   * RESET HANDLER: Use this if you attached the wrong quote/data to a valid trade.
-   */
   const handleResetBid = async (bidder: any) => {
     if (!confirm(`Clear all bid data for ${bidder.subcontractor?.company_name}? This resets price, notes, and history.`)) return
     setProcessing(bidder.id)
@@ -353,7 +347,6 @@ export default function BidMatrix() {
                   </div>
 
                   <div className="p-4 space-y-6 bg-slate-950/30 flex-1 flex flex-col overflow-y-auto custom-scrollbar">
-                    {/* ... (Rest of component remains same) ... */}
                     <div>
                       <label className="text-[8px] font-black uppercase text-slate-500 mb-2 block flex items-center gap-1"><FileStack size={10}/> Quote History</label>
                       {history.length > 0 ? (
@@ -415,7 +408,52 @@ export default function BidMatrix() {
           </div>
         </div>
       </div>
-      {/* ... (Keep your Invite Modal code at the end) ... */}
+      
+      {/* RESTORED: Invite Trade Modal UI */}
+      {showInviteModal && (
+        <div className="fixed inset-0 z-[200] bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 w-full max-w-lg max-h-[80vh] flex flex-col">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-lg font-black uppercase tracking-widest text-white">Invite Trade</h2>
+              <button onClick={() => setShowInviteModal(false)} className="text-slate-500 hover:text-white"><X size={20}/></button>
+            </div>
+
+            <div className="flex gap-2 mb-6 bg-slate-950 p-1 rounded-xl border border-slate-800">
+              <button onClick={() => setIsCreatingNew(false)} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${!isCreatingNew ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:text-white'}`}>Search Roster</button>
+              <button onClick={() => setIsCreatingNew(true)} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${isCreatingNew ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-white'}`}>New Trade</button>
+            </div>
+
+            {!isCreatingNew ? (
+              <div className="flex-1 flex flex-col min-h-0">
+                <div className="relative mb-4">
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input type="text" placeholder="Search global roster..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full bg-slate-950 border border-slate-800 pl-10 p-3 rounded-xl text-sm outline-none focus:border-emerald-500 text-white transition-all"/>
+                </div>
+                <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar pr-2">
+                  {filteredGlobalTrades.map(trade => (
+                    <div key={trade.id} className="bg-slate-950 border border-slate-800 p-4 rounded-xl flex justify-between items-center">
+                      <div>
+                        <p className="font-bold text-white text-sm">{trade.company_name}</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mt-1">{trade.trade_type}</p>
+                      </div>
+                      <button onClick={() => handleInviteTrade(trade.id)} className="bg-emerald-600/20 text-emerald-500 hover:bg-emerald-500 hover:text-white px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all">Invite</button>
+                    </div>
+                  ))}
+                  {filteredGlobalTrades.length === 0 && <p className="text-center text-slate-500 text-xs py-8">No trades found. Add a new one.</p>}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4 overflow-y-auto custom-scrollbar pr-2">
+                <div><label className="text-[10px] font-black uppercase text-slate-500 mb-1 block">Company Name</label><input type="text" value={newTrade.company} onChange={e => setNewTrade({...newTrade, company: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-3 rounded-xl text-sm outline-none focus:border-blue-500 text-white"/></div>
+                <div><label className="text-[10px] font-black uppercase text-slate-500 mb-1 block">Primary Contact</label><input type="text" value={newTrade.contact} onChange={e => setNewTrade({...newTrade, contact: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-3 rounded-xl text-sm outline-none focus:border-blue-500 text-white"/></div>
+                <div><label className="text-[10px] font-black uppercase text-slate-500 mb-1 block">Email (For Invites)</label><input type="email" value={newTrade.email} onChange={e => setNewTrade({...newTrade, email: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-3 rounded-xl text-sm outline-none focus:border-blue-500 text-white"/></div>
+                <div><label className="text-[10px] font-black uppercase text-slate-500 mb-1 block">Phone</label><input type="text" value={newTrade.phone} onChange={e => setNewTrade({...newTrade, phone: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-3 rounded-xl text-sm outline-none focus:border-blue-500 text-white"/></div>
+                <button onClick={handleQuickAddGlobal} disabled={!newTrade.company} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-black text-[10px] uppercase tracking-widest py-4 rounded-xl mt-4 transition-all">Save & Invite</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
