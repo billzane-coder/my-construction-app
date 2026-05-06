@@ -12,9 +12,11 @@
     "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.103.3",
     "@vercel/speed-insights": "^2.0.0",
+    "dhtmlx-gantt": "^9.1.4",
     "exceljs": "^4.4.0",
     "file-saver": "^2.0.5",
     "html-to-image": "^1.11.13",
+    "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
     "lucide-react": "^1.8.0",
@@ -25,7 +27,7 @@
     "react-pdf": "^10.4.1",
     "react-zoom-pan-pinch": "^4.0.3",
     "resend": "^6.12.2",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.1/xlsx-0.20.1.tgz"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

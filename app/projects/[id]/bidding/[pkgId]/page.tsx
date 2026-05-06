@@ -10,7 +10,7 @@ import {
   CheckCircle2, XCircle, UserPlus, ExternalLink,
   DollarSign, Calendar, X, Loader2, Info, Gavel,
   Edit3, Search, Globe, UploadCloud, FileCheck, RefreshCw,
-  Maximize2, Clock, FileStack, Undo2, Link as LinkIcon, Mail, Trash2
+  Maximize2, Clock, FileStack, Undo2, Link as LinkIcon, Mail, Trash2, RotateCcw
 } from 'lucide-react'
 
 export default function BidMatrix() {
@@ -89,8 +89,6 @@ export default function BidMatrix() {
 
   const handleUpdateBid = async (inviteId: string, field: string, value: any) => {
     const updates: any = { [field]: value }
-    
-    // Auto-flip to Submitted ONLY if they are entering price, days, or notes manually
     if (['submitted_amount', 'schedule_impact_days', 'trade_notes'].includes(field) && value !== '') {
       updates.status = 'Submitted'
     }
@@ -184,10 +182,44 @@ export default function BidMatrix() {
     setProcessing(null)
   }
 
+  /**
+   * PURGE HANDLER: Use this if you accidentally invited the wrong company entirely.
+   */
   const handleRemoveBidder = async (bidderId: string) => {
-    if (!confirm("Remove this bidder from the matrix?")) return
-    await supabase.from('bid_invitations').delete().eq('id', bidderId)
+    if (!confirm("Permanently remove this bidder from the matrix?")) return
+    setProcessing(bidderId)
+    const { error } = await supabase.from('bid_invitations').delete().eq('id', bidderId)
+    if (error) alert("Failed to remove bidder.")
     fetchData()
+    setProcessing(null)
+  }
+
+  /**
+   * RESET HANDLER: Use this if you attached the wrong quote/data to a valid trade.
+   */
+  const handleResetBid = async (bidder: any) => {
+    if (!confirm(`Clear all bid data for ${bidder.subcontractor?.company_name}? This resets price, notes, and history.`)) return
+    setProcessing(bidder.id)
+    try {
+      const { error } = await supabase
+        .from('bid_invitations')
+        .update({
+          submitted_amount: null,
+          schedule_impact_days: null,
+          trade_notes: null,
+          proposal_link: null,
+          proposal_history: [],
+          status: 'Invited'
+        })
+        .eq('id', bidder.id)
+
+      if (error) throw error
+      fetchData()
+    } catch (err) {
+      alert("Reset failed.")
+    } finally {
+      setProcessing(null)
+    }
   }
 
   if (loading) return (
@@ -292,8 +324,6 @@ export default function BidMatrix() {
                     <div className="flex justify-between items-start">
                       <div>
                         <h4 className="font-black text-white text-lg truncate uppercase leading-tight">{bidder.subcontractor?.company_name || 'Trade'}</h4>
-                        
-                        {/* MANUAL STATUS DROPDOWN (Always Visible) */}
                         <select
                           value={bidder.status || 'Invited'}
                           disabled={isWinner}
@@ -315,14 +345,15 @@ export default function BidMatrix() {
                       </div>
                       
                       <div className="flex gap-1">
+                        <button onClick={() => handleResetBid(bidder)} className="p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-500 hover:text-blue-400 transition-colors" title="Reset Bid Data"><RotateCcw size={12}/></button>
+                        <button onClick={() => handleRemoveBidder(bidder.id)} className="p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-700 hover:text-red-500 transition-colors" title="Remove Bidder"><Trash2 size={12}/></button>
                         <button onClick={() => copyMagicLink(bidder.token)} className="p-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-400 hover:text-white" title="Copy Magic Link"><LinkIcon size={12}/></button>
-                        <a href={generateMailto(bidder)} className="p-2 bg-blue-950/30 border border-blue-900/50 rounded-lg text-blue-400 hover:text-white" title="Draft Email"><Mail size={12}/></a>
-                        <button onClick={() => handleRemoveBidder(bidder.id)} className="p-2 text-slate-700 hover:text-red-500 transition-colors"><Trash2 size={12}/></button>
                       </div>
                     </div>
                   </div>
 
                   <div className="p-4 space-y-6 bg-slate-950/30 flex-1 flex flex-col overflow-y-auto custom-scrollbar">
+                    {/* ... (Rest of component remains same) ... */}
                     <div>
                       <label className="text-[8px] font-black uppercase text-slate-500 mb-2 block flex items-center gap-1"><FileStack size={10}/> Quote History</label>
                       {history.length > 0 ? (
@@ -384,46 +415,7 @@ export default function BidMatrix() {
           </div>
         </div>
       </div>
-
-      {/* INVITE MODAL */}
-      {showInviteModal && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-          <div className="bg-slate-900 border-2 border-emerald-500 p-10 rounded-[48px] max-w-md w-full shadow-2xl flex flex-col animate-in zoom-in-95 duration-200">
-            <div className="flex justify-between items-center mb-8">
-              <h2 className="text-2xl font-black text-white uppercase italic">{isCreatingNew ? 'Add Trade' : 'Invite Trade'}</h2>
-              <button onClick={() => setShowInviteModal(false)} className="text-slate-500 hover:text-white bg-slate-800 p-2 rounded-full transition-all"><X size={20}/></button>
-            </div>
-            
-            {!isCreatingNew ? (
-              <div className="space-y-4">
-                <input type="text" placeholder="Search Master List..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl text-white font-bold outline-none focus:border-emerald-500" />
-                <div className="overflow-y-auto max-h-[40vh] space-y-2 pr-2 custom-scrollbar">
-                  {filteredGlobalTrades.map(trade => (
-                    <button key={trade.id} onClick={() => handleInviteTrade(trade.id)} className="w-full flex justify-between items-center bg-slate-950 border border-slate-800 p-5 rounded-2xl group hover:border-emerald-500 transition-all text-left">
-                      <div>
-                        <p className="font-black text-white uppercase text-sm">{trade.company_name}</p>
-                        <p className="text-[10px] text-slate-500 font-bold uppercase">{trade.primary_contact}</p>
-                      </div>
-                      <Plus size={18} className="text-emerald-500" />
-                    </button>
-                  ))}
-                </div>
-                <button onClick={() => setIsCreatingNew(true)} className="w-full py-4 border-2 border-dashed border-slate-800 rounded-2xl text-[10px] font-black uppercase text-slate-500 hover:text-emerald-500 transition-all">+ Register New Trade Global</button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <input type="text" value={newTrade.company} onChange={e => setNewTrade({...newTrade, company: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl text-white font-bold outline-none focus:border-emerald-500" placeholder="Company Name" />
-                <input type="text" value={newTrade.contact} onChange={e => setNewTrade({...newTrade, contact: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl text-white font-bold outline-none focus:border-emerald-500" placeholder="Contact Name" />
-                <input type="email" value={newTrade.email} onChange={e => setNewTrade({...newTrade, email: e.target.value})} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl text-white font-bold outline-none focus:border-emerald-500" placeholder="Email" />
-                <div className="flex gap-4 pt-4">
-                  <button onClick={() => setIsCreatingNew(false)} className="flex-1 py-4 text-[10px] font-black uppercase text-slate-500">Back</button>
-                  <button onClick={handleQuickAddGlobal} disabled={!newTrade.company} className="flex-[2] bg-emerald-600 text-white py-4 rounded-2xl text-[10px] font-black uppercase shadow-lg hover:bg-emerald-500">Add & Invite</button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* ... (Keep your Invite Modal code at the end) ... */}
     </div>
   )
 }
