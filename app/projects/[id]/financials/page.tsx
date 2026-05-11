@@ -12,7 +12,7 @@ import {
   ChevronLeft, Plus, X, ShieldCheck, Wallet, 
   FileStack, ArrowRight, Trash2, Check, Lock, 
   Loader2, ChevronDown, ChevronRight, Users, Printer, FileSpreadsheet,
-  Copy, Save, Unlock, CheckCircle2
+  Copy, Save, Unlock, CheckCircle2, FileSignature
 } from 'lucide-react'
 
 export default function FinancialMaster() {
@@ -614,6 +614,10 @@ export function FinancialHeader({ id, active, onExportExcel, onExportPDF }: { id
         </div>
 
         <div className="h-8 w-px bg-slate-800 mx-1 hidden md:block"></div>
+
+        <button onClick={() => router.push(`/projects/${id}/financials/commitments/new`)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 shadow-xl border border-emerald-500">
+          <FileSignature size={16}/> Issue Commitment
+        </button>
 
         <button onClick={() => router.push(`/projects/${id}/trades`)} className="bg-white text-black px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all flex items-center gap-2 shadow-xl border-t border-white/50">
           <Users size={16}/> Site Directory
