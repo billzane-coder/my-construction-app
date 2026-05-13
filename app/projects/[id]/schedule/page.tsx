@@ -20,6 +20,8 @@ export default function ScheduleMaster() {
 
   useEffect(() => {
     if (typeof window === 'undefined' || !id) return
+    
+    let wheelHandler: (e: WheelEvent) => void;
 
     async function setupGantt() {
       const { gantt } = await import('dhtmlx-gantt')
@@ -28,7 +30,8 @@ export default function ScheduleMaster() {
       // 1. Core Plugins
       gantt.plugins({
         auto_scheduling: true,
-        critical_path: true
+        critical_path: true,
+        drag_timeline: true // <--- ENABLED PANNING PLUGIN
       });
 
       // 2. Load Export Bridge
@@ -84,6 +87,12 @@ export default function ScheduleMaster() {
       gantt.config.drag_links = true;
       gantt.config.select_link = true;
       
+      // DRAG TIMELINE (PANNING) BEHAVIOR
+      gantt.config.drag_timeline = {
+        ignore: ".gantt_task_line, .gantt_task_link",
+        useKey: false // Allows dragging freely without holding a modifier key
+      };
+      
       gantt.attachEvent("onLinkDblClick", function(linkId) {
         gantt.modalbox({
           text: "Delete this dependency arrow?",
@@ -124,16 +133,31 @@ export default function ScheduleMaster() {
         gantt.init(ganttContainer.current)
         gantt.clearAll()
         gantt.parse({ data: [...catNodes, ...taskNodes], links: formattedLinks })
+
+        // 4. MOUSE WHEEL ZOOM LISTENER
+        wheelHandler = (e: WheelEvent) => {
+          if (e.ctrlKey || e.metaKey) { // Requires Ctrl/Cmd to be held down
+            e.preventDefault();
+            e.deltaY > 0 ? gantt.ext.zoom.zoomOut() : gantt.ext.zoom.zoomIn();
+          }
+        };
+
+        // Attach event securely
+        ganttContainer.current.addEventListener('wheel', wheelHandler, { passive: false });
       }
       setLoading(false)
     }
 
     setupGantt()
 
+    // 5. CLEANUP LISTENER ON UNMOUNT
     return () => {
       const cleanup = async () => {
         const { gantt } = await import('dhtmlx-gantt')
         gantt.clearAll()
+        if (ganttContainer.current && wheelHandler) {
+          ganttContainer.current.removeEventListener('wheel', wheelHandler);
+        }
       }
       cleanup()
     }
@@ -145,31 +169,29 @@ export default function ScheduleMaster() {
     const { gantt } = await import('dhtmlx-gantt')
     const state = gantt.serialize()
     
-const taskUpdates = state.data
-  .filter((t: any) => !String(t.id).startsWith('cat_'))
-  .map((t: any, index: number) => {
-    const liveTask = gantt.getTask(t.id);
-    
-    const parentId = String(t.parent);
-    const resolvedCategory = parentId.startsWith('cat_') ? parentId.replace('cat_', '') : null;
+    const taskUpdates = state.data
+      .filter((t: any) => !String(t.id).startsWith('cat_'))
+      .map((t: any, index: number) => {
+        const liveTask = gantt.getTask(t.id);
+        
+        const parentId = String(t.parent);
+        const resolvedCategory = parentId.startsWith('cat_') ? parentId.replace('cat_', '') : null;
 
-    return {
-      id: t.id,
-      project_id: id,
-      task_name: t.text,
-      // UPDATE THIS LINE to safely cast as Date to satisfy Vercel
-      start_date: liveTask.start_date ? gantt.templates.format_date(liveTask.start_date as Date) : null,
-      duration_days: t.duration,
-      sort_order: index,
-      category: resolvedCategory
-    }
-  })
+        return {
+          id: t.id,
+          project_id: id,
+          task_name: t.text,
+          start_date: liveTask.start_date ? gantt.templates.format_date(liveTask.start_date as Date) : null,
+          duration_days: t.duration,
+          sort_order: index,
+          category: resolvedCategory
+        }
+      })
 
-    // CRITICAL FIX: The 'id' is back, and everything is strictly formatted as text
     const linkUpdates = state.links
       .filter((l: any) => !String(l.source).startsWith('cat_') && !String(l.target).startsWith('cat_'))
       .map((l: any) => ({
-        id: String(l.id),               // <-- This was missing!
+        id: String(l.id),
         project_id: id,
         source_id: String(l.source),
         target_id: String(l.target),
@@ -275,7 +297,7 @@ const taskUpdates = state.data
             </h2>
           </div>
         )}
-        <div ref={ganttContainer} className="absolute inset-0 w-full h-full" style={{ visibility: loading ? 'hidden' : 'visible' }} />
+        <div ref={ganttContainer} className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing" style={{ visibility: loading ? 'hidden' : 'visible' }} />
       </div>
 
       <style jsx global>{`
