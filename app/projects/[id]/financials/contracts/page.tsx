@@ -8,11 +8,19 @@ import { supabase } from '@/lib/supabase'
 import { FinancialHeader } from '../page'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import dynamicImport from 'next/dynamic'
 import { 
   Plus, CheckCircle2, Lock, Unlock, X, DollarSign, 
   LayoutGrid, Mail, Copy, Loader2, Edit3, Trash2, 
   ChevronDown, Save, FileSignature, Printer, FileText 
 } from 'lucide-react'
+
+// Bring the Editor into the Dashboard for modifications
+const ReactQuill = dynamicImport(() => import('react-quill-new'), { 
+  ssr: false,
+  loading: () => <div className="h-48 w-full bg-slate-950 animate-pulse rounded-2xl border border-slate-800" />
+})
+import 'react-quill-new/dist/quill.snow.css'
 
 export default function ContractsManager() {
   const { id } = useParams()
@@ -28,11 +36,14 @@ export default function ContractsManager() {
   const [project, setProject] = useState<any>(null)
   
   // --- UI STATES ---
-  const [showNewModal, setShowNewModal] = useState(false)
   const [newSovDesc, setNewSovDesc] = useState('')
   const [newSovAmount, setNewSovAmount] = useState('')
   const [expandedContract, setExpandedContract] = useState<string | null>(null)
   const [editingSub, setEditingSub] = useState<{ contractId: string, subId: string } | null>(null)
+  
+  // NEW: Scope Editing States
+  const [editingScopeId, setEditingScopeId] = useState<string | null>(null)
+  const [editableScope, setEditableScope] = useState('')
 
   // --- CLONING STATES ---
   const [availableProjects, setAvailableProjects] = useState<any[]>([])
@@ -56,7 +67,6 @@ export default function ContractsManager() {
     if (settingsRes.data) setSettings(settingsRes.data)
     if (pRes.data) setProject(pRes.data)
 
-    // IMPORTANT: scope_of_work is included in this fetch
     const { data: contractData } = await supabase
       .from('project_contracts')
       .select(`
@@ -82,20 +92,6 @@ export default function ContractsManager() {
   useEffect(() => { fetchData() }, [id])
 
   // --- CONTRACT ACTIONS ---
-  const handleCreateContract = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const fd = new FormData(e.currentTarget as HTMLFormElement)
-    await supabase.from('project_contracts').insert([{ 
-      project_id: id, 
-      contact_id: fd.get('contact_id'), 
-      cost_code_id: fd.get('cost_code_id'), 
-      title: fd.get('title'), 
-      status: 'Draft' 
-    }])
-    setShowNewModal(false)
-    fetchData()
-  }
-
   const handleUpdateContractor = async (contractId: string) => {
     if (!editingSub) return
     await supabase.from('project_contracts').update({ contact_id: editingSub.subId }).eq('id', contractId)
@@ -129,6 +125,13 @@ export default function ContractsManager() {
     fetchData()
   }
 
+  // --- NEW: SAVE EDITED SCOPE ---
+  const handleSaveScope = async (contractId: string) => {
+    await supabase.from('project_contracts').update({ scope_of_work: editableScope }).eq('id', contractId)
+    setEditingScopeId(null)
+    fetchData()
+  }
+
   // --- SOV ACTIONS ---
   const handleAddSovLine = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -149,7 +152,7 @@ export default function ContractsManager() {
     fetchData()
   }
 
-  // --- UPGRADED PDF GENERATOR ---
+  // --- PDF GENERATOR ---
   const generatePODocument = (contract: any) => {
     const doc = new jsPDF()
     const brandHex = settings?.primary_color || '#2563eb'
@@ -159,7 +162,6 @@ export default function ContractsManager() {
     }
     const brandRgb = hexToRgb(brandHex)
 
-    // Header & Logo
     if (settings?.logo_url) {
       doc.addImage(settings.logo_url, 'PNG', 14, 15, 40, 15)
     }
@@ -172,9 +174,8 @@ export default function ContractsManager() {
     doc.setFontSize(10)
     doc.setTextColor(100, 116, 139)
     doc.text(`PO Number: ${contract.title}`, 196, 32, { align: "right" })
-    doc.text(`Date Issued: ${new Date(contract.created_at).toLocaleDateString()}`, 196, 38, { align: "right" })
+    doc.text(`Date Issued: ${new Date().toLocaleDateString()}`, 196, 38, { align: "right" }) // Prints current date for re-issues
 
-    // Divider & To/From
     doc.setDrawColor(226, 232, 240)
     doc.line(14, 45, 196, 45)
 
@@ -192,7 +193,7 @@ export default function ContractsManager() {
     doc.text(contract.project_contacts?.company || "Trade Name", 110, 61)
     doc.text("Attention: Project Manager", 110, 67)
 
-    // 1. Print the Schedule of Values Table FIRST
+    // Table
     const tableData = contract.sov_line_items?.map((line: any, index: number) => [
       String(index + 1).padStart(2, '0'),
       line.description,
@@ -200,7 +201,7 @@ export default function ContractsManager() {
     ]) || []
 
     autoTable(doc, {
-      startY: 85, // Start right below the To/From section
+      startY: 85,
       head: [['Item', 'Schedule of Values', 'Amount']],
       body: tableData,
       theme: 'grid',
@@ -214,42 +215,37 @@ export default function ContractsManager() {
 
     const tableEndY = (doc as any).lastAutoTable.finalY + 15
 
-    // 2. Print the Detailed Scope of Work SECOND
+    // Scope Parsing
     doc.setFontSize(10)
     doc.setTextColor(15, 23, 42)
     doc.setFont("helvetica", "bold")
     doc.text("Scope of Work / Terms:", 14, tableEndY)
 
-    // PRESERVE FORMATTING: Replace HTML elements with line breaks and bullets before stripping HTML
     let htmlContent = contract.scope_of_work || "No detailed scope provided.";
-    htmlContent = htmlContent.replace(/<li[^>]*>/gi, '  • '); // Convert lists to bullets
+    htmlContent = htmlContent.replace(/<li[^>]*>/gi, '  • '); 
     htmlContent = htmlContent.replace(/<\/li>/gi, '<br>');
-    htmlContent = htmlContent.replace(/<\/p>/gi, '<br><br>'); // Add spacing to paragraphs
-    htmlContent = htmlContent.replace(/<\/h[1-6]>/gi, '<br><br>'); // Add spacing to headers
-    htmlContent = htmlContent.replace(/<br\s*[\/]?>/gi, '\n'); // Convert <br> to real newlines
+    htmlContent = htmlContent.replace(/<\/p>/gi, '<br><br>'); 
+    htmlContent = htmlContent.replace(/<\/h[1-6]>/gi, '<br><br>'); 
+    htmlContent = htmlContent.replace(/<br\s*[\/]?>/gi, '\n');
 
-    // Safely strip remaining raw HTML tags
     const tempDiv = document.createElement("div");
     tempDiv.innerHTML = htmlContent;
     let plainTextScope = tempDiv.textContent || tempDiv.innerText || "";
-    plainTextScope = plainTextScope.replace(/\n{3,}/g, '\n\n').trim(); // Clean up excessive empty lines
+    plainTextScope = plainTextScope.replace(/\n{3,}/g, '\n\n').trim();
 
-    // Wrap text to fit page
     doc.setFont("helvetica", "normal")
     const splitScope = doc.splitTextToSize(plainTextScope, 180);
     
-    // Auto-Page Break Loop for long scopes
     let currentY = tableEndY + 8;
     for (let i = 0; i < splitScope.length; i++) {
-      if (currentY > 280) { // If we hit the bottom of the page
+      if (currentY > 280) {
         doc.addPage();
-        currentY = 20; // Reset to top
+        currentY = 20; 
       }
       doc.text(splitScope[i], 14, currentY);
-      currentY += 4.5; // Move down for next line
+      currentY += 4.5;
     }
 
-    // 3. Print Totals (SIGNATURE LINES REMOVED)
     let finalSectionY = currentY + 15;
     if (finalSectionY > 280) {
       doc.addPage();
@@ -263,7 +259,6 @@ export default function ContractsManager() {
     doc.setFont("helvetica", "bold")
     doc.text(`Total Authorized Value: ${formatMoney(total)}`, 196, finalSectionY, { align: "right" })
 
-    // Clean export name
     doc.save(`${contract.project_contacts?.company.replace(/\s+/g, '_') || 'Trade'}_${contract.title.replace(/\s+/g, '_')}.pdf`)
   }
 
@@ -295,7 +290,7 @@ export default function ContractsManager() {
           status: 'Draft',
           cost_code_id: matchCode?.id || null,
           contact_id: matchContact?.id || null,
-          scope_of_work: sContract.scope_of_work // Ensure scope transfers on clone
+          scope_of_work: sContract.scope_of_work
         }
 
         const { data: newContract, error: cErr } = await supabase.from('project_contracts').insert([newContractPayload]).select().single()
@@ -327,7 +322,6 @@ export default function ContractsManager() {
     window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
   }
 
-  // --- HELPERS ---
   const formatMoney = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0)
   const calculateContractTotal = (sovLines: any[]) => sovLines?.reduce((sum, line) => sum + Number(line.scheduled_value || 0), 0) || 0
 
@@ -336,7 +330,6 @@ export default function ContractsManager() {
   return (
     <div className="w-full bg-slate-950 min-h-screen p-6 md:p-12 text-slate-100 pb-32">
       
-      {/* CLONE MODAL */}
       {showImportModal && (
         <div className="fixed inset-0 z-[200] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-200">
@@ -394,7 +387,6 @@ export default function ContractsManager() {
                         {contract.status === 'Active' ? 'Locked SOV' : contract.status}
                       </span>
                       
-                      {/* EDITABLE CONTRACTOR SWAP */}
                       {editingSub?.contractId === contract.id ? (
                         <div className="flex items-center gap-2 mb-2" onClick={(e) => e.stopPropagation()}>
                           <select 
@@ -447,21 +439,37 @@ export default function ContractsManager() {
                      </div>
                   </div>
 
-                  {/* SCOPE OF WORK & SOV PREVIEW */}
+                  {/* SCOPE OF WORK EDITOR PREVIEW */}
                   {expandedContract === contract.id && (
                     <div className="p-6 border-t border-slate-800 bg-slate-900 cursor-default" onClick={e => e.stopPropagation()}>
                       
-                      {contract.scope_of_work && contract.scope_of_work !== '<p><br></p>' && (
-                        <div className="mb-6 p-5 bg-slate-950 rounded-2xl border border-slate-800">
-                          <h4 className="text-[10px] font-black uppercase text-slate-500 mb-3 tracking-widest flex items-center gap-2">
-                            <FileText size={12}/> Scope of Work
+                      <div className="mb-6 p-5 bg-slate-950 rounded-2xl border border-slate-800">
+                        <div className="flex justify-between items-center mb-4">
+                          <h4 className="text-[10px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-2">
+                            <FileText size={12}/> Document Terms & Scope
                           </h4>
-                          <div 
-                            className="text-sm text-slate-300 leading-relaxed quill-content" 
-                            dangerouslySetInnerHTML={{ __html: contract.scope_of_work }} 
-                          />
+                          {editingScopeId === contract.id ? (
+                            <div className="flex gap-2">
+                              <button onClick={() => setEditingScopeId(null)} className="text-slate-500 hover:text-white text-[10px] font-black uppercase">Cancel</button>
+                              <button onClick={() => handleSaveScope(contract.id)} className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-500 text-[10px] font-black uppercase flex items-center gap-1 shadow-lg"><Save size={12}/> Save Update</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => { setEditableScope(contract.scope_of_work || ''); setEditingScopeId(contract.id) }} className="text-blue-500 hover:text-white text-[10px] font-black uppercase flex items-center gap-1"><Edit3 size={12}/> Edit Scope</button>
+                          )}
                         </div>
-                      )}
+
+                        {editingScopeId === contract.id ? (
+                          <div className="border border-blue-900/50 rounded-2xl overflow-hidden bg-slate-950 focus-within:border-blue-500 transition-colors">
+                            <ReactQuill theme="snow" value={editableScope} onChange={setEditableScope} className="text-white min-h-[300px]"/>
+                          </div>
+                        ) : (
+                          contract.scope_of_work && contract.scope_of_work !== '<p><br></p>' ? (
+                            <div className="text-sm text-slate-300 leading-relaxed quill-content" dangerouslySetInnerHTML={{ __html: contract.scope_of_work }} />
+                          ) : (
+                            <p className="text-sm text-slate-600 italic">No detailed scope provided. Click Edit to add terms.</p>
+                          )
+                        )}
+                      </div>
 
                       <h4 className="text-[10px] font-black uppercase text-blue-500 mb-3 tracking-widest">Schedule of Values</h4>
                       <div className="space-y-2">
@@ -543,10 +551,24 @@ export default function ContractsManager() {
         </div>
       </div>
       
-      {/* Scope of Work Internal Styles */}
+      {/* Editor Overrides */}
       <style dangerouslySetInnerHTML={{__html: `
+        .ql-toolbar.ql-snow { border: none !important; border-bottom: 1px solid #1e293b !important; padding: 1rem !important; background: #020617 !important; }
+        .ql-container.ql-snow { border: none !important; font-family: inherit !important; }
+        .ql-editor { min-height: 250px !important; color: #cbd5e1 !important; padding: 2rem !important; font-size: 14px; line-height: 1.6; }
+        .ql-editor strong { color: white !important; }
+        .ql-snow .ql-stroke { stroke: #64748b !important; }
+        .ql-snow .ql-fill { fill: #64748b !important; }
+        .ql-snow .ql-picker { color: #64748b !important; font-weight: bold; }
+        .ql-editor h2 { margin-bottom: 0.5rem; text-transform: uppercase; font-size: 1.2rem; }
+        .ql-editor h3 { margin-bottom: 0.5rem; margin-top: 1.5rem; text-transform: uppercase; font-size: 0.875rem; font-weight: 900; }
+        .ql-editor p { margin-bottom: 1rem; }
+        .ql-editor ul { list-style-type: disc !important; margin-left: 1.5rem !important; margin-bottom: 1rem; }
+        .ql-editor ol { list-style-type: decimal !important; margin-left: 1.5rem !important; margin-bottom: 1rem; }
+        .ql-editor li { padding-left: 0.5rem; margin-bottom: 0.25rem; }
         .quill-content p { margin-bottom: 0.75rem; }
-        .quill-content h2, .quill-content h3 { margin-bottom: 0.5rem; margin-top: 1rem; color: #10b981; }
+        .quill-content h2 { margin-bottom: 0.5rem; margin-top: 1rem; font-size: 1.2rem; text-transform: uppercase; }
+        .quill-content h3 { margin-bottom: 0.5rem; margin-top: 1.5rem; font-weight: 900; text-transform: uppercase; }
         .quill-content ul { list-style-type: disc; margin-left: 1.5rem; margin-bottom: 1rem; }
         .quill-content ol { list-style-type: decimal; margin-left: 1.5rem; margin-bottom: 1rem; }
         .quill-content strong { color: white; }

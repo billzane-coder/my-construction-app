@@ -10,7 +10,7 @@ import {
   ChevronLeft, Loader2, ClipboardList, FileQuestion, 
   Images, ClipboardCheck, Calendar, Activity, BookOpen, UserCog,
   Landmark, TrendingUp, TrendingDown, FileSignature, Users, FileText,
-  ShieldCheck, X
+  ShieldCheck, X, GraduationCap
 } from 'lucide-react'
 
 export default function ProjectWarRoom() {
@@ -138,6 +138,8 @@ export default function ProjectWarRoom() {
           <ModuleCard title="Blueprint Vault" href={`/projects/${id}/plans`} icon={<BookOpen size={24}/>} color="bg-slate-700" />
           <ModuleCard title="Inspection Matrix" href={`/projects/${id}/matrix`} icon={<Activity size={24}/>} color="bg-indigo-600" />
           <ModuleCard title="Site Directory" href={`/projects/${id}/trades`} icon={<UserCog size={24}/>} color="bg-teal-600" />
+          {/* NEW MODULE: Site Orientation / Trade Hub */}
+          <ModuleCard title="Site Orientation" href={`/projects/${id}/orientation`} icon={<GraduationCap size={24}/>} color="bg-rose-600" />
       </div>
 
       {/* SITE STREAM */}

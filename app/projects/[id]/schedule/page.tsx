@@ -27,11 +27,13 @@ export default function ScheduleMaster() {
       const { gantt } = await import('dhtmlx-gantt')
       await import('dhtmlx-gantt/codebase/dhtmlxgantt.css')
 
+      const isMobile = window.innerWidth < 768
+
       // 1. Core Plugins
       gantt.plugins({
         auto_scheduling: true,
         critical_path: true,
-        drag_timeline: true // <--- ENABLED PANNING PLUGIN
+        drag_timeline: true 
       });
 
       // 2. Load Export Bridge
@@ -47,22 +49,36 @@ export default function ScheduleMaster() {
       gantt.config.xml_date = "%Y-%m-%d"
       gantt.config.date_format = "%Y-%m-%d"
       gantt.config.row_height = 42
-      gantt.config.grid_width = 440 
+      
+      // Mobile-Responsive Grid Width
+      gantt.config.grid_width = isMobile ? 160 : 440 
+      
       gantt.config.order_branch = true;
       gantt.config.order_branch_free = true;
+      
+      // Explicitly enable native touch swiping for mobile
+      gantt.config.touch = true;
+      gantt.config.touch_drag = true;
       
       // Date Grid Template
       gantt.templates.date_grid = (date: Date, task: any, column?: string) => {
         return gantt.date.date_to_str("%M %d")(date);
       };
 
-      gantt.config.columns = [
-        { name: "text", label: "Task Description", tree: true, width: '*', resize: true },
-        { name: "start_date", label: "Start", align: "center", width: 80, template: (obj: any) => gantt.templates.date_grid(obj.start_date, obj, "start_date") },
-        { name: "end_date", label: "End", align: "center", width: 80, template: (obj: any) => gantt.templates.date_grid(gantt.date.add(obj.end_date, -1, "minute"), obj, "end_date") },
-        { name: "duration", label: "Days", align: "center", width: 40 },
-        { name: "add", label: "", width: 40 }
-      ]
+      // Hide extra columns on mobile so the timeline isn't crushed
+      if (isMobile) {
+        gantt.config.columns = [
+          { name: "text", label: "Task", tree: true, width: '*', resize: true }
+        ]
+      } else {
+        gantt.config.columns = [
+          { name: "text", label: "Task Description", tree: true, width: '*', resize: true },
+          { name: "start_date", label: "Start", align: "center", width: 80, template: (obj: any) => gantt.templates.date_grid(obj.start_date, obj, "start_date") },
+          { name: "end_date", label: "End", align: "center", width: 80, template: (obj: any) => gantt.templates.date_grid(gantt.date.add(obj.end_date, -1, "minute"), obj, "end_date") },
+          { name: "duration", label: "Days", align: "center", width: 40 },
+          { name: "add", label: "", width: 40 }
+        ]
+      }
 
       // Zoom Levels
       gantt.ext.zoom.init({
@@ -87,11 +103,16 @@ export default function ScheduleMaster() {
       gantt.config.drag_links = true;
       gantt.config.select_link = true;
       
-      // DRAG TIMELINE (PANNING) BEHAVIOR
-      gantt.config.drag_timeline = {
-        ignore: ".gantt_task_line, .gantt_task_link",
-        useKey: false // Allows dragging freely without holding a modifier key
-      };
+// THE FIX: Only enforce the "Alt Key" panning rule if we are NOT on a mobile phone
+      if (isMobile) {
+        // TypeScript bypass: JS accepts null to disable, but TS strictly expects an object
+        (gantt.config as any).drag_timeline = null; 
+      } else {
+        gantt.config.drag_timeline = {
+          ignore: ".gantt_task_line, .gantt_task_link, .gantt_grid",
+          useKey: "altKey" // Require Alt/Option key to drag-pan on desktop
+        };
+      }
       
       gantt.attachEvent("onLinkDblClick", function(linkId) {
         gantt.modalbox({
@@ -134,15 +155,14 @@ export default function ScheduleMaster() {
         gantt.clearAll()
         gantt.parse({ data: [...catNodes, ...taskNodes], links: formattedLinks })
 
-        // 4. MOUSE WHEEL ZOOM LISTENER
+        // 4. MOUSE WHEEL ZOOM LISTENER (Ctrl + Wheel to Zoom)
         wheelHandler = (e: WheelEvent) => {
-          if (e.ctrlKey || e.metaKey) { // Requires Ctrl/Cmd to be held down
+          if (e.ctrlKey || e.metaKey) { 
             e.preventDefault();
             e.deltaY > 0 ? gantt.ext.zoom.zoomOut() : gantt.ext.zoom.zoomIn();
           }
         };
 
-        // Attach event securely
         ganttContainer.current.addEventListener('wheel', wheelHandler, { passive: false });
       }
       setLoading(false)
@@ -261,7 +281,7 @@ export default function ScheduleMaster() {
             }}
             className="bg-slate-800 px-4 py-2 rounded-xl font-bold text-[10px] uppercase flex items-center gap-2 hover:bg-slate-700 border border-slate-700"
           >
-            <FileSpreadsheet size={14} className="text-emerald-500"/> Excel
+            <FileSpreadsheet size={14} className="text-emerald-500"/> <span className="hidden md:inline">Excel</span>
           </button>
 
           <button 
@@ -274,7 +294,7 @@ export default function ScheduleMaster() {
             }}
             className="bg-slate-800 px-4 py-2 rounded-xl font-bold text-[10px] uppercase flex items-center gap-2 hover:bg-slate-700 border border-slate-700"
           >
-            <Printer size={14}/> PDF
+            <Printer size={14}/> <span className="hidden md:inline">PDF</span>
           </button>
           
           <button 
@@ -282,7 +302,7 @@ export default function ScheduleMaster() {
             disabled={saving}
             className="bg-blue-600 px-4 py-2 rounded-xl font-bold text-[10px] uppercase flex items-center gap-2 hover:bg-blue-500 shadow-xl shadow-blue-900/20"
           >
-            {saving ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>} Sync Cloud
+            {saving ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>} <span className="hidden md:inline">Sync Cloud</span>
           </button>
         </div>
       </div>

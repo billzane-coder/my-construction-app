@@ -3,15 +3,15 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
-import dynamicImport from 'next/dynamic'
+import dynamic from 'next/dynamic'
 import { 
   Save, ChevronLeft, DollarSign, 
   Loader2, UploadCloud, FileSignature, CheckCircle2,
   UserPlus, FileText
 } from 'lucide-react'
 
-// Dynamic import for ReactQuill to prevent Next.js SSR crashes
-const ReactQuill = dynamicImport(() => import('react-quill-new'), { 
+// Dynamic import for ReactQuill to prevent SSR crashes
+const ReactQuill = dynamic(() => import('react-quill-new'), { 
   ssr: false,
   loading: () => <div className="h-64 w-full bg-slate-950 animate-pulse rounded-[32px] border border-slate-800" />
 })
@@ -27,6 +27,7 @@ export default function NewCommitment() {
   
   const [roster, setRoster] = useState<any[]>([])
   const [costCodes, setCostCodes] = useState<any[]>([])
+  const [settings, setSettings] = useState<any>(null)
   const [showNewSub, setShowNewSub] = useState(false)
   const [newSubName, setNewSubName] = useState('')
   
@@ -40,61 +41,104 @@ export default function NewCommitment() {
     signed_by: ''
   })
 
-  const ccdc17Template = `
-    <h2 style="color: #10b981; font-family: sans-serif; text-transform: uppercase;">Articles of Agreement</h2>
-    <p>This agreement is made to reflect the standard terms of the <strong>CCDC-17 Stipulated Price Trade Contract</strong>.</p>
-    
-    <br/>
-    <h3 style="color: #3b82f6;">ARTICLE A-1: THE WORK</h3>
-    <p>The Trade Contractor shall perform the Work required by the Trade Contract Documents for the following detailed scope:</p>
-    <ul>
-      <li><strong>Inclusions:</strong> [Type specific inclusions here...]</li>
-      <li><strong>Exclusions:</strong> [Type specific exclusions here...]</li>
-      <li><strong>Schedule:</strong> Work must commence on [Start Date] and be substantially performed by [End Date].</li>
-    </ul>
-
-    <br/>
-    <h3 style="color: #3b82f6;">ARTICLE A-4: TRADE CONTRACT PRICE</h3>
-    <p>The Trade Contract Price, which excludes Value Added Taxes, is: <strong>$[Insert Numeric Value]</strong>.</p>
-    <p>This price is firm and stipulated. No variations will be accepted without a formally executed Change Order (CCDC-10).</p>
-
-    <br/>
-    <h3 style="color: #3b82f6;">ARTICLE A-5: PAYMENT & HOLDBACKS</h3>
-    <p><strong>5.1</strong> Subject to the provisions of the Trade Contract Documents, and in accordance with the provincial Construction Act respecting holdback percentages, the Contractor shall pay the Trade Contractor.</p>
-    <p><strong>5.2</strong> The statutory holdback shall be <strong>10%</strong>.</p>
-    <p><strong>5.3</strong> Payment applications must be submitted by the 25th of the month. Payment is due within 30 days of the Contractor receiving payment from the Owner (Pay-when-Paid).</p>
-
-    <br/>
-    <h3 style="color: #3b82f6;">SUPPLEMENTARY CONDITIONS</h3>
-    <p>By executing this agreement, the Trade Contractor agrees to provide the following prior to mobilization:</p>
-    <ol>
-      <li>Current WSIB Clearance Certificate.</li>
-      <li>Certificate of Commercial General Liability Insurance (Min $2,000,000).</li>
-      <li>Signed Form 1000 and Corporate Health & Safety Policy.</li>
-    </ol>
-  `
-
+  // --- FETCH DATA & BRANDING ---
   useEffect(() => {
     async function fetchData() {
-      const [subRes, codeRes] = await Promise.all([
+      const [subRes, codeRes, settingsRes] = await Promise.all([
         supabase.from('project_contacts').select('*').eq('project_id', id).order('company'),
-        supabase.from('project_cost_codes').select('*').eq('project_id', id).order('code')
+        supabase.from('project_cost_codes').select('*').eq('project_id', id).order('code'),
+        supabase.from('company_settings').select('*').eq('id', 1).single()
       ])
       if (subRes.data) setRoster(subRes.data)
       if (codeRes.data) setCostCodes(codeRes.data)
+      if (settingsRes.data) setSettings(settingsRes.data)
     }
     fetchData()
   }, [id])
 
-  useEffect(() => {
-    if (type === 'CCDC-17' && (!formData.scope || formData.scope === '<p><br></p>')) {
-      setFormData(prev => ({ ...prev, scope: ccdc17Template }))
-    } 
-    else if (type === 'PO' && formData.scope === ccdc17Template) {
-      setFormData(prev => ({ ...prev, scope: '' }))
-    }
-  }, [type])
+  // --- THE FIX: DIRECT BUTTON HANDLER ---
+  const handleTypeChange = (newType: string) => {
+    setType(newType)
 
+    const primaryColor = settings?.primary_color || '#10b981'
+    const companyName = settings?.company_name || 'The Constructor'
+
+    const ccdc17Template = `
+      <h2 style="color: ${primaryColor}; font-family: sans-serif; text-transform: uppercase;">Articles of Agreement</h2>
+      <p>This agreement is made to reflect the standard terms of the <strong>CCDC-17 Stipulated Price Trade Contract</strong>.</p>
+      <br/>
+      <h3 style="color: ${primaryColor};">ARTICLE A-1: THE WORK</h3>
+      <p>The Trade Contractor shall perform the Work required by the Trade Contract Documents for the following detailed scope:</p>
+      <ul>
+        <li><strong>Inclusions:</strong> [Type specific inclusions here...]</li>
+        <li><strong>Exclusions:</strong> [Type specific exclusions here...]</li>
+        <li><strong>Schedule:</strong> Work must commence on [Start Date] and be substantially performed by [End Date].</li>
+      </ul>
+      <br/>
+      <h3 style="color: ${primaryColor};">ARTICLE A-4: TRADE CONTRACT PRICE</h3>
+      <p>The Trade Contract Price, which excludes Value Added Taxes, is: <strong>$[Insert Numeric Value]</strong>.</p>
+      <p>This price is firm and stipulated. No variations will be accepted without a formally executed Change Order (CCDC-10).</p>
+      <br/>
+      <h3 style="color: ${primaryColor};">ARTICLE A-5: PAYMENT & HOLDBACKS</h3>
+      <p>Payment applications must be submitted by the 25th of the month. A statutory holdback of <strong>10%</strong> shall apply.</p>
+    `
+
+    const simpleTemplate = `
+      <h2 style="color: ${primaryColor}; font-family: sans-serif; text-transform: uppercase;">Standard Subcontractor Agreement</h2>
+      <p>This Subcontract Agreement is entered into by and between <strong>${companyName}</strong> (herein referred to as the "Constructor") and the Trade Contractor.</p>
+      <br/>
+      <h3 style="color: ${primaryColor};">1. DETAILED SCOPE OF WORK</h3>
+      <ul>
+        <li><strong>Inclusions:</strong> [Provide all labour, materials, tools, and equipment to complete...]</li>
+        <li><strong>Exclusions:</strong> [Specific exclusions...]</li>
+      </ul>
+      <br/>
+      <h3 style="color: ${primaryColor};">2. SCHEDULE & DELAYS</h3>
+      <p>Time is of the essence. The Trade Contractor agrees to mobilize on <strong>[Start Date]</strong> and maintain sufficient manpower to meet the Project Superintendent's schedule. Failure to adequately man the project may result in the Constructor supplementing the workforce and back-charging the costs, plus a 15% administration fee.</p>
+      <br/>
+      <h3 style="color: ${primaryColor};">3. PAYMENT & 10% HOLDBACK</h3>
+      <p>Payment applications must be submitted by the 25th of the month. A statutory <strong>10% holdback</strong> applies in accordance with the Construction Act. Invoices are strictly processed on a "Pay-when-Paid" basis.</p>
+      <br/>
+      <h3 style="color: ${primaryColor};">4. CHANGES TO THE WORK</h3>
+      <p>No extra work or variations shall be performed without a formally executed Change Order or written directive signed by the Project Manager. Unapproved extras will not be paid.</p>
+      <br/>
+      <h3 style="color: ${primaryColor};">5. HEALTH, SAFETY & WSIB</h3>
+      <p>Prior to mobilization, the Trade Contractor MUST provide the Site Superintendent with:</p>
+      <ol>
+        <li>Current WSIB Clearance Certificate.</li>
+        <li>Certificate of Commercial General Liability Insurance (Min $2,000,000).</li>
+        <li>Signed Form 1000.</li>
+        <li>Proof of Fall Arrest & WHMIS training for all on-site workers.</li>
+      </ol>
+      <br/>
+      <h3 style="color: ${primaryColor};">6. SITE CLEAN-UP</h3>
+      <p>Daily clean-up of trade-specific debris to central site bins is mandatory. If the Trade Contractor fails to maintain a safe and clean work area, the Constructor will perform the clean-up and issue a back-charge at a rate of $75/hour plus a 15% administration fee.</p>
+      <br/>
+      <h3 style="color: ${primaryColor};">7. WARRANTY</h3>
+      <p>The Trade Contractor warrants their work against defects in materials and workmanship for a period of one (1) year from the date of Substantial Performance of the prime contract.</p>
+    `
+
+    // Force strip all HTML tags to see if the user has actually typed any real text
+    const rawText = formData.scope.replace(/<[^>]*>?/gm, '').trim();
+    const isEmpty = rawText.length === 0;
+    
+    // Check if the current text is already one of our templates
+    const isCCDC = formData.scope.includes('CCDC-17') || formData.scope.includes('Articles of Agreement');
+    const isSimple = formData.scope.includes('Standard Subcontractor Agreement');
+
+    // Inject the selected template
+    if (newType === 'CCDC-17') {
+      if (isEmpty || isSimple) setFormData(prev => ({ ...prev, scope: ccdc17Template }))
+    } 
+    else if (newType === 'Simple') {
+      if (isEmpty || isCCDC) setFormData(prev => ({ ...prev, scope: simpleTemplate }))
+    } 
+    else if (newType === 'PO') {
+      if (isCCDC || isSimple) setFormData(prev => ({ ...prev, scope: '' }))
+    }
+  }
+
+  // --- HANDLERS ---
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) setFile(e.target.files[0])
   }
@@ -174,16 +218,21 @@ export default function NewCommitment() {
           <ChevronLeft size={20}/> Cancel
         </button>
 
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b-4 border-emerald-600 pb-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b-4 border-emerald-600 pb-6" style={{ borderColor: settings?.primary_color || '#10b981' }}>
           <div>
             <h1 className="text-4xl md:text-5xl font-black uppercase tracking-tighter italic">
-              Issue <span className="text-emerald-500">Commitment</span>
+              Issue <span style={{ color: settings?.primary_color || '#10b981' }}>Commitment</span>
             </h1>
           </div>
           
           <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
             {['PO', 'Simple', 'CCDC-17'].map((t) => (
-              <button key={t} onClick={() => setType(t)} className={`px-6 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${type === t ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
+              <button 
+                key={t} 
+                onClick={() => handleTypeChange(t)} 
+                className={`px-6 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${type === t ? 'text-white shadow-lg' : 'text-slate-500 hover:text-white'}`} 
+                style={type === t ? { backgroundColor: settings?.primary_color || '#10b981' } : {}}
+              >
                 {t}
               </button>
             ))}
@@ -242,7 +291,7 @@ export default function NewCommitment() {
                 <label className="text-[10px] font-black uppercase text-slate-500 block flex items-center gap-2">
                   <FileText size={14}/> Contract Document Editor
                 </label>
-                <div className="bg-slate-950 rounded-[32px] overflow-hidden border border-slate-800 focus-within:border-emerald-500 transition-all">
+                <div className="bg-slate-950 rounded-[32px] overflow-hidden border border-slate-800 focus-within:border-blue-500 transition-all">
                   <ReactQuill theme="snow" value={formData.scope} onChange={(val) => setFormData(prev => ({ ...prev, scope: val }))} className="text-white min-h-[350px]"/>
                 </div>
               </div>
@@ -279,7 +328,7 @@ export default function NewCommitment() {
                   </select>
                 </div>
 
-                <button onClick={handleSave} disabled={loading} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-[0.2em] py-6 rounded-[32px] transition-all flex items-center justify-center gap-4 shadow-2xl disabled:opacity-50">
+                <button onClick={handleSave} disabled={loading} className="w-full text-white font-black uppercase tracking-[0.2em] py-6 rounded-[32px] transition-all flex items-center justify-center gap-4 shadow-2xl disabled:opacity-50 hover:opacity-80" style={{ backgroundColor: settings?.primary_color || '#10b981' }}>
                   {loading ? <Loader2 className="animate-spin" size={24}/> : <Save size={24} />}
                   {loading ? 'Processing...' : `Issue ${type}`}
                 </button>
@@ -294,14 +343,16 @@ export default function NewCommitment() {
         .ql-toolbar.ql-snow { border: none !important; border-bottom: 1px solid #1e293b !important; padding: 1rem !important; background: #020617 !important; }
         .ql-container.ql-snow { border: none !important; font-family: inherit !important; }
         .ql-editor { min-height: 350px !important; color: #cbd5e1 !important; padding: 2rem !important; font-size: 14px; line-height: 1.6; }
-        .ql-editor strong { color: #fff !important; }
+        .ql-editor strong { color: white !important; }
         .ql-snow .ql-stroke { stroke: #64748b !important; }
         .ql-snow .ql-fill { fill: #64748b !important; }
         .ql-snow .ql-picker { color: #64748b !important; font-weight: bold; }
-        .ql-editor h2 { color: #10b981 !important; margin-bottom: 0.5rem; text-transform: uppercase; font-size: 1rem; tracking: 0.1em; }
-        .ql-editor h3 { color: #3b82f6 !important; margin-bottom: 0.5rem; text-transform: uppercase; font-size: 0.875rem; tracking: 0.1em; }
+        .ql-editor h2 { margin-bottom: 0.5rem; text-transform: uppercase; font-size: 1.2rem; }
+        .ql-editor h3 { margin-bottom: 0.5rem; margin-top: 1.5rem; text-transform: uppercase; font-size: 0.875rem; font-weight: 900; }
         .ql-editor p { margin-bottom: 1rem; }
-        .ql-editor ul, .ql-editor ol { margin-bottom: 1rem; padding-left: 1.5rem; }
+        .ql-editor ul { list-style-type: disc !important; margin-left: 1.5rem !important; margin-bottom: 1rem; }
+        .ql-editor ol { list-style-type: decimal !important; margin-left: 1.5rem !important; margin-bottom: 1rem; }
+        .ql-editor li { padding-left: 0.5rem; margin-bottom: 0.25rem; }
       `}} />
     </div>
   )
