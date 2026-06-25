@@ -41,9 +41,10 @@ export default function ContractsManager() {
   const [expandedContract, setExpandedContract] = useState<string | null>(null)
   const [editingSub, setEditingSub] = useState<{ contractId: string, subId: string } | null>(null)
   
-  // NEW: Scope Editing States
+  // NEW: Scope & Cost Code Editing States
   const [editingScopeId, setEditingScopeId] = useState<string | null>(null)
   const [editableScope, setEditableScope] = useState('')
+  const [editingCostCode, setEditingCostCode] = useState<{ contractId: string, codeId: string } | null>(null)
 
   // --- CLONING STATES ---
   const [availableProjects, setAvailableProjects] = useState<any[]>([])
@@ -54,7 +55,7 @@ export default function ContractsManager() {
     setLoading(true)
     
     const [codesRes, contactsRes, projRes, settingsRes, pRes] = await Promise.all([
-      supabase.from('project_cost_codes').select('*').eq('project_id', id),
+      supabase.from('project_cost_codes').select('*').eq('project_id', id).order('code'),
       supabase.from('project_contacts').select('*').eq('project_id', id).order('company'),
       supabase.from('projects').select('id, name').neq('id', id),
       supabase.from('company_settings').select('*').eq('id', 1).single(),
@@ -99,6 +100,13 @@ export default function ContractsManager() {
     fetchData()
   }
 
+  const handleUpdateCostCode = async (contractId: string) => {
+    if (!editingCostCode) return
+    await supabase.from('project_contracts').update({ cost_code_id: editingCostCode.codeId }).eq('id', contractId)
+    setEditingCostCode(null)
+    fetchData()
+  }
+
   const handleDeleteContract = async (contractId: string, companyName: string) => {
     if (!confirm(`Are you absolutely sure you want to delete the commitment for ${companyName || 'this trade'}? This will wipe the SOV schedule.`)) return
     await supabase.from('sov_line_items').delete().eq('contract_id', contractId)
@@ -125,7 +133,7 @@ export default function ContractsManager() {
     fetchData()
   }
 
-  // --- NEW: SAVE EDITED SCOPE ---
+  // --- SCOPE EDITS ---
   const handleSaveScope = async (contractId: string) => {
     await supabase.from('project_contracts').update({ scope_of_work: editableScope }).eq('id', contractId)
     setEditingScopeId(null)
@@ -174,7 +182,7 @@ export default function ContractsManager() {
     doc.setFontSize(10)
     doc.setTextColor(100, 116, 139)
     doc.text(`PO Number: ${contract.title}`, 196, 32, { align: "right" })
-    doc.text(`Date Issued: ${new Date().toLocaleDateString()}`, 196, 38, { align: "right" }) // Prints current date for re-issues
+    doc.text(`Date Issued: ${new Date().toLocaleDateString()}`, 196, 38, { align: "right" })
 
     doc.setDrawColor(226, 232, 240)
     doc.line(14, 45, 196, 45)
@@ -193,7 +201,6 @@ export default function ContractsManager() {
     doc.text(contract.project_contacts?.company || "Trade Name", 110, 61)
     doc.text("Attention: Project Manager", 110, 67)
 
-    // Table
     const tableData = contract.sov_line_items?.map((line: any, index: number) => [
       String(index + 1).padStart(2, '0'),
       line.description,
@@ -215,7 +222,6 @@ export default function ContractsManager() {
 
     const tableEndY = (doc as any).lastAutoTable.finalY + 15
 
-    // Scope Parsing
     doc.setFontSize(10)
     doc.setTextColor(15, 23, 42)
     doc.setFont("helvetica", "bold")
@@ -280,7 +286,6 @@ export default function ContractsManager() {
       for (const sContract of sourceContracts) {
         const sourceCode = sContract.project_cost_codes?.code
         const matchCode = costCodes.find(c => c.code === sourceCode)
-
         const sourceCompany = Array.isArray(sContract.project_contacts) ? sContract.project_contacts[0]?.company : sContract.project_contacts?.company
         const matchContact = contacts.find(c => c.company === sourceCompany)
 
@@ -358,7 +363,6 @@ export default function ContractsManager() {
         <h2 className="text-3xl font-black uppercase italic tracking-tighter">Awarded <span className="text-blue-500">Contracts</span></h2>
         <div className="flex gap-3">
           <button onClick={() => setShowImportModal(true)} className="bg-slate-900 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase border border-slate-800 hover:bg-slate-800 flex items-center gap-2 transition-all shadow-lg"><Copy size={16}/> Clone Prev Project</button>
-          
           <button onClick={() => router.push(`/projects/${id}/financials/commitments/new`)} className="bg-blue-600 text-white text-[10px] font-black px-6 py-4 rounded-2xl uppercase shadow-xl hover:bg-blue-500 flex items-center gap-2 transition-all"><Plus size={16}/> Build Commitment</button>
         </div>
       </div>
@@ -422,7 +426,38 @@ export default function ContractsManager() {
                     
                     <div className="text-right ml-4 flex flex-col items-end">
                       <p className={`text-2xl font-black ${contract.status === 'Active' ? 'text-emerald-400' : 'text-slate-300'}`}>{formatMoney(total)}</p>
-                      <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mt-1">{contract.project_cost_codes?.code}</p>
+                      
+                      {/* EDITABLE COST CODE BADGE */}
+                      {editingCostCode?.contractId === contract.id ? (
+                        <div className="flex items-center gap-2 mt-1" onClick={(e) => e.stopPropagation()}>
+                          <select 
+                            value={editingCostCode?.codeId || ''} 
+                            onChange={(e) => setEditingCostCode({ contractId: contract.id, codeId: e.target.value })} 
+                            className="bg-slate-950 border border-blue-500 p-1 rounded text-[9px] font-black uppercase text-white outline-none w-24 max-w-[120px] truncate"
+                          >
+                            <option value="">No Code</option>
+                            {costCodes.map((c) => (
+                              <option key={c.id} value={c.id}>{c.code} - {c.name}</option>
+                            ))}
+                          </select>
+                          <button onClick={() => handleUpdateCostCode(contract.id)} className="text-blue-500 hover:text-white">
+                            <Save size={12}/>
+                          </button>
+                          <button onClick={() => setEditingCostCode(null)} className="text-slate-500 hover:text-white">
+                            <X size={12}/>
+                          </button>
+                        </div>
+                      ) : (
+                        <div 
+                          className="flex items-center gap-1 mt-1 group/code cursor-pointer transition-colors" 
+                          onClick={(e) => { e.stopPropagation(); setEditingCostCode({ contractId: contract.id, codeId: contract.cost_code_id }) }}
+                        >
+                          <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest group-hover/code:text-blue-500 transition-colors">
+                            {contract.project_cost_codes?.code || 'Assign Div Code'}
+                          </p>
+                          <Edit3 size={10} className="text-slate-600 opacity-0 group-hover/code:opacity-100 transition-opacity" />
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -504,9 +539,14 @@ export default function ContractsManager() {
                   </button>
                   
                   {selectedContract.status === 'Draft' || selectedContract.status === 'Issued' ? (
-                    <button onClick={handleActivateContract} className="bg-emerald-600 text-white px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500 transition-all flex items-center gap-2">
-                      <Lock size={14}/> Lock SOV & Commit
-                    </button>
+                    <>
+                      <button onClick={() => handleDeleteContract(selectedContract.id, selectedContract.project_contacts?.company)} className="bg-red-950/30 text-red-500 border border-red-900/50 hover:bg-red-900/50 px-4 py-3 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2">
+                        <Trash2 size={14}/> Delete Draft
+                      </button>
+                      <button onClick={handleActivateContract} className="bg-emerald-600 text-white px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500 transition-all flex items-center gap-2">
+                        <Lock size={14}/> Lock SOV
+                      </button>
+                    </>
                   ) : (
                     <>
                       <button onClick={handleUnlockContract} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-3 rounded-xl text-[10px] font-black uppercase flex items-center gap-2"><Unlock size={14}/> Unlock</button>

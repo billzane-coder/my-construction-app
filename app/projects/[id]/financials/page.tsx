@@ -81,6 +81,7 @@ export default function FinancialMaster() {
       })
       
       const manual_commitment = Number(code.manual_commitment || 0)
+      const trade_display = trades.size > 0 ? Array.from(trades).join(', ') : (code.assigned_trade || '-')
       
       return { 
         ...code, 
@@ -89,7 +90,8 @@ export default function FinancialMaster() {
         manual_commitment,
         contract_committed,
         committed: manual_commitment + contract_committed, 
-        trade: Array.from(trades).join(', ') || '-' 
+        assigned_trade: code.assigned_trade || '',
+        trade: trade_display 
       }
     }) || []
     
@@ -183,7 +185,6 @@ export default function FinancialMaster() {
         await supabase.from('project_cost_codes').insert(childPayload)
       }
 
-      // If we imported with values, automatically lock the ledger to preserve the baseline
       if (importMode === 'values') setIsLocked(true);
 
       setShowImportModal(false)
@@ -388,7 +389,6 @@ export default function FinancialMaster() {
                  <button onClick={() => setShowImportModal(false)} className="bg-slate-950 p-2 rounded-lg text-slate-500 hover:text-white"><X size={16} /></button>
               </div>
               
-              {/* Import Mode Toggle */}
               <div className="flex bg-slate-950 p-1 rounded-xl mb-6 border border-slate-800">
                  <button 
                    onClick={() => setImportMode('values')} 
@@ -446,7 +446,6 @@ export default function FinancialMaster() {
           <div className="flex items-center gap-4">
              <h2 className="text-3xl font-black uppercase italic tracking-tighter print:text-black">WBS <span className="text-emerald-500 print:text-emerald-600">Ledger</span></h2>
              
-             {/* MASTER LOCK TOGGLE */}
              <button 
                onClick={() => setIsLocked(!isLocked)}
                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${isLocked ? 'bg-red-950/40 text-red-500 border border-red-900/50' : 'bg-emerald-950/40 text-emerald-500 border border-emerald-900/50'}`}
@@ -542,7 +541,17 @@ export default function FinancialMaster() {
                           <span className={`cursor-pointer uppercase text-xs ${row.depth === 0 ? 'text-white font-black print:text-black' : 'text-slate-400 print:text-slate-700'}`} onClick={() => !isLocked && setEditingCell({ id: row.id, field: 'name', value: row.name })}>{row.name}</span>
                         )}
                       </td>
-                      <td className="p-6 print:p-4 text-slate-500 print:text-slate-600 text-[10px] uppercase truncate max-w-[120px]">{row.trade}</td>
+                      
+                      {/* UPDATED CONTRACTOR CELL */}
+                      <td className="p-6 print:p-4 text-slate-500 print:text-slate-600 text-[10px] uppercase truncate max-w-[120px]">
+                        {editingCell?.id === row.id && editingCell?.field === 'assigned_trade' && !isLocked ? (
+                          <input autoFocus placeholder="Assign Trade..." className="bg-slate-950 border border-slate-500 p-1.5 rounded text-white text-xs outline-none w-full print:hidden" value={editingCell?.value || ''} onChange={e => setEditingCell(prev => prev ? { ...prev, value: e.target.value } : null)} onBlur={() => handleSaveCell(row.id)} />
+                        ) : (
+                          <span className={`cursor-pointer transition-colors ${isLocked ? '' : 'hover:text-white'}`} onClick={() => !isLocked && setEditingCell({ id: row.id, field: 'assigned_trade', value: row.assigned_trade })}>
+                            {row.trade}
+                          </span>
+                        )}
+                      </td>
                       
                       <td className="p-6 print:p-4 text-right">
                         {row.display_committed > 0 && row.display_original === 0 ? (
