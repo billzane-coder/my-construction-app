@@ -20,8 +20,8 @@ export default function BankPackageGenerator() {
   const [allDraws, setAllDraws] = useState<any[]>([])
   const [activeDraw, setActiveDraw] = useState<any>(null)
   
-  const [stats, setStats] = useState({ totalClaimed: 0, holdback: 0, netPayment: 0, invoiceCount: 0 })
-  const [invoiceLinks, setInvoiceLinks] = useState<string[]>([])
+  const [stats, setStats] = useState({ totalClaimed: 0, holdback: 0, netPayment: 0, backupCount: 0 })
+  const [tradeBackupLinks, setTradeBackupLinks] = useState<string[]>([])
   
   const [companyName, setCompanyName] = useState("")
   const [projectName, setProjectName] = useState("")
@@ -49,24 +49,31 @@ export default function BankPackageGenerator() {
       .single()
 
     if (summary) {
-      // 3. Fetch detailed line items attached to this specific summary to grab the invoice PDFs
+      // 3. Fetch detailed line items attached to this specific summary 
+      // ADDED: Fetches trade_sov_link alongside invoice_link
       const { data: lines } = await supabase
         .from('draw_line_items')
-        .select('current_gross_billed, invoice_link')
+        .select('current_gross_billed, invoice_link, trade_sov_link')
         .eq('draw_id', summary.id)
 
-      const validInvoices = lines?.filter(l => l.invoice_link !== null).map(l => l.invoice_link) || []
-      setInvoiceLinks(validInvoices)
+      // Merges both Invoices and SOVs into a single sequence for the stitcher
+      const combinedBackups: string[] = []
+      lines?.forEach(l => {
+        if (l.invoice_link) combinedBackups.push(l.invoice_link)
+        if (l.trade_sov_link) combinedBackups.push(l.trade_sov_link)
+      })
+      
+      setTradeBackupLinks(combinedBackups)
       
       setStats({ 
         totalClaimed: Number(summary.gross_hard_costs) + Number(summary.gross_soft_costs), 
         holdback: Number(summary.hard_cost_holdback) + Number(summary.soft_cost_holdback), 
         netPayment: Number(summary.net_lender_advance), 
-        invoiceCount: validInvoices.length 
+        backupCount: combinedBackups.length 
       })
     } else {
-      setStats({ totalClaimed: 0, holdback: 0, netPayment: 0, invoiceCount: 0 })
-      setInvoiceLinks([])
+      setStats({ totalClaimed: 0, holdback: 0, netPayment: 0, backupCount: 0 })
+      setTradeBackupLinks([])
     }
   }
 
@@ -169,7 +176,7 @@ export default function BankPackageGenerator() {
         },
         attachments: {
           statDec: finalStatDecLink || null,
-          invoices: invoiceLinks, // Passes the array of trade PDFs straight to your API
+          invoices: tradeBackupLinks, // Passing the combined array to the backend 
           extraDocs: extraDocs.map(doc => doc.file_link || doc.url).filter(Boolean)
         }
       }
@@ -340,8 +347,8 @@ export default function BankPackageGenerator() {
             <span className={`font-bold text-sm ${statDecFile || activeDraw?.stat_dec_link ? 'text-white' : 'text-amber-500'}`}>CCDC-9A Statutory Declaration</span>
           </li>
           <li className="flex items-center gap-3">
-            {stats.invoiceCount > 0 ? <CheckCircle2 size={20} className="text-emerald-500" /> : <AlertCircle size={20} className="text-amber-500" />}
-            <span className="font-bold text-white text-sm">{stats.invoiceCount} Trade Backup Invoices Stitched</span>
+            {stats.backupCount > 0 ? <CheckCircle2 size={20} className="text-emerald-500" /> : <AlertCircle size={20} className="text-amber-500" />}
+            <span className="font-bold text-white text-sm">{stats.backupCount} Trade Backups (Invoices & SOVs) Stitched</span>
           </li>
           <li className="flex items-center gap-3">
             {extraDocs.length > 0 ? <CheckCircle2 size={20} className="text-emerald-500" /> : <AlertCircle size={20} className="text-slate-600" />}
