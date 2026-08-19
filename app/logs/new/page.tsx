@@ -4,12 +4,28 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
+interface Project {
+  id: string
+  name: string
+}
+
+interface Trade {
+  id: string
+  name: string
+}
+
+interface SiteIncident {
+  id: string
+  classification: string
+  description: string
+}
+
 export default function NewDailyLog() {
   const router = useRouter()
-  
-  const [projects, setProjects] = useState<any[]>([])
-  const [trades, setTrades] = useState<any[]>([])
-  const [incidents, setIncidents] = useState<any[]>([])
+
+  const [projects, setProjects] = useState<Project[]>([])
+  const [trades, setTrades] = useState<Trade[]>([])
+  const [incidents, setIncidents] = useState<SiteIncident[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null)
   const [selectedTrades, setSelectedTrades] = useState<Record<string, number>>({})
@@ -28,12 +44,14 @@ export default function NewDailyLog() {
       const { data: tradeData } = await supabase.from('trades').select('*').order('name')
       if (projData) setProjects(projData)
       if (tradeData) setTrades(tradeData)
-      
+
       try {
         const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=44.3894&longitude=-79.6903&current=temperature_2m,weather_code&timezone=auto')
         const wData = await res.json()
         setWeather(`${wData.current.weather_code < 3 ? '☀️ SUNNY' : '☁️ OVERCAST'}, ${Math.round(wData.current.temperature_2m)}°C`)
-      } catch (e) { setWeather('6°C, SUNNY (BARRIE)') }
+      } catch {
+        setWeather('6°C, SUNNY (BARRIE)')
+      }
     }
     getData()
   }, [])
@@ -57,47 +75,57 @@ export default function NewDailyLog() {
   }, [selectedProjectId])
 
   const startDrawing = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
-    const rect = canvas.getBoundingClientRect();
-    ctx.beginPath();
-    ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
-    setIsDrawing(true);
-    canvas.setPointerCapture(e.pointerId);
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const rect = canvas.getBoundingClientRect()
+    ctx.beginPath()
+    ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top)
+    setIsDrawing(true)
+    canvas.setPointerCapture(e.pointerId)
   }
 
   const draw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
-    const rect = canvas.getBoundingClientRect();
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = '#3b82f6'; 
-    ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
-    ctx.stroke();
-    setHasSigned(true);
+    if (!isDrawing) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const rect = canvas.getBoundingClientRect()
+    ctx.lineWidth = 3
+    ctx.lineCap = 'round'
+    ctx.strokeStyle = '#3b82f6'
+    ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top)
+    ctx.stroke()
+    setHasSigned(true)
   }
 
   const stopDrawing = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    setIsDrawing(false);
-    if (canvasRef.current) canvasRef.current.releasePointerCapture(e.pointerId);
+    setIsDrawing(false)
+    if (canvasRef.current) canvasRef.current.releasePointerCapture(e.pointerId)
   }
 
   const clearSignature = () => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d'); if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    setHasSigned(false);
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    setHasSigned(false)
   }
 
-  const handleSubmit = async (e: any) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!selectedProjectId) return setStatus('⚠️ SELECT PROJECT')
     if (!hasSigned) return setStatus('⚠️ SIGNATURE REQUIRED')
     setLoading(true)
-    
+
     try {
+      const form = e.currentTarget
+      const formData = new FormData(form)
+      const workPerformed = formData.get('work') as string
+
       const uploadedUrls: string[] = []
       for (const file of photos) {
         const fileName = `${Date.now()}-${file.name}`
@@ -108,7 +136,7 @@ export default function NewDailyLog() {
         }
       }
 
-      let finalSignatureUrl = null
+      let finalSignatureUrl: string | null = null
       if (canvasRef.current && hasSigned) {
         const sigDataUrl = canvasRef.current.toDataURL('image/png')
         const res = await fetch(sigDataUrl)
@@ -122,7 +150,7 @@ export default function NewDailyLog() {
 
       const { error } = await supabase.from('daily_logs').insert([{
         project_id: selectedProjectId,
-        work_performed: new FormData(e.target).get('work'),
+        work_performed: workPerformed,
         weather,
         trades_detailed: selectedTrades,
         photo_urls: uploadedUrls,
@@ -132,7 +160,7 @@ export default function NewDailyLog() {
 
       if (error) throw error
       router.push('/logs')
-    } catch (err) {
+    } catch {
       setLoading(false)
       setStatus('❌ ERROR SAVING LOG')
     }
@@ -141,7 +169,7 @@ export default function NewDailyLog() {
   return (
     <div className="max-w-md mx-auto p-4 bg-slate-950 min-h-screen pb-20 font-sans text-slate-100">
       
-      {/* HEADER - UPDATED TO NEW DAILY LOG */}
+      {/* HEADER */}
       <div className="mb-6 pt-4 border-b border-slate-800 pb-4">
         <div className="flex justify-between items-start mb-2">
           <h1 className="text-2xl font-black text-white tracking-tighter uppercase italic">
@@ -160,7 +188,9 @@ export default function NewDailyLog() {
         <div className="bg-slate-900 p-5 rounded-[32px] border border-slate-800 shadow-xl">
           <label className="block text-[10px] font-black text-slate-500 uppercase mb-2 tracking-widest">Active Site</label>
           <select 
-            required value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)}
+            required 
+            value={selectedProjectId} 
+            onChange={(e) => setSelectedProjectId(e.target.value)}
             className="w-full p-4 bg-slate-800 border border-slate-700 rounded-2xl text-sm font-bold text-white outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="" className="text-white">Select Project...</option>
@@ -176,19 +206,20 @@ export default function NewDailyLog() {
               {incidents.map(inc => (
                 <label key={inc.id} className={`flex gap-3 items-center p-3 rounded-2xl border-2 transition-all cursor-pointer ${selectedIncidentId === inc.id ? 'bg-slate-900 border-red-600 shadow-md' : 'bg-slate-900/50 border-transparent'}`}>
                   <input 
-                    type="radio" name="incident"
+                    type="radio" 
+                    name="incident"
                     checked={selectedIncidentId === inc.id}
                     onChange={() => setSelectedIncidentId(inc.id)}
                     className="w-4 h-4 accent-red-600"
                   />
                   <div>
                     <p className="text-[10px] font-black text-red-400 uppercase">{inc.classification}</p>
-                    <p className="text-xs font-bold text-slate-300 line-clamp-1 italic">"{inc.description}"</p>
+                    <p className="text-xs font-bold text-slate-300 line-clamp-1 italic">&ldquo;{inc.description}&rdquo;</p>
                   </div>
                 </label>
               ))}
               {selectedIncidentId && (
-                 <button type="button" onClick={() => setSelectedIncidentId(null)} className="text-[9px] font-black text-slate-500 uppercase tracking-widest mt-2 w-full text-center">Clear Selection</button>
+                <button type="button" onClick={() => setSelectedIncidentId(null)} className="text-[9px] font-black text-slate-500 uppercase tracking-widest mt-2 w-full text-center">Clear Selection</button>
               )}
             </div>
           </div>
@@ -203,7 +234,7 @@ export default function NewDailyLog() {
                 onClick={() => setSelectedTrades(prev => {
                   const n = { ...prev }; if (n[t.name]) delete n[t.name]; else n[t.name] = 1; return n;
                 })}
-                className={`p-3 text-[10px] font-black rounded-xl border transition-all uppercase ${selectedTrades[t.name] ? 'bg-blue-600 text-white border-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : 'bg-slate-800 text-slate-50 text-slate-500 border-slate-700'}`}>
+                className={`p-3 text-[10px] font-black rounded-xl border transition-all uppercase ${selectedTrades[t.name] ? 'bg-blue-600 text-white border-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
                 {t.name}
               </button>
             ))}
@@ -234,9 +265,11 @@ export default function NewDailyLog() {
           <div className="flex flex-wrap gap-2">
             <label className="w-20 h-20 border-2 border-dashed border-slate-800 rounded-2xl flex items-center justify-center cursor-pointer hover:border-blue-500 bg-slate-950">
               <span className="text-2xl text-slate-700">+</span>
-              <input type="file" multiple accept="image/*" capture="environment" onChange={(e) => setPhotos(prev => [...prev, ...Array.from(e.target.files!)])} className="hidden" />
+              <input type="file" multiple accept="image/*" capture="environment" onChange={(e) => setPhotos(prev => [...prev, ...Array.from(e.target.files || [])])} className="hidden" />
             </label>
-            {photos.map((p, i) => <img key={i} src={URL.createObjectURL(p)} className="w-20 h-20 object-cover rounded-2xl border-2 border-blue-900 shadow-sm" />)}
+            {photos.map((p, i) => (
+              <img key={i} src={URL.createObjectURL(p)} alt={`Evidence ${i + 1}`} className="w-20 h-20 object-cover rounded-2xl border-2 border-blue-900 shadow-sm" />
+            ))}
           </div>
         </div>
 

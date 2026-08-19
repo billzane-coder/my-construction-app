@@ -9,94 +9,141 @@ import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { 
-  ChevronLeft, Plus, X, ShieldCheck, Wallet, 
-  FileStack, ArrowRight, Trash2, Check, Lock, 
-  Loader2, ChevronDown, ChevronRight, Users, Printer, FileSpreadsheet,
-  Copy, Save, Unlock, CheckCircle2, FileSignature
+  ChevronLeft, Plus, X, 
+  Trash2, Lock, Loader2, 
+  ChevronDown, ChevronRight, Users, Printer, FileSpreadsheet,
+  Copy, Save, Unlock, FileSignature
 } from 'lucide-react'
 
+interface CostCodeItem {
+  id: string
+  project_id: string
+  parent_id: string | null
+  code: string
+  name: string
+  original_budget: number
+  manual_commitment: number
+  assigned_trade?: string
+  original: number
+  changes: number
+  contract_committed: number
+  committed: number
+  trade: string
+  depth?: number
+  display_original?: number
+  display_committed?: number
+  display_changes?: number
+  has_contracts?: boolean
+  revised?: number
+  total?: number
+  variance?: number
+  isOverBudget?: boolean
+}
+
+interface ProjectData {
+  id?: string
+  name: string
+}
+
+interface CompanySettings {
+  id: number
+  company_name?: string
+  primary_color?: string
+  logo_url?: string
+}
+
 export default function FinancialMaster() {
-  const { id } = useParams()
+  const params = useParams()
+  const id = params?.id as string
   const router = useRouter()
+  
   const [loading, setLoading] = useState(true)
-  const [costCodes, setCostCodes] = useState<any[]>([])
-  const [project, setProject] = useState<any>(null)
-  const [settings, setSettings] = useState<any>(null) 
+  const [costCodes, setCostCodes] = useState<CostCodeItem[]>([])
+  const [project, setProject] = useState<ProjectData | null>(null)
+  const [settings, setSettings] = useState<CompanySettings | null>(null) 
   
   // Ledger State
-  const [isLocked, setIsLocked] = useState(false) // Master Lock
+  const [isLocked, setIsLocked] = useState(false)
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
   const [editingCell, setEditingCell] = useState<{ id: string, field: string, value: string } | null>(null)
   const [isAdding, setIsAdding] = useState<{ show: boolean, parentId: string | null }>({ show: false, parentId: null })
   const [newRow, setNewRow] = useState({ code: '', name: '', budget: '' })
 
   // WBS Import States
-  const [availableProjects, setAvailableProjects] = useState<any[]>([])
+  const [availableProjects, setAvailableProjects] = useState<ProjectData[]>([])
   const [showImportModal, setShowImportModal] = useState(false)
   const [importMode, setImportMode] = useState<'values' | 'structure'>('values')
   const [importing, setImporting] = useState(false)
 
   const fetchData = async (silent = false) => {
+    if (!id) return
     if (!silent) setLoading(true)
     
-    const [pRes, codesRes, contractsRes, settingsRes, allProjRes] = await Promise.all([
-      supabase.from('projects').select('name').eq('id', id).single(),
-      supabase.from('project_cost_codes').select('*').eq('project_id', id).order('code'),
-      supabase.from('project_contracts').select('id, status, cost_code_id, project_contacts!project_contracts_contact_id_fkey(company)').eq('project_id', id),
-      supabase.from('company_settings').select('*').eq('id', 1).single(),
-      supabase.from('projects').select('id, name').neq('id', id)
-    ])
-    
-    setProject(pRes.data)
-    if (settingsRes.data) setSettings(settingsRes.data)
-    if (allProjRes.data) setAvailableProjects(allProjRes.data)
-    
-    const codes = codesRes.data
-    const contracts = contractsRes.data
-
-    const activeIds = contracts?.filter(c => c.status === 'Active' || c.status === 'Completed').map(c => c.id) || []
-    
-    const { data: sovLines } = await supabase
-      .from('sov_line_items')
-      .select('*, change_orders(status)')
-      .in('contract_id', activeIds.length ? activeIds : ['00000000-0000-0000-0000-000000000000'])
-
-    const aggregated = codes?.map(code => {
-      let contract_committed = 0, changes = 0, trades = new Set<string>()
-      const matchingContracts = contracts?.filter(c => c.cost_code_id === code.id) || []
+    try {
+      const [pRes, codesRes, contractsRes, settingsRes, allProjRes] = await Promise.all([
+        supabase.from('projects').select('name').eq('id', id).single(),
+        supabase.from('project_cost_codes').select('*').eq('project_id', id).order('code'),
+        supabase.from('project_contracts').select('id, status, cost_code_id, project_contacts!project_contracts_contact_id_fkey(company)').eq('project_id', id),
+        supabase.from('company_settings').select('*').eq('id', 1).single(),
+        supabase.from('projects').select('id, name').neq('id', id)
+      ])
       
-      matchingContracts.forEach(c => {
-         const contactInfo: any = Array.isArray(c?.project_contacts) ? c?.project_contacts[0] : c?.project_contacts
-         if (contactInfo?.company) trades.add(contactInfo.company)
+      if (pRes.data) setProject(pRes.data)
+      if (settingsRes.data) setSettings(settingsRes.data)
+      if (allProjRes.data) setAvailableProjects(allProjRes.data)
+      
+      const codes = codesRes.data || []
+      const contracts = contractsRes.data || []
 
-         if (c.status === 'Active' || c.status === 'Completed') {
-            const linesForContract = sovLines?.filter(l => l.contract_id === c.id) || []
+      const activeIds = contracts.filter(c => c.status === 'Active' || c.status === 'Completed').map(c => c.id)
+      
+      const { data: sovLines } = await supabase
+        .from('sov_line_items')
+        .select('*, change_orders(status)')
+        .in('contract_id', activeIds.length ? activeIds : ['00000000-0000-0000-0000-000000000000'])
+
+      const aggregated: CostCodeItem[] = codes.map(code => {
+        let contract_committed = 0
+        let changes = 0
+        const trades = new Set<string>()
+        const matchingContracts = contracts.filter(c => c.cost_code_id === code.id)
+        
+        matchingContracts.forEach(c => {
+          const contactInfo: any = Array.isArray(c?.project_contacts) ? c?.project_contacts[0] : c?.project_contacts
+          if (contactInfo?.company) trades.add(contactInfo.company)
+
+          if (c.status === 'Active' || c.status === 'Completed') {
+            const linesForContract = (sovLines || []).filter(l => l.contract_id === c.id)
             linesForContract.forEach(line => {
-               const isBaseLine = !line.change_order_id;
-               const isApprovedCO = line.change_order_id && line.change_orders?.status === 'Approved';
-               if (isBaseLine || isApprovedCO) contract_committed += Number(line.scheduled_value || 0)
-               if (isApprovedCO) changes += Number(line.scheduled_value || 0)
+              const isBaseLine = !line.change_order_id
+              const isApprovedCO = line.change_order_id && line.change_orders?.status === 'Approved'
+              if (isBaseLine || isApprovedCO) contract_committed += Number(line.scheduled_value || 0)
+              if (isApprovedCO) changes += Number(line.scheduled_value || 0)
             })
-         }
+          }
+        })
+        
+        const manual_commitment = Number(code.manual_commitment || 0)
+        const trade_display = trades.size > 0 ? Array.from(trades).join(', ') : (code.assigned_trade || '-')
+        
+        return { 
+          ...code, 
+          original: Number(code.original_budget || 0), 
+          changes, 
+          manual_commitment,
+          contract_committed,
+          committed: manual_commitment + contract_committed, 
+          assigned_trade: code.assigned_trade || '',
+          trade: trade_display 
+        }
       })
       
-      const manual_commitment = Number(code.manual_commitment || 0)
-      const trade_display = trades.size > 0 ? Array.from(trades).join(', ') : (code.assigned_trade || '-')
-      
-      return { 
-        ...code, 
-        original: Number(code.original_budget || 0), 
-        changes, 
-        manual_commitment,
-        contract_committed,
-        committed: manual_commitment + contract_committed, 
-        assigned_trade: code.assigned_trade || '',
-        trade: trade_display 
-      }
-    }) || []
-    
-    setCostCodes(aggregated)
-    if (!silent) setLoading(false)
+      setCostCodes(aggregated)
+    } catch (error) {
+      console.error('Error fetching financial data:', error)
+    } finally {
+      if (!silent) setLoading(false)
+    }
   }
 
   useEffect(() => { fetchData() }, [id])
@@ -120,7 +167,7 @@ export default function FinancialMaster() {
   }
 
   const handleSaveNew = async () => {
-    if (!newRow.code || !newRow.name) return alert("Code and Name are required.")
+    if (!newRow.code || !newRow.name) return alert('Code and Name are required.')
     const payload = { 
       project_id: id, 
       code: newRow.code, 
@@ -135,14 +182,28 @@ export default function FinancialMaster() {
   }
 
   const handleDelete = async (rowId: string) => {
-    if(isLocked) return alert("Ledger is currently locked. Unlock to make structural changes.");
+    if (isLocked) return alert('Ledger is currently locked. Unlock to make structural changes.')
+    
+    // Check if this is a parent with child items
+    const childIds = costCodes.filter(c => c.parent_id === rowId).map(c => c.id)
+    if (childIds.length > 0) {
+      const confirmCascade = confirm(`This category contains ${childIds.length} sub-item(s). Deleting it will remove all sub-items as well. Continue?`)
+      if (!confirmCascade) return
+      
+      // Delete children first, then parent
+      await supabase.from('project_cost_codes').delete().in('id', childIds)
+    }
+
     const { error } = await supabase.from('project_cost_codes').delete().eq('id', rowId)
-    if (error) alert("Line is locked to an active contract. You cannot delete it."); else fetchData()
+    if (error) {
+      alert('Line is locked to an active contract or SOV record. You cannot delete it.')
+    } else {
+      fetchData()
+    }
   }
 
-  // --- UPGRADED WBS IMPORT ENGINE ---
   const handleImportWBS = async (sourceProjectId: string) => {
-    if (!confirm(`Are you sure you want to pull WBS codes into this project?\n\nMode: ${importMode === 'values' ? 'Keep Dollar Values' : 'Structure Only (Zero Budgets)'}`)) return;
+    if (!confirm(`Are you sure you want to pull WBS codes into this project?\n\nMode: ${importMode === 'values' ? 'Keep Dollar Values' : 'Structure Only (Zero Budgets)'}`)) return
 
     setImporting(true)
     try {
@@ -169,7 +230,7 @@ export default function FinancialMaster() {
 
       const parentMap: Record<string, string> = {}
       parents.forEach(oldP => {
-        const newP = insertedParents.find(np => np.code === oldP.code && np.name === oldP.name)
+        const newP = insertedParents?.find(np => np.code === oldP.code && np.name === oldP.name)
         if (newP) parentMap[oldP.id] = newP.id
       })
 
@@ -185,11 +246,11 @@ export default function FinancialMaster() {
         await supabase.from('project_cost_codes').insert(childPayload)
       }
 
-      if (importMode === 'values') setIsLocked(true);
+      if (importMode === 'values') setIsLocked(true)
 
       setShowImportModal(false)
       fetchData()
-    } catch(err:any) {
+    } catch (err: any) {
       alert('Error importing WBS: ' + err.message)
     }
     setImporting(false)
@@ -199,7 +260,7 @@ export default function FinancialMaster() {
     const parents = costCodes.filter(c => !c.parent_id)
     const children = costCodes.filter(c => c.parent_id)
 
-    const final: any[] = []
+    const final: CostCodeItem[] = []
     parents.forEach(p => {
       const myChildren = children.filter(c => c.parent_id === p.id)
       
@@ -226,7 +287,7 @@ export default function FinancialMaster() {
         isOverBudget: variance < 0 
       })
 
-      if (expandedRows.has(p.id) || (typeof window !== 'undefined' && window.matchMedia('print').matches)) {
+      if (expandedRows.has(p.id)) {
         myChildren.forEach(child => {
           const cTotal = child.committed 
           const cRevised = child.original + child.changes 
@@ -236,8 +297,8 @@ export default function FinancialMaster() {
             depth: 1, 
             display_original: child.original, 
             display_committed: child.committed, 
-            display_changes: child.changes,
-            has_contracts: child.contract_committed > 0,
+            display_changes: child.changes, 
+            has_contracts: child.contract_committed > 0, 
             revised: cRevised, 
             total: cTotal, 
             variance: cVariance, 
@@ -274,8 +335,8 @@ export default function FinancialMaster() {
 
     const worksheet = XLSX.utils.json_to_sheet(excelData)
     const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Project Ledger")
-    const colWidths = [ { wch: 10 }, { wch: 15 }, { wch: 40 }, { wch: 25 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 } ]
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Project Ledger')
+    const colWidths = [{ wch: 10 }, { wch: 15 }, { wch: 40 }, { wch: 25 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }]
     worksheet['!cols'] = colWidths
     XLSX.writeFile(workbook, `${project?.name || 'Project'}_Financial_Ledger.xlsx`)
   }
@@ -283,29 +344,29 @@ export default function FinancialMaster() {
   const handleExportPDF = () => {
     const doc = new jsPDF('landscape')
     const hexToRgb = (hex: string): [number, number, number] => {
-      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-      return result ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)] : [37, 99, 235]; 
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+      return result ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)] : [37, 99, 235]
     }
     const brandRgb = hexToRgb(settings?.primary_color || '#2563eb')
 
     doc.setFontSize(22)
     doc.setTextColor(brandRgb[0], brandRgb[1], brandRgb[2])
-    doc.setFont("helvetica", "bold")
+    doc.setFont('helvetica', 'bold')
     doc.text(settings?.company_name || 'COMPANY NAME', 14, 20)
 
     doc.setFontSize(16)
     doc.setTextColor(15, 23, 42)
-    doc.text(`Master Financial Ledger`, 14, 30)
+    doc.text('Master Financial Ledger', 14, 30)
 
     doc.setFontSize(10)
     doc.setTextColor(100, 116, 139)
-    doc.setFont("helvetica", "normal")
+    doc.setFont('helvetica', 'normal')
     doc.text(`Project: ${project?.name || 'Unassigned'}`, 14, 38)
     doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 44)
 
     const parents = costCodes.filter(c => !c.parent_id)
     const children = costCodes.filter(c => c.parent_id)
-    const fullData: any[] = []
+    const fullData: CostCodeItem[] = []
     
     parents.forEach(p => {
       const myChildren = children.filter(c => c.parent_id === p.id)
@@ -328,13 +389,13 @@ export default function FinancialMaster() {
 
     const tableData = fullData.map(row => [
       row.code,
-      row.depth > 0 ? `   ${row.name}` : row.name,
+      row.depth && row.depth > 0 ? `   ${row.name}` : row.name,
       row.trade || '-',
-      formatMoney(row.display_original),
-      formatMoney(row.display_committed),
-      row.display_changes > 0 ? `+${formatMoney(row.display_changes)}` : '-',
-      formatMoney(row.total),
-      formatMoney(Math.abs(row.variance))
+      formatMoney(row.display_original || 0),
+      formatMoney(row.display_committed || 0),
+      (row.display_changes || 0) > 0 ? `+${formatMoney(row.display_changes || 0)}` : '-',
+      formatMoney(row.total || 0),
+      formatMoney(Math.abs(row.variance || 0))
     ])
 
     const footerData = [['TOTALS', '', '', formatMoney(totals.original), formatMoney(totals.committed), formatMoney(totals.changes), formatMoney(totals.total), formatMoney(Math.abs(totals.variance))]]
@@ -353,12 +414,12 @@ export default function FinancialMaster() {
       },
       didParseCell: (data) => {
         if (data.section === 'body') {
-          const isParent = fullData[data.row.index]?.depth === 0;
-          if (isParent) { data.cell.styles.fontStyle = 'bold'; data.cell.styles.textColor = [15, 23, 42]; } 
-          else { data.cell.styles.textColor = [100, 116, 139]; }
+          const isParent = fullData[data.row.index]?.depth === 0
+          if (isParent) { data.cell.styles.fontStyle = 'bold'; data.cell.styles.textColor = [15, 23, 42] } 
+          else { data.cell.styles.textColor = [100, 116, 139] }
           if (data.column.index === 7) {
-             const variance = fullData[data.row.index]?.variance;
-             data.cell.styles.textColor = variance < 0 ? [239, 68, 68] : [16, 185, 129]; 
+            const variance = fullData[data.row.index]?.variance || 0
+            data.cell.styles.textColor = variance < 0 ? [239, 68, 68] : [16, 185, 129]
           }
         }
       }
@@ -380,40 +441,40 @@ export default function FinancialMaster() {
   return (
     <div className="w-full bg-slate-950 print:bg-white min-h-screen p-6 md:p-12 text-slate-100 print:text-black print:p-0">
       
-      {/* --- IMPORT MODAL --- */}
+      {/* IMPORT MODAL */}
       {showImportModal && (
         <div className="fixed inset-0 z-[200] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-200">
-              <div className="flex justify-between items-center mb-6">
-                 <h3 className="text-lg font-black text-white uppercase italic tracking-tighter">Import WBS</h3>
-                 <button onClick={() => setShowImportModal(false)} className="bg-slate-950 p-2 rounded-lg text-slate-500 hover:text-white"><X size={16} /></button>
-              </div>
-              
-              <div className="flex bg-slate-950 p-1 rounded-xl mb-6 border border-slate-800">
-                 <button 
-                   onClick={() => setImportMode('values')} 
-                   className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors ${importMode === 'values' ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:text-white'}`}
-                 >
-                   Full Copy (Values)
-                 </button>
-                 <button 
-                   onClick={() => setImportMode('structure')} 
-                   className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors ${importMode === 'structure' ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:text-white'}`}
-                 >
-                   Structure Only ($0)
-                 </button>
-              </div>
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-black text-white uppercase italic tracking-tighter">Import WBS</h3>
+              <button onClick={() => setShowImportModal(false)} className="bg-slate-950 p-2 rounded-lg text-slate-500 hover:text-white"><X size={16} /></button>
+            </div>
+            
+            <div className="flex bg-slate-950 p-1 rounded-xl mb-6 border border-slate-800">
+              <button 
+                onClick={() => setImportMode('values')} 
+                className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors ${importMode === 'values' ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:text-white'}`}
+              >
+                Full Copy (Values)
+              </button>
+              <button 
+                onClick={() => setImportMode('structure')} 
+                className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors ${importMode === 'structure' ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:text-white'}`}
+              >
+                Structure Only ($0)
+              </button>
+            </div>
 
-              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
-                 {availableProjects.map(proj => (
-                    <button key={proj.id} onClick={() => handleImportWBS(proj.id)} disabled={importing} className="w-full text-left p-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500 transition-colors group flex justify-between items-center">
-                       <span className="text-sm font-bold text-slate-300 group-hover:text-white uppercase">{proj.name}</span>
-                       {importing ? <Loader2 size={16} className="animate-spin text-emerald-500"/> : <Copy size={16} className="text-slate-600 group-hover:text-emerald-500"/>}
-                    </button>
-                 ))}
-                 {availableProjects.length === 0 && <p className="text-xs font-bold text-slate-500 text-center py-4">No other projects found.</p>}
-              </div>
-           </div>
+            <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
+              {availableProjects.map(proj => (
+                <button key={proj.id} onClick={() => proj.id && handleImportWBS(proj.id)} disabled={importing} className="w-full text-left p-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500 transition-colors group flex justify-between items-center">
+                  <span className="text-sm font-bold text-slate-300 group-hover:text-white uppercase">{proj.name}</span>
+                  {importing ? <Loader2 size={16} className="animate-spin text-emerald-500"/> : <Copy size={16} className="text-slate-600 group-hover:text-emerald-500"/>}
+                </button>
+              ))}
+              {availableProjects.length === 0 && <p className="text-xs font-bold text-slate-500 text-center py-4">No other projects found.</p>}
+            </div>
+          </div>
         </div>
       )}
 
@@ -444,14 +505,14 @@ export default function FinancialMaster() {
       <div className="space-y-8 w-full print:space-y-6">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 print:hidden">
           <div className="flex items-center gap-4">
-             <h2 className="text-3xl font-black uppercase italic tracking-tighter print:text-black">WBS <span className="text-emerald-500 print:text-emerald-600">Ledger</span></h2>
-             
-             <button 
-               onClick={() => setIsLocked(!isLocked)}
-               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${isLocked ? 'bg-red-950/40 text-red-500 border border-red-900/50' : 'bg-emerald-950/40 text-emerald-500 border border-emerald-900/50'}`}
-             >
-               {isLocked ? <><Lock size={12}/> Locked Rev.1</> : <><Unlock size={12}/> Editing</>}
-             </button>
+            <h2 className="text-3xl font-black uppercase italic tracking-tighter print:text-black">WBS <span className="text-emerald-500 print:text-emerald-600">Ledger</span></h2>
+            
+            <button 
+              onClick={() => setIsLocked(!isLocked)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${isLocked ? 'bg-red-950/40 text-red-500 border border-red-900/50' : 'bg-emerald-950/40 text-emerald-500 border border-emerald-900/50'}`}
+            >
+              {isLocked ? <><Lock size={12}/> Locked Rev.1</> : <><Unlock size={12}/> Editing</>}
+            </button>
           </div>
 
           <div className="flex gap-3">
@@ -468,7 +529,7 @@ export default function FinancialMaster() {
           <StatCard label="Base Budget" value={totals.original} color="text-slate-400 print:text-slate-800" />
           <StatCard label="Committed" value={totals.committed} color="text-slate-300 print:text-slate-900" />
           <StatCard label="Approved Changes" value={totals.changes} color="text-amber-500 print:text-amber-600" />
-          <StatCard label="Budget Variance" value={Math.abs(totals.variance)} color={totals.variance < 0 ? "text-red-500 print:text-red-600" : "text-emerald-500 print:text-emerald-600"} isOver={totals.variance < 0} />
+          <StatCard label="Budget Variance" value={Math.abs(totals.variance)} color={totals.variance < 0 ? 'text-red-500 print:text-red-600' : 'text-emerald-500 print:text-emerald-600'} isOver={totals.variance < 0} />
         </div>
 
         <div className="bg-slate-900 print:bg-white rounded-[40px] print:rounded-2xl border border-slate-800 print:border-slate-300 shadow-2xl print:shadow-none overflow-hidden w-full">
@@ -517,7 +578,7 @@ export default function FinancialMaster() {
                   const isExpanded = expandedRows.has(row.id)
                   
                   return (
-                    <tr key={row.id} className={`transition-colors group ${row.depth > 0 ? 'bg-slate-950/30 print:bg-white' : 'hover:bg-slate-800/20 print:bg-slate-50/50'}`}>
+                    <tr key={row.id} className={`transition-colors group ${row.depth && row.depth > 0 ? 'bg-slate-950/30 print:bg-white' : 'hover:bg-slate-800/20 print:bg-slate-50/50'}`}>
                       <td className="p-6 print:p-4">
                         <div className="flex items-center gap-3">
                           {row.depth === 0 && (
@@ -525,7 +586,7 @@ export default function FinancialMaster() {
                               {isExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
                             </button>
                           )}
-                          <div className={`${row.depth > 0 ? 'ml-6 print:ml-4' : ''}`}>
+                          <div className={`${row.depth && row.depth > 0 ? 'ml-6 print:ml-4' : ''}`}>
                             {editingCell?.id === row.id && editingCell?.field === 'code' && !isLocked ? (
                               <input autoFocus className="bg-slate-950 border border-blue-500 p-1.5 rounded text-blue-400 text-xs font-black outline-none w-24 print:hidden" value={editingCell?.value || ''} onChange={e => setEditingCell(prev => prev ? { ...prev, value: e.target.value } : null)} onBlur={() => handleSaveCell(row.id)} />
                             ) : (
@@ -542,24 +603,24 @@ export default function FinancialMaster() {
                         )}
                       </td>
                       
-                      {/* UPDATED CONTRACTOR CELL */}
+                      {/* CONTRACTOR CELL */}
                       <td className="p-6 print:p-4 text-slate-500 print:text-slate-600 text-[10px] uppercase truncate max-w-[120px]">
                         {editingCell?.id === row.id && editingCell?.field === 'assigned_trade' && !isLocked ? (
                           <input autoFocus placeholder="Assign Trade..." className="bg-slate-950 border border-slate-500 p-1.5 rounded text-white text-xs outline-none w-full print:hidden" value={editingCell?.value || ''} onChange={e => setEditingCell(prev => prev ? { ...prev, value: e.target.value } : null)} onBlur={() => handleSaveCell(row.id)} />
                         ) : (
-                          <span className={`cursor-pointer transition-colors ${isLocked ? '' : 'hover:text-white'}`} onClick={() => !isLocked && setEditingCell({ id: row.id, field: 'assigned_trade', value: row.assigned_trade })}>
+                          <span className={`cursor-pointer transition-colors ${isLocked ? '' : 'hover:text-white'}`} onClick={() => !isLocked && setEditingCell({ id: row.id, field: 'assigned_trade', value: row.assigned_trade || '' })}>
                             {row.trade}
                           </span>
                         )}
                       </td>
                       
                       <td className="p-6 print:p-4 text-right">
-                        {row.display_committed > 0 && row.display_original === 0 ? (
-                           <div className="flex items-center justify-end gap-2 text-slate-500 print:text-slate-800 text-xs font-bold"><Lock size={10} className="text-emerald-500 print:hidden" /> {formatMoney(row.display_original)}</div>
+                        {(row.display_committed || 0) > 0 && row.display_original === 0 ? (
+                          <div className="flex items-center justify-end gap-2 text-slate-500 print:text-slate-800 text-xs font-bold"><Lock size={10} className="text-emerald-500 print:hidden" /> {formatMoney(row.display_original || 0)}</div>
                         ) : editingCell?.id === row.id && editingCell?.field === 'original_budget' && !isLocked ? (
                           <input type="number" autoFocus className="bg-slate-950 border border-emerald-500 p-1.5 rounded text-right text-emerald-400 text-xs outline-none w-24 print:hidden" value={editingCell?.value || ''} onChange={e => setEditingCell(prev => prev ? { ...prev, value: e.target.value } : null)} onBlur={() => handleSaveCell(row.id)} />
                         ) : (
-                          <span className={`cursor-pointer text-xs transition-colors ${isLocked ? 'text-slate-500' : 'text-slate-400 print:text-slate-800 hover:text-white'}`} onClick={() => !isLocked && setEditingCell({ id: row.id, field: 'original_budget', value: row.original.toString() })}>{formatMoney(row.display_original)}</span>
+                          <span className={`cursor-pointer text-xs transition-colors ${isLocked ? 'text-slate-500' : 'text-slate-400 print:text-slate-800 hover:text-white'}`} onClick={() => !isLocked && setEditingCell({ id: row.id, field: 'original_budget', value: row.original.toString() })}>{formatMoney(row.display_original || 0)}</span>
                         )}
                       </td>
                       
@@ -568,14 +629,14 @@ export default function FinancialMaster() {
                           <input type="number" autoFocus placeholder="Direct Cost" className="bg-slate-950 border border-blue-500 p-1.5 rounded text-right text-slate-300 text-xs font-bold outline-none w-24 print:hidden" value={editingCell?.value || ''} onChange={e => setEditingCell(prev => prev ? { ...prev, value: e.target.value } : null)} onBlur={() => handleSaveCell(row.id)} />
                         ) : (
                           <div className={`flex flex-col items-end cursor-pointer group ${isLocked ? 'pointer-events-none' : ''}`} onClick={() => !isLocked && setEditingCell({ id: row.id, field: 'manual_commitment', value: row.manual_commitment?.toString() || '0' })}>
-                            <span className="text-slate-300 print:text-slate-900 text-xs font-bold group-hover:text-blue-400 transition-colors">{formatMoney(row.display_committed)}</span>
+                            <span className="text-slate-300 print:text-slate-900 text-xs font-bold group-hover:text-blue-400 transition-colors">{formatMoney(row.display_committed || 0)}</span>
                           </div>
                         )}
                       </td>
 
-                      <td className="p-6 print:p-4 text-right text-xs text-amber-500 print:text-amber-700 border-l border-slate-800/50 print:border-slate-300">{row.display_changes > 0 ? `+${formatMoney(row.display_changes)}` : '-'}</td>
-                      <td className="p-6 print:p-4 text-right text-xs bg-blue-950/10 print:bg-slate-50 text-blue-400 print:text-slate-900 border-l border-blue-900/30 print:border-slate-300 font-black">{formatMoney(row.total)}</td>
-                      <td className={`p-6 print:p-4 text-right text-xs font-black border-l border-slate-800/50 print:border-slate-300 ${row.isOverBudget ? 'text-red-500 print:text-red-700' : 'text-emerald-500 print:text-emerald-700'}`}>{formatMoney(Math.abs(row.variance))}</td>
+                      <td className="p-6 print:p-4 text-right text-xs text-amber-500 print:text-amber-700 border-l border-slate-800/50 print:border-slate-300">{(row.display_changes || 0) > 0 ? `+${formatMoney(row.display_changes || 0)}` : '-'}</td>
+                      <td className="p-6 print:p-4 text-right text-xs bg-blue-950/10 print:bg-slate-50 text-blue-400 print:text-slate-900 border-l border-blue-900/30 print:border-slate-300 font-black">{formatMoney(row.total || 0)}</td>
+                      <td className={`p-6 print:p-4 text-right text-xs font-black border-l border-slate-800/50 print:border-slate-300 ${row.isOverBudget ? 'text-red-500 print:text-red-700' : 'text-emerald-500 print:text-emerald-700'}`}>{formatMoney(Math.abs(row.variance || 0))}</td>
                       
                       <td className="p-6 text-right w-24 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity print:hidden">
                         {row.depth === 0 && <button onClick={() => setIsAdding({ show: true, parentId: row.id })} disabled={isLocked} className="text-blue-500 hover:text-blue-400 mr-4 disabled:opacity-30"><Plus size={16} /></button>}
@@ -593,7 +654,7 @@ export default function FinancialMaster() {
   )
 }
 
-export function FinancialHeader({ id, active, onExportExcel, onExportPDF }: { id: any, active: string, onExportExcel?: () => void, onExportPDF?: () => void }) {
+export function FinancialHeader({ id, active, onExportExcel, onExportPDF }: { id: string, active: string, onExportExcel?: () => void, onExportPDF?: () => void }) {
   const router = useRouter()
   return (
     <div className="mb-10 border-b-4 border-blue-600 pb-8 flex flex-col xl:flex-row justify-between items-start xl:items-end gap-6 print:hidden">
@@ -636,7 +697,7 @@ export function FinancialHeader({ id, active, onExportExcel, onExportPDF }: { id
   )
 }
 
-function StatCard({ label, value, color, isOver }: any) {
+function StatCard({ label, value, color, isOver }: { label: string, value: number, color: string, isOver?: boolean }) {
   return (
     <div className="bg-slate-900 print:bg-white border border-slate-800 print:border-slate-300 print:border p-6 print:p-4 rounded-[28px] print:rounded-xl shadow-xl print:shadow-none">
       <p className="text-[9px] font-black text-slate-500 print:text-slate-500 uppercase tracking-widest mb-1">{label}</p>
