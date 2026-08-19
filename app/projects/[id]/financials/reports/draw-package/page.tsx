@@ -27,12 +27,13 @@ export default function BankPackageGenerator() {
     hardCosts: 0,
     softCosts: 0,
     holdback: 0, 
-    ownerEquity: 0, // NEW: Track equity for the UI/PDF payload
+    ownerEquity: 0,
     netPayment: 0, 
     backupCount: 0 
   })
   
   const [tradeBackupLinks, setTradeBackupLinks] = useState<string[]>([])
+  const [softCostsData, setSoftCostsData] = useState<any[]>([])
   
   const [companyName, setCompanyName] = useState("")
   const [projectName, setProjectName] = useState("")
@@ -48,11 +49,9 @@ export default function BankPackageGenerator() {
   const loadDrawData = async (targetDraw: any) => {
     setActiveDraw(targetDraw)
     
-    // 1. Fetch extra manually attached docs
     const { data: extra } = await supabase.from('draw_attachments').select('*').eq('draw_id', targetDraw.id)
     setExtraDocs(extra || [])
 
-    // 2. Determine Previous Billed by fetching prior draws
     const { data: previousDraws } = await supabase
       .from('project_draws')
       .select('id')
@@ -71,7 +70,6 @@ export default function BankPackageGenerator() {
       prevBilledTotal = prevSummaries?.reduce((sum, s) => sum + Number(s.gross_hard_costs) + Number(s.gross_soft_costs), 0) || 0
     }
 
-    // 3. Fetch the Master Draw Summary for THIS draw
     const { data: summary } = await supabase
       .from('draw_summaries')
       .select('*')
@@ -79,19 +77,22 @@ export default function BankPackageGenerator() {
       .single()
 
     if (summary) {
-      // 4. Fetch detailed line items to grab the invoice & SOV PDFs
       const { data: lines } = await supabase
         .from('draw_line_items')
-        .select('invoice_link, trade_sov_link')
+        .select('*')
         .eq('draw_id', summary.id)
 
       const combinedBackups: string[] = []
+      const softList: any[] = []
+      
       lines?.forEach(l => {
         if (l.invoice_link) combinedBackups.push(l.invoice_link)
         if (l.trade_sov_link) combinedBackups.push(l.trade_sov_link)
+        if (l.is_soft_cost) softList.push(l)
       })
       
       setTradeBackupLinks(combinedBackups)
+      setSoftCostsData(softList)
       
       const currentGross = Number(summary.gross_hard_costs) + Number(summary.gross_soft_costs)
 
@@ -102,13 +103,14 @@ export default function BankPackageGenerator() {
         hardCosts: Number(summary.gross_hard_costs),
         softCosts: Number(summary.gross_soft_costs),
         holdback: Number(summary.hard_cost_holdback) + Number(summary.soft_cost_holdback), 
-        ownerEquity: Number(summary.owner_equity_applied || 0), // Pulled from DB
+        ownerEquity: Number(summary.owner_equity_applied || 0), 
         netPayment: Number(summary.net_lender_advance), 
         backupCount: combinedBackups.length 
       })
     } else {
       setStats({ currentClaimed: 0, previousBilled: 0, totalCompleted: 0, hardCosts: 0, softCosts: 0, holdback: 0, ownerEquity: 0, netPayment: 0, backupCount: 0 })
       setTradeBackupLinks([])
+      setSoftCostsData([])
     }
   }
 
@@ -197,7 +199,6 @@ export default function BankPackageGenerator() {
         }
       }
 
-      // Payload includes equity deduction so the backend G702 matches perfectly
       const payload = { 
         projectId: id, 
         drawNumber: activeDraw.draw_number, 
@@ -208,8 +209,9 @@ export default function BankPackageGenerator() {
           current: stats.currentClaimed, 
           previous: stats.previousBilled, 
           holdback: stats.holdback, 
-          ownerEquity: stats.ownerEquity, // NEW: Added to PDF Payload
-          net: stats.netPayment 
+          ownerEquity: stats.ownerEquity, 
+          net: stats.netPayment,
+          softCostList: softCostsData // NEW: API backend can now loop over this list to render soft costs
         },
         attachments: {
           statDec: finalStatDecLink || null,
@@ -352,7 +354,6 @@ export default function BankPackageGenerator() {
         )}
       </div>
 
-      {/* UPDATED FINANCIAL SUMMARY WIDGET WITH EQUITY */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-10">
         <div className="bg-slate-900 border border-slate-800 p-6 rounded-[32px] flex flex-col justify-center text-center sm:text-left">
           <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1"><Wallet size={12} className="inline mr-1"/> Prev. Billed</p>
