@@ -25,6 +25,7 @@ export default function DrawsManager() {
   const [allDraws, setAllDraws] = useState<any[]>([])
   const [activeDraw, setActiveDraw] = useState<any>(null)
   const [drawSummary, setDrawSummary] = useState<any>(null) 
+  const [ownerEquityInput, setOwnerEquityInput] = useState<string>('0') // NEW: Track Equity input
   
   const [project, setProject] = useState<any>(null)
   const [settings, setSettings] = useState<any>(null)
@@ -71,6 +72,7 @@ export default function DrawsManager() {
         summaryData = newSummary
       }
       setDrawSummary(summaryData)
+      setOwnerEquityInput((summaryData.owner_equity_applied || 0).toString())
 
       const { data: activeContracts } = await supabase
         .from('project_contracts')
@@ -92,7 +94,6 @@ export default function DrawsManager() {
       
       const currentBilled = allBilledLines?.filter(b => b.draw_id === summaryData.id) || []
       
-      // Auto-seed missing trade lines
       const missingLines = lines?.filter(l => !currentBilled.some((b: any) => b.sov_line_id === l.id)) || []
       if (missingLines.length > 0) {
         const seed = missingLines.map(l => ({ 
@@ -101,7 +102,6 @@ export default function DrawsManager() {
           sov_code: l.cost_code || '00-000',
           description: l.description || 'Line Item',
           original_budget: l.scheduled_value || 0,
-          approved_changes: 0,
           claimed_amount: 0, 
           current_gross_billed: 0,
           holdback_rate: 0.10,
@@ -119,11 +119,42 @@ export default function DrawsManager() {
 
   useEffect(() => { fetchData() }, [id])
 
-  // --- DATA ROLLUP ENGINE ---
+  const currentIndex = allDraws.findIndex(d => d.id === activeDraw?.id)
+  const hasPrev = currentIndex > 0
+  const hasNext = currentIndex < allDraws.length - 1
+
+  const goPrev = () => { if (hasPrev) { setReviewingContractId('summary'); fetchData(allDraws[currentIndex - 1].id); } }
+  const goNext = () => { if (hasNext) { setReviewingContractId('summary'); fetchData(allDraws[currentIndex + 1].id); } }
+
+  const handleUpdatePeriod = async () => {
+    if (!activeDraw) return;
+    await supabase.from('project_draws').update({ period: activeDraw.period }).eq('id', activeDraw.id);
+    setAllDraws(prev => prev.map(d => d.id === activeDraw.id ? { ...d, period: activeDraw.period } : d));
+  }
+
+  const handleNewDraw = async () => {
+    setLoading(true);
+    const nextNum = allDraws.length > 0 ? Math.max(...allDraws.map(d => d.draw_number)) + 1 : 1;
+    const currentPeriod = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    
+    const { data, error } = await supabase.from('project_draws').insert([{
+      project_id: id,
+      draw_number: nextNum,
+      period: currentPeriod,
+      status: 'Draft'
+    }]).select().single();
+
+    if (error) {
+      alert(`Failed to create draw: ${error.message}`);
+      setLoading(false);
+    } else if (data) {
+      fetchData(data.id);
+    }
+  }
+
   const tradeBills = useMemo(() => {
     if (!drawSummary || !allDraws.length) return { trades: [], softCosts: [] };
     
-    // Process Trade Contracts (Hard Costs)
     const processedTrades = contracts.map(contract => {
       const mySovs = sovLines.filter(s => s.contract_id === contract.id)
       let totalOriginal = 0, totalCOs = 0, totalScheduled = 0
@@ -140,8 +171,8 @@ export default function DrawsManager() {
 
         const prevVer = pastLines.reduce((sum, l) => sum + Number(l.current_gross_billed || 0), 0)
         
-        const original = Number(currentLine?.original_budget || sov.scheduled_value || 0)
-        const cos = Number(currentLine?.approved_changes || 0)
+        const original = sov.change_order_id ? 0 : Number(sov.scheduled_value || 0)
+        const cos = sov.change_order_id ? Number(sov.scheduled_value || 0) : 0
         const sched = original + cos // Revised Budget
         
         const claim = Number(currentLine?.claimed_amount || 0)
@@ -165,7 +196,8 @@ export default function DrawsManager() {
         
         return { 
           id: sov.id, desc: sov.description, original, cos, scheduled: sched, previous: prevVer, 
-          claimed: claim, verified: verif, holdback: lineHoldback, net: lineNet, dbId: currentLine?.id 
+          claimed: claim, verified: verif, holdback: lineHoldback, net: lineNet, dbId: currentLine?.id,
+          isCO: !!sov.change_order_id
         }
       })
 
@@ -180,14 +212,13 @@ export default function DrawsManager() {
       }
     })
 
-    // Process Soft Costs (General Conditions, Fees)
     const processedSoftCosts = drawLines.filter(d => d.draw_id === drawSummary.id && d.is_soft_cost).map(sc => {
       const pastLines = drawLines.filter(d => d.draw_id !== drawSummary.id && d.sov_code === sc.sov_code)
       const prevVer = pastLines.reduce((sum, l) => sum + Number(l.current_gross_billed || 0), 0)
       
       const scheduled = Number(sc.original_budget || 0) + Number(sc.approved_changes || 0)
       const verif = Number(sc.current_gross_billed || 0)
-      const lineHoldback = verif * Number(sc.holdback_rate || 0) // Usually 0 for soft costs
+      const lineHoldback = verif * Number(sc.holdback_rate || 0) 
       
       return {
         id: sc.id, desc: sc.description, scheduled, previous: prevVer, verified: verif, 
@@ -200,7 +231,6 @@ export default function DrawsManager() {
 
   const reviewingTrade = tradeBills.trades.find(t => t.id === reviewingContractId)
 
-  // Master Totals Aggregation
   const projectTotals = useMemo(() => {
     const tradeTotals = tradeBills.trades.reduce((acc, trade) => ({
       scheduled: acc.scheduled + trade.totalScheduled,
@@ -227,7 +257,6 @@ export default function DrawsManager() {
     }
   }, [tradeBills])
 
-  // --- UPDATE HANDLERS ---
   const handleUpdateLine = (dbId: string, field: string, val: number) => {
     const safeVal = isNaN(val) || val < 0 ? 0 : val;
     setDrawLines(prev => prev.map(dl => dl.id === dbId ? { ...dl, [field]: safeVal } : dl))
@@ -245,7 +274,7 @@ export default function DrawsManager() {
       description: desc,
       original_budget: Number(budget) || 0,
       current_gross_billed: 0,
-      holdback_rate: 0.00, // No holdback on soft costs default
+      holdback_rate: 0.00, 
       is_soft_cost: true
     }])
     await fetchData(activeDraw.id)
@@ -254,32 +283,36 @@ export default function DrawsManager() {
   
   const handleSave = async () => {
     setSaving(true)
-    
-    // Save Trades
-    if (reviewingTrade) {
-      const updates = reviewingTrade.lines.filter((l:any) => l.dbId).map((l: any) => ({
-        id: l.dbId,
-        approved_changes: l.cos,
-        claimed_amount: l.claimed, 
-        current_gross_billed: l.verified 
-      }));
-      await supabase.from('draw_line_items').upsert(updates)
-    }
+    try {
+      // Save Trades
+      if (reviewingTrade) {
+        await Promise.all(reviewingTrade.lines.filter((l:any) => l.dbId).map((l: any) => 
+          supabase.from('draw_line_items').update({
+            claimed_amount: l.claimed, 
+            current_gross_billed: l.verified 
+          }).eq('id', l.dbId)
+        ));
+      }
 
-    // Save Soft Costs (if we are on the summary view)
-    if (reviewingContractId === 'summary') {
-      const softUpdates = tradeBills.softCosts.map(sc => ({
-        id: sc.id,
-        current_gross_billed: sc.verified
-      }))
-      if (softUpdates.length > 0) await supabase.from('draw_line_items').upsert(softUpdates)
-    }
+      // Save Owner Equity & Soft Costs
+      if (reviewingContractId === 'summary') {
+        const equityVal = parseFloat(ownerEquityInput) || 0;
+        await supabase.from('draw_summaries').update({ owner_equity_applied: equityVal }).eq('id', drawSummary.id)
 
-    await fetchData(activeDraw.id)
+        await Promise.all(tradeBills.softCosts.map(sc => 
+          supabase.from('draw_line_items').update({
+            current_gross_billed: sc.verified
+          }).eq('id', sc.id)
+        ));
+      }
+
+      await fetchData(activeDraw.id)
+    } catch (error: any) {
+      alert(`Save failed: ${error.message}`)
+    }
     setSaving(false)
   }
 
-  // --- DUAL UPLOAD HANDLER ---
   const handleUploadDocument = async (e: React.ChangeEvent<HTMLInputElement>, type: 'invoice' | 'sov') => {
     const file = e.target.files?.[0]
     if (!file || !reviewingTrade) return
@@ -294,7 +327,6 @@ export default function DrawsManager() {
       
       const { data: { publicUrl } } = supabase.storage.from('project-files').getPublicUrl(filePath)
       
-      // Attach the link to the first draw line item for this contract to keep the logic clean
       const firstLineDbId = reviewingTrade.lines[0]?.dbId
       if (firstLineDbId) {
         const updateField = type === 'invoice' ? { invoice_link: publicUrl } : { trade_sov_link: publicUrl }
@@ -308,6 +340,82 @@ export default function DrawsManager() {
 
   const formatMoney = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0)
 
+  const handleExportPDF = () => {
+    const doc = new jsPDF('landscape')
+    
+    const hexToRgb = (hex: string): [number, number, number] => {
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return result ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)] : [37, 99, 235]; 
+    }
+    const brandRgb = hexToRgb(settings?.primary_color || '#2563eb')
+
+    doc.setFontSize(22)
+    doc.setTextColor(brandRgb[0], brandRgb[1], brandRgb[2])
+    doc.setFont("helvetica", "bold")
+    doc.text(settings?.company_name || 'COMPANY NAME', 14, 20)
+
+    doc.setFontSize(16)
+    doc.setTextColor(15, 23, 42)
+    doc.text(`Internal Master Draw Report - Draw #${activeDraw?.draw_number}`, 14, 30)
+
+    doc.setFontSize(10)
+    doc.setTextColor(100, 116, 139)
+    doc.setFont("helvetica", "normal")
+    doc.text(`Project: ${project?.name || 'Unassigned'}`, 14, 38)
+    doc.text(`Period: ${activeDraw?.period || 'N/A'}`, 14, 44)
+    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 50)
+
+    const tableData = tradeBills.trades.map(trade => [
+      trade.company,
+      formatMoney(trade.totalScheduled),
+      formatMoney(trade.previousVerified),
+      formatMoney(trade.totalVerified),
+      formatMoney(trade.totalHoldback),
+      formatMoney(trade.netPayable)
+    ])
+
+    tradeBills.softCosts.forEach(sc => {
+      tableData.push([
+        sc.desc + " (Soft Cost)",
+        formatMoney(sc.scheduled),
+        formatMoney(sc.previous),
+        formatMoney(sc.verified),
+        formatMoney(sc.holdback),
+        formatMoney(sc.net)
+      ])
+    })
+
+    const footerData = [[
+      'PROJECT TOTALS',
+      formatMoney(projectTotals.scheduled),
+      formatMoney(projectTotals.previous),
+      formatMoney(projectTotals.verified),
+      formatMoney(projectTotals.holdback),
+      formatMoney(projectTotals.net)
+    ]]
+
+    autoTable(doc, {
+      startY: 60,
+      head: [['Trade / Cost Item', 'Revised Budget', 'Prev Billed', 'Current Gross', 'Holdback', 'Net Payable']],
+      body: tableData,
+      foot: footerData,
+      theme: 'grid',
+      headStyles: { fillColor: brandRgb, textColor: 255, fontStyle: 'bold' },
+      footStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold' }, 
+      alternateRowStyles: { fillColor: [248, 250, 252] }, 
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 4 },
+      columnStyles: {
+        1: { halign: 'right' },
+        2: { halign: 'right' },
+        3: { halign: 'right', textColor: brandRgb, fontStyle: 'bold' }, 
+        4: { halign: 'right', textColor: [217, 119, 6] }, 
+        5: { halign: 'right', fontStyle: 'bold', textColor: [16, 185, 129] }
+      }
+    })
+
+    doc.save(`${project?.name || 'Project'}_MasterDraw_${activeDraw?.draw_number}.pdf`)
+  }
+
   if (loading) return <div className="min-h-screen bg-slate-950 flex justify-center items-center"><Loader2 className="animate-spin text-amber-500" size={48} /></div>
 
   return (
@@ -315,25 +423,36 @@ export default function DrawsManager() {
       <FinancialHeader id={id as string} active="draws" />
       
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 mb-8 flex justify-between items-center shadow-xl">
-        <button disabled={true} className="p-2 rounded-xl flex items-center gap-2 transition-all bg-slate-950 text-slate-700 cursor-not-allowed">
+        <button onClick={goPrev} disabled={!hasPrev} className={`p-2 rounded-xl flex items-center gap-2 transition-all ${hasPrev ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-slate-950 text-slate-700 cursor-not-allowed'}`}>
           <ChevronLeft size={20} /> <span className="text-[10px] font-black uppercase tracking-widest hidden md:inline">Previous</span>
         </button>
         
         <div className="text-center flex flex-col items-center min-w-[140px]">
           <h2 className="text-2xl font-black text-amber-500 uppercase italic tracking-tighter leading-none mb-1">Draw #{activeDraw?.draw_number}</h2>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-transparent text-center outline-none w-full">{activeDraw?.period}</p>
+          <input 
+            value={activeDraw?.period || ''} 
+            onChange={(e) => setActiveDraw({...activeDraw, period: e.target.value})}
+            onBlur={handleUpdatePeriod}
+            onKeyDown={(e) => e.key === 'Enter' && handleUpdatePeriod()}
+            placeholder="e.g. March 2026"
+            className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-transparent border-b border-dashed border-slate-700 hover:border-slate-500 focus:border-blue-500 focus:text-white text-center outline-none w-full transition-colors pb-0.5"
+          />
         </div>
 
         <div className="flex gap-2">
-          <button disabled={true} className="p-2 rounded-xl flex items-center gap-2 transition-all bg-slate-950 text-slate-700 cursor-not-allowed">
+          <button onClick={goNext} disabled={!hasNext} className={`p-2 rounded-xl flex items-center gap-2 transition-all ${hasNext ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-slate-950 text-slate-700 cursor-not-allowed'}`}>
             <span className="text-[10px] font-black uppercase tracking-widest hidden md:inline">Next</span> <ChevronRight size={20} />
           </button>
+          {!hasNext && (
+            <button onClick={handleNewDraw} className="bg-amber-600 hover:bg-amber-500 text-white p-2 md:px-4 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all shadow-lg ml-4">
+              <Plus size={16}/> <span className="hidden md:inline">Create Next</span>
+            </button>
+          )}
         </div>
       </div>
       
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
-        {/* LEFT NAV */}
         <div className="lg:col-span-4 space-y-4">
           <button 
             onClick={() => setReviewingContractId('summary')}
@@ -365,10 +484,8 @@ export default function DrawsManager() {
           ))}
         </div>
 
-        {/* RIGHT CONTENT */}
         <div className="lg:col-span-8">
           
-          {/* VIEW 1: OWNER MASTER */}
           {reviewingContractId === 'summary' && (
             <div className="bg-slate-900 border border-slate-800 rounded-[40px] shadow-2xl overflow-hidden animate-in fade-in duration-300">
               
@@ -378,6 +495,9 @@ export default function DrawsManager() {
                   <p className="text-xs font-bold text-blue-400 uppercase tracking-widest">Lender Summary for Draw #{activeDraw?.draw_number}</p>
                 </div>
                 <div className="flex gap-3">
+                  <button onClick={handleExportPDF} className="bg-slate-800 text-white px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-700 transition-all flex items-center gap-2 border border-slate-700">
+                    <Printer size={16}/> Export PDF
+                  </button>
                   <button onClick={handleAddSoftCost} className="bg-slate-800 text-white px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-700 transition-all flex items-center gap-2 border border-slate-700">
                     <Plus size={16}/> Add Soft Cost
                   </button>
@@ -387,9 +507,10 @@ export default function DrawsManager() {
                 </div>
               </div>
 
+              {/* NEW OWNER EQUITY WIDGET SECTION */}
               {drawSummary && (
                 <div className="p-8 border-b border-slate-800 bg-slate-950/50">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-inner">
                       <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Gross Billed to Date</p>
                       <p className="text-2xl font-black text-white">{formatMoney(projectTotals.verified)}</p>
@@ -398,9 +519,25 @@ export default function DrawsManager() {
                       <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1">Statutory Holdback</p>
                       <p className="text-2xl font-black text-amber-500">{formatMoney(projectTotals.holdback)}</p>
                     </div>
+                    
+                    {/* OWNER EQUITY DEDUCTION INPUT */}
+                    <div className="bg-amber-950/20 border border-amber-900/30 rounded-2xl p-4 shadow-inner relative">
+                      <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1">Less: Owner Equity</p>
+                      <div className="relative mt-2">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-amber-500/50 font-bold">$</span>
+                        <input 
+                          type="number" 
+                          value={ownerEquityInput === '0' ? '' : ownerEquityInput} 
+                          placeholder="0.00"
+                          onChange={(e) => setOwnerEquityInput(e.target.value)} 
+                          className="w-full bg-slate-950 border border-amber-900/50 py-2 pl-7 pr-3 rounded-lg font-black text-amber-400 outline-none focus:border-amber-500 transition-all text-xl" 
+                        />
+                      </div>
+                    </div>
+
                     <div className="bg-blue-950/20 border border-blue-900/30 rounded-2xl p-5 shadow-inner">
                       <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Net Lender Advance</p>
-                      <p className="text-2xl font-black text-blue-400">{formatMoney(projectTotals.net)}</p>
+                      <p className="text-2xl font-black text-blue-400">{formatMoney(drawSummary.net_lender_advance)}</p>
                     </div>
                   </div>
                 </div>
@@ -420,7 +557,6 @@ export default function DrawsManager() {
                   </thead>
                   <tbody className="divide-y divide-slate-800/50">
                     
-                    {/* HARD COSTS / TRADES */}
                     {tradeBills.trades.map(trade => (
                       <Fragment key={trade.id}>
                         <tr className={`hover:bg-slate-800/30 transition-colors cursor-pointer ${expandedTrades[trade.id] ? 'bg-slate-800/20' : ''}`} onClick={() => toggleTradeExpansion(trade.id)}>
@@ -454,7 +590,10 @@ export default function DrawsManager() {
                                   <tbody>
                                     {trade.lines.map((line: any) => (
                                       <tr key={line.id} className="border-b border-slate-800/30 last:border-0">
-                                        <td className="py-3 font-bold text-slate-300">{line.desc}</td>
+                                        <td className="py-3 font-bold text-slate-300">
+                                          {line.desc}
+                                          {line.isCO && <span className="ml-2 text-[8px] bg-emerald-950/50 text-emerald-500 px-1 py-0.5 rounded border border-emerald-900/50">CO</span>}
+                                        </td>
                                         <td className="py-3 text-right text-slate-500">{formatMoney(line.scheduled)}</td>
                                         <td className="py-3 text-right text-slate-500">{formatMoney(line.previous)}</td>
                                         <td className="py-3 text-right font-bold text-slate-300">{formatMoney(line.verified)}</td>
@@ -469,7 +608,7 @@ export default function DrawsManager() {
                       </Fragment>
                     ))}
 
-                    {/* SOFT COSTS / GC FEES */}
+                    {/* SOFT COSTS */}
                     {tradeBills.softCosts.map(sc => (
                       <tr key={sc.id} className="bg-slate-900/50 border-t-2 border-slate-800 hover:bg-slate-800/30">
                         <td className="p-5">
@@ -506,7 +645,6 @@ export default function DrawsManager() {
             </div>
           )}
 
-          {/* VIEW 2: TRADE FIELD ASSESSMENT */}
           {reviewingContractId !== 'summary' && reviewingTrade && (
             <div className="bg-slate-900 border border-slate-800 rounded-[40px] shadow-2xl overflow-hidden sticky top-8 animate-in fade-in duration-300">
               <div className="p-8 border-b border-slate-800 bg-slate-950/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
@@ -521,7 +659,6 @@ export default function DrawsManager() {
                 </div>
 
                 <div className="flex flex-col gap-2 w-full md:w-auto">
-                  {/* UPLOAD BUTTONS */}
                   <div className="flex gap-2 w-full">
                     <div className="relative w-1/2">
                       <input type="file" accept=".pdf,.jpg" onChange={(e) => handleUploadDocument(e, 'invoice')} ref={invoiceInputRef} className="hidden" />
@@ -551,38 +688,50 @@ export default function DrawsManager() {
                     <tr className="bg-slate-900 border-b border-slate-800 text-[10px] font-black uppercase tracking-widest text-slate-500">
                       <th className="p-6">SOV Description</th>
                       <th className="p-6 text-right border-l border-slate-800/50">Orig. Contract</th>
-                      <th className="p-6 text-right">Apprv. COs</th>
+                      <th className="p-6 text-right text-emerald-400/70">Apprv. COs</th>
                       <th className="p-6 text-right text-white">Revised Budget</th>
                       
-                      <th className="p-6 pr-8 bg-amber-950/10 border-l border-amber-900/30 text-amber-500 text-right">Sub Claim ($)</th>
-                      <th className="p-6 pl-8 bg-blue-950/10 border-l border-blue-900/30 text-blue-400 text-right">Super Verified ($)</th>
+                      <th className="p-6 text-center bg-amber-950/10 border-l border-amber-900/30 text-amber-500">Sub Claim %</th>
+                      <th className="p-6 pr-8 bg-amber-950/10 border-amber-900/30 text-amber-500 text-right">Sub Claim ($)</th>
+                      
+                      <th className="p-6 text-center bg-blue-950/10 border-l border-blue-900/30 text-blue-400">GC Verif %</th>
+                      <th className="p-6 pl-8 bg-blue-950/10 border-blue-900/30 text-blue-400 text-right">Super Verified ($)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/50">
                     {reviewingTrade.lines.map((line: any) => {
                       const isOverbilled = line.verified > line.claimed;
+                      const percentClaimed = line.scheduled > 0 ? Number(((line.claimed / line.scheduled) * 100).toFixed(1)) : 0;
+                      const verifiedPercent = line.scheduled > 0 ? Number(((line.verified / line.scheduled) * 100).toFixed(1)) : 0;
 
                       return (
                         <tr key={line.id} className="hover:bg-slate-800/20 transition-colors">
-                          <td className="p-6"><p className="font-bold text-white text-sm">{line.desc}</p></td>
+                          <td className="p-6">
+                            <p className="font-bold text-white text-sm">
+                              {line.desc} 
+                              {line.isCO && <span className="ml-2 text-[8px] bg-emerald-950/50 text-emerald-500 px-1 py-0.5 rounded border border-emerald-900/50 align-middle">CO</span>}
+                            </p>
+                          </td>
                           
                           <td className="p-6 text-right font-bold text-slate-400 border-l border-slate-800/50">{formatMoney(line.original)}</td>
                           
-                          {/* EDITABLE CHANGE ORDERS */}
-                          <td className="p-4 align-middle">
-                            <div className="relative flex justify-end">
-                              <span className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-500/50 font-bold">$</span>
-                              <input type="number" value={line.cos === 0 ? '' : line.cos} placeholder="0.00"
-                                onChange={(e) => handleUpdateLine(line.dbId, 'approved_changes', parseFloat(e.target.value) || 0)} 
-                                className="w-32 bg-slate-950 border border-slate-700 py-2 pl-8 pr-3 rounded-lg font-black text-right text-emerald-400 outline-none focus:border-emerald-500" 
-                              />
-                            </div>
+                          <td className="p-6 text-right font-black text-emerald-400">
+                            {formatMoney(line.cos)}
                           </td>
 
                           <td className="p-6 text-right font-black text-white">{formatMoney(line.scheduled)}</td>
                           
-                          {/* SUB CLAIM */}
-                          <td className="p-4 pr-6 bg-amber-950/10 border-l border-amber-900/30 align-middle">
+                          <td className="p-4 bg-amber-950/10 border-l border-amber-900/30 align-middle">
+                            <div className="flex items-center justify-center gap-1">
+                              <input type="number" value={percentClaimed === 0 ? '' : percentClaimed} placeholder="0"
+                                onChange={(e) => handleUpdateLine(line.dbId, 'claimed_amount', Number(((parseFloat(e.target.value) || 0) / 100) * line.scheduled))} 
+                                className="w-16 bg-slate-950 border border-slate-700 p-3 rounded-xl font-black text-center text-amber-500 outline-none focus:border-amber-500" 
+                              />
+                              <span className="text-slate-500 font-bold text-xs">%</span>
+                            </div>
+                          </td>
+
+                          <td className="p-4 pr-6 bg-amber-950/10 align-middle">
                             <div className="relative flex justify-end">
                               <span className="absolute left-6 top-1/2 -translate-y-1/2 text-amber-500/50 font-bold">$</span>
                               <input type="number" value={line.claimed === 0 ? '' : line.claimed} placeholder="0.00"
@@ -592,8 +741,17 @@ export default function DrawsManager() {
                             </div>
                           </td>
                           
-                          {/* GC VERIFIED */}
-                          <td className="p-4 pl-6 bg-blue-950/10 border-l border-blue-900/30 align-middle">
+                          <td className="p-4 bg-blue-950/10 border-l border-blue-900/30 align-middle">
+                            <div className="flex items-center justify-center gap-1">
+                              <input type="number" value={verifiedPercent === 0 ? '' : verifiedPercent} placeholder="0"
+                                onChange={(e) => handleUpdateLine(line.dbId, 'current_gross_billed', Number(((parseFloat(e.target.value) || 0) / 100) * line.scheduled))} 
+                                className={`w-16 bg-slate-950 border p-3 rounded-xl font-black text-center outline-none ${isOverbilled ? 'border-red-900/50 text-red-400' : 'border-slate-700 text-blue-400 focus:border-blue-500'}`} 
+                              />
+                              <span className="text-slate-500 font-bold text-xs">%</span>
+                            </div>
+                          </td>
+
+                          <td className="p-4 pl-6 bg-blue-950/10 align-middle">
                             <div className="relative flex justify-end">
                               <span className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-500 font-bold">$</span>
                               <input type="number" value={line.verified === 0 ? '' : line.verified} placeholder="0.00"
