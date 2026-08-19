@@ -357,7 +357,7 @@ export default function ContractsManager() {
         </div>
       )}
 
-      <FinancialHeader id={id} active="contracts" />
+     <FinancialHeader id={id as string} active="contracts" />
       
       <div className="flex justify-between items-center mb-8">
         <h2 className="text-3xl font-black uppercase italic tracking-tighter">Awarded <span className="text-blue-500">Contracts</span></h2>
