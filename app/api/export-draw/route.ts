@@ -15,8 +15,7 @@ export async function POST(request: Request) {
   try {
     const data = await request.json();
     
-    // FETCH ATTACHMENTS FROM PAYLOAD (Fixing the disconnect)
-    const { projectId, drawNumber, companyName, projectName, lenderName, lenderAddress, attachments } = data;
+    const { projectId, drawNumber, companyName, projectName, lenderName, lenderAddress, attachments, drawData } = data;
 
     let { data: drawRec } = await supabase.from('project_draws').select('*').eq('project_id', projectId).eq('draw_number', drawNumber).maybeSingle();
     if (!drawRec) {
@@ -59,18 +58,20 @@ export async function POST(request: Request) {
         if (isApprovedCO) approvedChanges += Number(sov.scheduled_value || 0);
     });
 
+    // Add Soft Costs into the Master Sum
+    const softCosts = drawData?.softCostList || [];
+    softCosts.forEach((sc: any) => {
+        originalSum += Number(sc.scheduled || 0);
+    });
+
     const revisedSum = originalSum + approvedChanges;
 
-    let sumPrev = 0;
-    let sumCurrent = 0;
-
-    (prevDrawLines || []).forEach(line => sumPrev += Number(line.verified_amount || 0));
-    (currentDrawLines || []).forEach(line => sumCurrent += Number(line.verified_amount || 0));
-
-    const totalCompleted = sumPrev + sumCurrent;
-    const holdback = totalCompleted * 0.10; 
-    const previousBilling = sumPrev - (sumPrev * 0.10); 
-    const netDue = (totalCompleted - holdback) - previousBilling; 
+    // Use payload data for accurate tracking
+    const totalCompleted = drawData.totalCompleted || 0;
+    const holdback = drawData.holdback || 0; 
+    const previousBilling = drawData.previous || 0; 
+    const ownerEquity = drawData.ownerEquity || 0; // NEW: Grab Owner Equity
+    const netDue = drawData.net || 0; 
 
     const formatMoney = (num: number) => '$ ' + (num || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     
@@ -80,7 +81,7 @@ export async function POST(request: Request) {
     const displayLenderAddress = lenderAddress || 'Lender Address TBD';
 
     // ==========================================
-    // PHASE 1: COVER SHEET
+    // PHASE 1: COVER SHEET (G702)
     // ==========================================
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
     
@@ -103,7 +104,8 @@ export async function POST(request: Request) {
     doc.text(`Draw Period: ${drawDate}`, 110, 61);
     doc.text(`Draw Number: ${drawRec.draw_number}`, 110, 67);
 
-    doc.setDrawColor(15, 23, 42).setLineWidth(0.5).rect(15, 78, 185, 120); 
+    // Box Height increased slightly to fit Equity Line
+    doc.setDrawColor(15, 23, 42).setLineWidth(0.5).rect(15, 78, 185, 130); 
     doc.setFillColor(240, 244, 248).rect(15, 78, 185, 12, 'F');
     doc.setFont('helvetica', 'bold').setFontSize(11).text('FINANCIAL SUMMARY', 20, 86);
     
@@ -116,26 +118,29 @@ export async function POST(request: Request) {
         y += 10;
     };
 
-    addLine('1. Original Contract Sum', originalSum);
+    addLine('1. Original Contract Sum (Inc. Soft Costs)', originalSum);
     addLine('2. Net Change Orders', approvedChanges);
     addLine('3. Contract Sum to Date', revisedSum, true);
     doc.setDrawColor(200, 200, 200).line(20, y - 7, 190, y - 7);
     
     addLine('4. Total Completed to Date', totalCompleted);
-    addLine('5. Less 10% Retainage', holdback);
+    addLine('5. Less Retainage / Holdback', holdback);
     addLine('6. Total Earned Less Retainage', totalCompleted - holdback, true);
     addLine('7. Less Previous Certificates', previousBilling);
+    
+    // NEW: Inject Owner Equity Deduction Line
+    addLine('8. Less Owner Equity Applied', ownerEquity);
     doc.setDrawColor(200, 200, 200).line(20, y - 7, 190, y - 7);
     
-    addLine('8. CURRENT PAYMENT DUE (PRE-TAX)', netDue, true);
-    addLine('9. 13% HST', netDue * 0.13);
+    addLine('9. CURRENT PAYMENT DUE (PRE-TAX)', netDue, true);
+    addLine('10. 13% HST', netDue * 0.13);
     
     doc.setFillColor(15, 23, 42).rect(15, y - 6, 185, 12, 'F');
     doc.setTextColor(255, 255, 255);
-    addLine('10. TOTAL FUNDING REQUESTED', netDue * 1.13, true);
+    addLine('11. TOTAL FUNDING REQUESTED', netDue * 1.13, true);
 
     // ==========================================
-    // PHASE 2: CONTINUATION SHEET 
+    // PHASE 2: CONTINUATION SHEET (G703)
     // ==========================================
     doc.addPage();
     doc.setTextColor(0, 0, 0);
@@ -143,6 +148,7 @@ export async function POST(request: Request) {
     
     let sumBase = 0, sumCOs = 0, sumRevised = 0, sumPrevClaim = 0, sumCurrentClaim = 0, sumTotalClaim = 0, sumBalance = 0;
 
+    // Map Standard Trades
     const tableBody = ((costCodes || []).map(code => {
         const matchingSovs = (sovLines || []).filter(s => s.cost_code_id === code.id);
         
@@ -158,8 +164,8 @@ export async function POST(request: Request) {
             if (isBaseLine) baseCommitted += Number(sov.scheduled_value || 0);
             if (isApprovedCO) approvedCOs += Number(sov.scheduled_value || 0);
 
-            (prevDrawLines || []).filter(d => d.sov_line_id === sov.id).forEach(b => prevClaim += Number(b.verified_amount || 0));
-            (currentDrawLines || []).filter(d => d.sov_line_id === sov.id).forEach(b => currentClaim += Number(b.verified_amount || 0));
+            (prevDrawLines || []).filter(d => d.sov_line_id === sov.id).forEach(b => prevClaim += Number(b.verified_amount || b.current_gross_billed || 0));
+            (currentDrawLines || []).filter(d => d.sov_line_id === sov.id).forEach(b => currentClaim += Number(b.verified_amount || b.current_gross_billed || 0));
         });
         
         const revisedContract = baseCommitted + approvedCOs;
@@ -190,6 +196,35 @@ export async function POST(request: Request) {
         ];
     }).filter((row): row is string[] => row !== null)); 
 
+    // Extract & Map Soft Costs at the bottom of the SOV table
+    softCosts.forEach((sc: any) => {
+        const revisedContract = Number(sc.scheduled || 0);
+        const prevClaim = Number(sc.previous || 0);
+        const currentClaim = Number(sc.verified || 0);
+        const totalClaim = prevClaim + currentClaim;
+        const balance = revisedContract - totalClaim;
+
+        sumBase += revisedContract; // Soft costs usually don't have COs, so all in Base
+        sumRevised += revisedContract;
+        sumPrevClaim += prevClaim;
+        sumCurrentClaim += currentClaim;
+        sumTotalClaim += totalClaim;
+        sumBalance += balance;
+
+        tableBody.push([
+            'SOFT',
+            sc.desc,
+            formatMoney(revisedContract),
+            formatMoney(0),
+            formatMoney(revisedContract),
+            formatMoney(prevClaim), 
+            formatMoney(currentClaim),
+            formatMoney(totalClaim), 
+            revisedContract > 0 ? Math.round((totalClaim / revisedContract) * 100) + '%' : '0%',
+            formatMoney(balance)
+        ]);
+    });
+
     const totalPct = sumRevised > 0 ? Math.round((sumTotalClaim / sumRevised) * 100) + '%' : '0%';
 
     autoTable(doc, {
@@ -214,13 +249,10 @@ export async function POST(request: Request) {
     const coverPages = await finalPdf.copyPages(coverDoc, coverDoc.getPageIndices());
     coverPages.forEach(p => finalPdf.addPage(p));
 
-    // A helper to safely download and embed any file type
     const embedFile = async (link: string | null | undefined) => {
         if (!link || typeof link !== 'string') return;
         
         let finalUrl = link;
-        
-        // Fix the "Missing HTTP" Path Trap
         if (!finalUrl.startsWith('http')) {
             const { data } = supabase.storage.from('project_documents').getPublicUrl(finalUrl);
             finalUrl = data.publicUrl;
@@ -228,7 +260,7 @@ export async function POST(request: Request) {
 
         try {
             const res = await fetch(finalUrl);
-            if (!res.ok) return; // Fails gracefully, doesn't crash the server
+            if (!res.ok) return; 
             
             const bytes = await res.arrayBuffer();
             const lowerLink = finalUrl.toLowerCase();
@@ -240,7 +272,6 @@ export async function POST(request: Request) {
                 const dims = image.scaleToFit(width - 40, height - 40);
                 page.drawImage(image, { x: width / 2 - dims.width / 2, y: height / 2 - dims.height / 2, width: dims.width, height: dims.height });
             } else {
-                // Assume PDF for everything else
                 const externalPdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
                 const pages = await finalPdf.copyPages(externalPdf, externalPdf.getPageIndices());
                 pages.forEach(p => finalPdf.addPage(p));
@@ -250,20 +281,16 @@ export async function POST(request: Request) {
         }
     };
 
-    // Gather links with fallback to database if the payload fails
     const statDecLink = attachments?.statDec || drawRec?.stat_dec_link;
     const invoiceLinks = attachments?.invoices || (currentDrawLines || []).map((d: any) => d.invoice_link);
     const extraLinks = attachments?.extraDocs || (extraDocs || []).map((d: any) => d.file_link || d.url || d.file_url);
 
-    // 1. Embed Stat Dec
     await embedFile(statDecLink);
 
-    // 2. Embed Invoices (Deduplicated)
     for (const link of new Set(invoiceLinks.filter(Boolean))) {
         await embedFile(link as string);
     }
 
-    // 3. Embed Extra Documents (Deduplicated)
     for (const link of new Set(extraLinks.filter(Boolean))) {
         await embedFile(link as string);
     }

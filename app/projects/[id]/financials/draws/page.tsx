@@ -94,20 +94,55 @@ export default function DrawsManager() {
       
       const currentBilled = allBilledLines?.filter(b => b.draw_id === summaryData.id) || []
       
-      const missingLines = lines?.filter(l => !currentBilled.some((b: any) => b.sov_line_id === l.id)) || []
-      if (missingLines.length > 0) {
-        const seed = missingLines.map(l => ({ 
+      // 1. Find missing TRADE lines
+      const missingTrades = lines?.filter(l => !currentBilled.some((b: any) => b.sov_line_id === l.id && !b.is_soft_cost)) || []
+      
+      // 2. Find missing SOFT COSTS (Carry them over from previous draws automatically)
+      const pastSoftCosts = allBilledLines?.filter(b => b.is_soft_cost && b.draw_id !== summaryData.id) || [];
+      const uniqueSoftCostMap = new Map();
+      pastSoftCosts.forEach(sc => {
+        if (!uniqueSoftCostMap.has(sc.description)) {
+          uniqueSoftCostMap.set(sc.description, sc);
+        }
+      });
+      
+      const missingSoftCosts = Array.from(uniqueSoftCostMap.values()).filter(
+        (psc: any) => !currentBilled.some((b: any) => b.is_soft_cost && b.description === psc.description)
+      );
+
+      const fullSeed = [];
+      
+      if (missingTrades.length > 0) {
+        fullSeed.push(...missingTrades.map(l => ({ 
           draw_id: summaryData.id, 
           sov_line_id: l.id, 
           sov_code: l.cost_code || '00-000',
           description: l.description || 'Line Item',
           original_budget: l.scheduled_value || 0,
+          approved_changes: 0,
           claimed_amount: 0, 
           current_gross_billed: 0,
           holdback_rate: 0.10,
           is_soft_cost: false
-        }))
-        await supabase.from('draw_line_items').insert(seed)
+        })));
+      }
+
+      if (missingSoftCosts.length > 0) {
+        fullSeed.push(...missingSoftCosts.map((sc: any) => ({
+          draw_id: summaryData.id,
+          sov_code: sc.sov_code || 'SOFT',
+          description: sc.description,
+          original_budget: sc.original_budget || 0,
+          approved_changes: sc.approved_changes || 0,
+          claimed_amount: 0,
+          current_gross_billed: 0,
+          holdback_rate: sc.holdback_rate || 0,
+          is_soft_cost: true
+        })));
+      }
+
+      if (fullSeed.length > 0) {
+        await supabase.from('draw_line_items').insert(fullSeed)
         const r = await supabase.from('draw_line_items').select('*')
         allBilledLines = r.data || []
       }
@@ -152,7 +187,6 @@ export default function DrawsManager() {
     }
   }
 
-  // --- NEW: DELETE DRAW HANDLER ---
   const handleDeleteDraw = async () => {
     if (!activeDraw) return;
     const confirmDelete = window.confirm(`Are you sure you want to permanently delete Draw #${activeDraw.draw_number}? This cannot be undone.`);
@@ -173,7 +207,6 @@ export default function DrawsManager() {
     setSaving(false);
   }
 
-  // --- NEW: DELETE SOFT COST HANDLER ---
   const handleDeleteSoftCost = async (dbId: string) => {
     if (!window.confirm("Remove this soft cost?")) return;
     setSaving(true);
@@ -243,7 +276,8 @@ export default function DrawsManager() {
     })
 
     const processedSoftCosts = drawLines.filter(d => d.draw_id === drawSummary.id && d.is_soft_cost).map(sc => {
-      const pastLines = drawLines.filter(d => d.draw_id !== drawSummary.id && d.sov_code === sc.sov_code)
+      // MATCH STRICTLY BY DESCRIPTION TO PREVENT GHOST DATA CARRYOVER
+      const pastLines = drawLines.filter(d => d.draw_id !== drawSummary.id && d.is_soft_cost && d.description === sc.description)
       const prevVer = pastLines.reduce((sum, l) => sum + Number(l.current_gross_billed || 0), 0)
       
       const scheduled = Number(sc.original_budget || 0) + Number(sc.approved_changes || 0)
@@ -475,7 +509,6 @@ export default function DrawsManager() {
           </button>
           {!hasNext && (
             <div className="flex gap-2">
-              {/* NEW DELETE DRAW BUTTON */}
               <button onClick={handleDeleteDraw} className="bg-red-950/50 hover:bg-red-900 text-red-500 p-2 md:px-4 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all shadow-lg border border-red-900/50">
                 <Trash2 size={16}/> <span className="hidden md:inline">Delete Draw</span>
               </button>
@@ -659,7 +692,6 @@ export default function DrawsManager() {
                             />
                           </div>
                         </td>
-                        {/* EDITABLE HOLDBACK % FOR SOFT COSTS */}
                         <td className="p-5 border-l border-slate-800/50 align-middle">
                            <div className="flex items-center justify-end gap-1">
                               <input type="number" value={sc.rate * 100} placeholder="0"
