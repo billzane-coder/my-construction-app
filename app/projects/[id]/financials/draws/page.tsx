@@ -94,10 +94,8 @@ export default function DrawsManager() {
       
       const currentBilled = allBilledLines?.filter(b => b.draw_id === summaryData.id) || []
       
-      // 1. Find missing TRADE lines
       const missingTrades = lines?.filter(l => !currentBilled.some((b: any) => b.sov_line_id === l.id && !b.is_soft_cost)) || []
       
-      // 2. Find missing SOFT COSTS (Carry them over from previous draws automatically)
       const pastSoftCosts = allBilledLines?.filter(b => b.is_soft_cost && b.draw_id !== summaryData.id) || [];
       const uniqueSoftCostMap = new Map();
       pastSoftCosts.forEach(sc => {
@@ -236,7 +234,7 @@ export default function DrawsManager() {
         
         const original = sov.change_order_id ? 0 : Number(sov.scheduled_value || 0)
         const cos = sov.change_order_id ? Number(sov.scheduled_value || 0) : 0
-        const sched = original + cos // Revised Budget
+        const sched = original + cos 
         
         const claim = Number(currentLine?.claimed_amount || 0)
         const verif = Number(currentLine?.current_gross_billed || 0)
@@ -276,7 +274,6 @@ export default function DrawsManager() {
     })
 
     const processedSoftCosts = drawLines.filter(d => d.draw_id === drawSummary.id && d.is_soft_cost).map(sc => {
-      // MATCH STRICTLY BY DESCRIPTION TO PREVENT GHOST DATA CARRYOVER
       const pastLines = drawLines.filter(d => d.draw_id !== drawSummary.id && d.is_soft_cost && d.description === sc.description)
       const prevVer = pastLines.reduce((sum, l) => sum + Number(l.current_gross_billed || 0), 0)
       
@@ -386,10 +383,11 @@ export default function DrawsManager() {
       const fileName = `${type}_${reviewingTrade.id}_${Date.now()}.${fileExt}`
       const filePath = `${id}/${fileName}`
       
-      const { error: uploadError } = await supabase.storage.from('project-files').upload(filePath, file)
+      // FIXED BUCKET NAME TO PROJECT_DOCUMENTS SO IT MATCHES YOUR BACKEND PDF ROUTE
+      const { error: uploadError } = await supabase.storage.from('project_documents').upload(filePath, file)
       if (uploadError) throw uploadError
       
-      const { data: { publicUrl } } = supabase.storage.from('project-files').getPublicUrl(filePath)
+      const { data: { publicUrl } } = supabase.storage.from('project_documents').getPublicUrl(filePath)
       
       const firstLineDbId = reviewingTrade.lines[0]?.dbId
       if (firstLineDbId) {
@@ -541,10 +539,15 @@ export default function DrawsManager() {
               <div className="flex justify-between items-start mb-4">
                 <div>
                   <h4 className={`text-lg font-black uppercase italic leading-none mb-1 ${reviewingContractId === trade.id ? 'text-amber-400' : 'text-white'}`}>{trade.company}</h4>
+                  
+                  {/* NEW VISUAL INDICATORS FOR ATTACHED DOCUMENTS */}
                   <div className="flex items-center gap-2 mt-2">
                     {trade.status === 'No Claim' && <span className="px-2 py-0.5 bg-slate-800 text-slate-500 text-[8px] font-black uppercase rounded">No Claim</span>}
                     {trade.status === 'Pending Review' && <span className="px-2 py-0.5 bg-amber-950 text-amber-500 border border-amber-900/50 text-[8px] font-black uppercase rounded animate-pulse">Pending Review</span>}
                     {trade.status.includes('Verified') && <span className="px-2 py-0.5 bg-emerald-950/50 text-emerald-500 border border-emerald-900/50 text-[8px] font-black uppercase rounded">Verified</span>}
+                    
+                    {trade.invoiceUrl && <Receipt size={14} className="text-blue-400 ml-2" title="Invoice Attached"/>}
+                    {trade.tradeSovUrl && <FileSpreadsheet size={14} className="text-indigo-400" title="SOV Attached"/>}
                   </div>
                 </div>
                 {trade.status === 'Pending Review' ? <Clock size={20} className="text-amber-500" /> : <CheckCircle2 size={20} className="text-emerald-500" />}
@@ -629,7 +632,12 @@ export default function DrawsManager() {
                           <td className="p-5 flex items-center gap-3">
                             <div className="text-slate-500">{expandedTrades[trade.id] ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</div>
                             <div>
-                              <p className="font-bold text-white text-sm">{trade.company}</p>
+                              <div className="flex items-center gap-2">
+                                <p className="font-bold text-white text-sm">{trade.company}</p>
+                                {/* NEW VISUAL INDICATORS FOR MASTER TABLE */}
+                                {trade.invoiceUrl && <Receipt size={14} className="text-blue-400" title="Invoice Attached"/>}
+                                {trade.tradeSovUrl && <FileSpreadsheet size={14} className="text-indigo-400" title="SOV Attached"/>}
+                              </div>
                               <p className="text-[10px] font-black text-slate-500 uppercase mt-1">Hard Cost</p>
                             </div>
                           </td>
@@ -675,7 +683,6 @@ export default function DrawsManager() {
                       </Fragment>
                     ))}
 
-                    {/* SOFT COSTS */}
                     {tradeBills.softCosts.map(sc => (
                       <tr key={sc.id} className="bg-slate-900/50 border-t-2 border-slate-800 hover:bg-slate-800/30">
                         <td className="p-5">

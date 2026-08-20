@@ -58,7 +58,6 @@ export async function POST(request: Request) {
         if (isApprovedCO) approvedChanges += Number(sov.scheduled_value || 0);
     });
 
-    // Add Soft Costs into the Master Sum
     const softCosts = drawData?.softCostList || [];
     softCosts.forEach((sc: any) => {
         originalSum += Number(sc.scheduled || 0);
@@ -66,11 +65,10 @@ export async function POST(request: Request) {
 
     const revisedSum = originalSum + approvedChanges;
 
-    // Use payload data for accurate tracking
     const totalCompleted = drawData.totalCompleted || 0;
     const holdback = drawData.holdback || 0; 
     const previousBilling = drawData.previous || 0; 
-    const ownerEquity = drawData.ownerEquity || 0; // NEW: Grab Owner Equity
+    const ownerEquity = drawData.ownerEquity || 0; 
     const netDue = drawData.net || 0; 
 
     const formatMoney = (num: number) => '$ ' + (num || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -104,8 +102,8 @@ export async function POST(request: Request) {
     doc.text(`Draw Period: ${drawDate}`, 110, 61);
     doc.text(`Draw Number: ${drawRec.draw_number}`, 110, 67);
 
-    // Box Height increased slightly to fit Equity Line
-    doc.setDrawColor(15, 23, 42).setLineWidth(0.5).rect(15, 78, 185, 130); 
+    // Box Height increased to accommodate the HST breakdown
+    doc.setDrawColor(15, 23, 42).setLineWidth(0.5).rect(15, 78, 185, 140); 
     doc.setFillColor(240, 244, 248).rect(15, 78, 185, 12, 'F');
     doc.setFont('helvetica', 'bold').setFontSize(11).text('FINANCIAL SUMMARY', 20, 86);
     
@@ -127,17 +125,20 @@ export async function POST(request: Request) {
     addLine('5. Less Retainage / Holdback', holdback);
     addLine('6. Total Earned Less Retainage', totalCompleted - holdback, true);
     addLine('7. Less Previous Certificates', previousBilling);
-    
-    // NEW: Inject Owner Equity Deduction Line
     addLine('8. Less Owner Equity Applied', ownerEquity);
     doc.setDrawColor(200, 200, 200).line(20, y - 7, 190, y - 7);
     
-    addLine('9. CURRENT PAYMENT DUE (PRE-TAX)', netDue, true);
-    addLine('10. 13% HST', netDue * 0.13);
+    addLine('9. NET PROGRESS PAYMENT (PRE-TAX)', netDue, true);
+    addLine('10. Applicable 13% HST', netDue * 0.13);
+    addLine('11. TOTAL AMOUNT DUE TO GC (INCL. HST)', netDue * 1.13, true);
     
     doc.setFillColor(15, 23, 42).rect(15, y - 6, 185, 12, 'F');
     doc.setTextColor(255, 255, 255);
-    addLine('11. TOTAL FUNDING REQUESTED', netDue * 1.13, true);
+    addLine('12. NET LENDER ADVANCE REQUESTED', netDue, true);
+
+    doc.setTextColor(100, 116, 139);
+    doc.setFontSize(8).setFont('helvetica', 'italic');
+    doc.text(`* Note: The 13% HST amount of $${(netDue * 0.13).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} is excluded from the lender request and will be funded by the Owner.`, 15, y + 6);
 
     // ==========================================
     // PHASE 2: CONTINUATION SHEET (G703)
@@ -147,9 +148,39 @@ export async function POST(request: Request) {
     doc.setFontSize(16).setFont('helvetica', 'bold').text('CONTINUATION SHEET (MASTER SOV)', 15, 20);
     
     let sumBase = 0, sumCOs = 0, sumRevised = 0, sumPrevClaim = 0, sumCurrentClaim = 0, sumTotalClaim = 0, sumBalance = 0;
+    const tableBody: any[] = [];
 
-    // Map Standard Trades
-    const tableBody = ((costCodes || []).map(code => {
+    // 1. ADD SOFT COSTS FIRST (At the top of the table)
+    softCosts.forEach((sc: any) => {
+        const revisedContract = Number(sc.scheduled || 0);
+        const prevClaim = Number(sc.previous || 0);
+        const currentClaim = Number(sc.verified || 0);
+        const totalClaim = prevClaim + currentClaim;
+        const balance = revisedContract - totalClaim;
+
+        sumBase += revisedContract; 
+        sumRevised += revisedContract;
+        sumPrevClaim += prevClaim;
+        sumCurrentClaim += currentClaim;
+        sumTotalClaim += totalClaim;
+        sumBalance += balance;
+
+        tableBody.push([
+            'SOFT',
+            sc.desc,
+            formatMoney(revisedContract),
+            formatMoney(0),
+            formatMoney(revisedContract),
+            formatMoney(prevClaim), 
+            formatMoney(currentClaim),
+            formatMoney(totalClaim), 
+            revisedContract > 0 ? Math.round((totalClaim / revisedContract) * 100) + '%' : '0%',
+            formatMoney(balance)
+        ]);
+    });
+
+    // 2. ADD TRADE CONTRACTS SECOND (Below Soft Costs)
+    (costCodes || []).forEach(code => {
         const matchingSovs = (sovLines || []).filter(s => s.cost_code_id === code.id);
         
         let baseCommitted = 0;
@@ -172,7 +203,7 @@ export async function POST(request: Request) {
         const totalClaim = prevClaim + currentClaim;
         const balance = revisedContract - totalClaim;
 
-        if (revisedContract === 0 && totalClaim === 0) return null; 
+        if (revisedContract === 0 && totalClaim === 0) return; 
         
         sumBase += baseCommitted;
         sumCOs += approvedCOs;
@@ -182,40 +213,11 @@ export async function POST(request: Request) {
         sumTotalClaim += totalClaim;
         sumBalance += balance;
 
-        return [
+        tableBody.push([
             code.code,
             code.name,
             formatMoney(baseCommitted),
             formatMoney(approvedCOs),
-            formatMoney(revisedContract),
-            formatMoney(prevClaim), 
-            formatMoney(currentClaim),
-            formatMoney(totalClaim), 
-            revisedContract > 0 ? Math.round((totalClaim / revisedContract) * 100) + '%' : '0%',
-            formatMoney(balance)
-        ];
-    }).filter((row): row is string[] => row !== null)); 
-
-    // Extract & Map Soft Costs at the bottom of the SOV table
-    softCosts.forEach((sc: any) => {
-        const revisedContract = Number(sc.scheduled || 0);
-        const prevClaim = Number(sc.previous || 0);
-        const currentClaim = Number(sc.verified || 0);
-        const totalClaim = prevClaim + currentClaim;
-        const balance = revisedContract - totalClaim;
-
-        sumBase += revisedContract; // Soft costs usually don't have COs, so all in Base
-        sumRevised += revisedContract;
-        sumPrevClaim += prevClaim;
-        sumCurrentClaim += currentClaim;
-        sumTotalClaim += totalClaim;
-        sumBalance += balance;
-
-        tableBody.push([
-            'SOFT',
-            sc.desc,
-            formatMoney(revisedContract),
-            formatMoney(0),
             formatMoney(revisedContract),
             formatMoney(prevClaim), 
             formatMoney(currentClaim),
