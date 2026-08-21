@@ -95,21 +95,22 @@ export default function BankPackageGenerator() {
       const foundNames: string[] = [] 
       
       currentDrawLines.forEach((l: any) => {
-        const contactInfo = l.sov_line_items?.project_contracts?.project_contacts
-        const companyName = Array.isArray(contactInfo) ? contactInfo[0]?.company : contactInfo?.company || l.description
+        if (!l.is_soft_cost && l.sov_code !== 'SOFT') {
+           const contactInfo = l.sov_line_items?.project_contracts?.project_contacts
+           const companyName = Array.isArray(contactInfo) ? contactInfo[0]?.company : contactInfo?.company || l.description
 
-        if (l.invoice_link) {
-          combinedBackups.push(l.invoice_link)
-          foundNames.push(`${companyName} (Invoice)`)
-        }
-        if (l.trade_sov_link) {
-          combinedBackups.push(l.trade_sov_link)
-          foundNames.push(`${companyName} (SOV)`)
+           if (l.invoice_link) {
+             combinedBackups.push(l.invoice_link)
+             foundNames.push(`${companyName} (Invoice)`)
+           }
+           if (l.trade_sov_link) {
+             combinedBackups.push(l.trade_sov_link)
+             foundNames.push(`${companyName} (SOV)`)
+           }
         }
       })
       
-      // FIX: Grab ALL soft costs over the entire project so they stay permanently on the G703
-      const allSoftLines = [...prevDrawLines, ...currentDrawLines].filter(l => l.is_soft_cost)
+      const allSoftLines = [...prevDrawLines, ...currentDrawLines].filter(l => l.is_soft_cost || l.sov_code === 'SOFT')
       const uniqueSoftMap = new Map()
       
       allSoftLines.forEach(l => {

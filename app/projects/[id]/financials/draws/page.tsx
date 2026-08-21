@@ -95,10 +95,8 @@ export default function DrawsManager() {
       
       const currentBilled = allBilledLines?.filter(b => b.draw_id === summaryData.id) || []
       
-      const missingTrades = lines?.filter(l => !currentBilled.some((b: any) => b.sov_line_id === l.id && !b.is_soft_cost)) || []
+      const missingTrades = lines?.filter(l => !currentBilled.some((b: any) => b.sov_line_id === l.id && b.sov_code !== 'SOFT')) || []
 
-      // AUTO-SEEDING FOR SOFT COSTS REMOVED TO PREVENT GHOST DATA.
-      
       if (missingTrades.length > 0) {
         const fullSeed = missingTrades.map(l => ({ 
           draw_id: summaryData.id, 
@@ -137,23 +135,48 @@ export default function DrawsManager() {
     setAllDraws(prev => prev.map(d => d.id === activeDraw.id ? { ...d, period: activeDraw.period } : d));
   }
 
+  // FIXED: Carry Forward Engine for Soft Costs
   const handleNewDraw = async () => {
     setLoading(true);
-    const nextNum = allDraws.length > 0 ? Math.max(...allDraws.map(d => d.draw_number)) + 1 : 1;
-    const currentPeriod = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-    
-    const { data, error } = await supabase.from('project_draws').insert([{
-      project_id: id,
-      draw_number: nextNum,
-      period: currentPeriod,
-      status: 'Draft'
-    }]).select().single();
+    try {
+      const nextNum = allDraws.length > 0 ? Math.max(...allDraws.map(d => d.draw_number)) + 1 : 1;
+      const currentPeriod = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      
+      const { data: newDraw, error: drawErr } = await supabase.from('project_draws').insert([{
+        project_id: id,
+        draw_number: nextNum,
+        period: currentPeriod,
+        status: 'Draft'
+      }]).select().single();
 
-    if (error) {
-      alert(`Failed to create draw: ${error.message}`);
+      if (drawErr) throw drawErr;
+
+      // Create Summary
+      const { data: newSum, error: sumErr } = await supabase.from('draw_summaries').insert([{ draw_id: newDraw.id }]).select().single();
+      if (sumErr) throw sumErr;
+
+      // Copy Soft Costs from the current draw into the new draw
+      if (drawSummary) {
+         const { data: prevSofts } = await supabase.from('draw_line_items').select('*').eq('draw_id', drawSummary.id).eq('is_soft_cost', true);
+         if (prevSofts && prevSofts.length > 0) {
+            const softCopy = prevSofts.map(s => ({
+               draw_id: newSum.id,
+               sov_code: 'SOFT',
+               description: s.description,
+               original_budget: s.original_budget,
+               approved_changes: s.approved_changes,
+               current_gross_billed: 0, // Reset the billed amount for the new month
+               holdback_rate: s.holdback_rate,
+               is_soft_cost: true
+            }));
+            await supabase.from('draw_line_items').insert(softCopy);
+         }
+      }
+
+      await fetchData(newDraw.id);
+    } catch (err: any) {
+      alert(`Failed to create draw: ${err.message}`);
       setLoading(false);
-    } else if (data) {
-      fetchData(data.id);
     }
   }
 
@@ -346,6 +369,7 @@ export default function DrawsManager() {
     setSaving(false)
   }
 
+  // FIXED: Bulletproof Document Upload Targeting exact SOV IDs
   const handleUploadDocument = async (e: React.ChangeEvent<HTMLInputElement>, type: 'invoice' | 'sov') => {
     const file = e.target.files?.[0]
     if (!file || !reviewingTrade) return
@@ -356,25 +380,35 @@ export default function DrawsManager() {
       const fileName = `${type}_${reviewingTrade.id}_${Date.now()}.${fileExt}`
       const filePath = `${id}/${fileName}`
       
-      // FIXED: Upsert override forces the file to save securely
       const { error: uploadError } = await supabase.storage.from('project_documents').upload(filePath, file, { upsert: true })
       if (uploadError) throw uploadError
       
       const { data: { publicUrl } } = supabase.storage.from('project_documents').getPublicUrl(filePath)
       
-      // FIXED: Force update ALL SOV lines for this trade to ensure it sticks
-      const lineIdsToUpdate = reviewingTrade.lines.map((l: any) => l.dbId).filter(Boolean)
+      // We grab all sov_line_id's for this specific trade
+      const sovIds = reviewingTrade.lines.map((l: any) => l.id).filter(Boolean)
       
-      if (lineIdsToUpdate.length > 0) {
+      if (sovIds.length > 0) {
         const updateField = type === 'invoice' ? { invoice_link: publicUrl } : { trade_sov_link: publicUrl }
-        await supabase.from('draw_line_items').update(updateField).in('id', lineIdsToUpdate)
+        
+        // Update all line items in this draw that belong to this trade
+        const { error: dbErr } = await supabase.from('draw_line_items')
+           .update(updateField)
+           .eq('draw_id', drawSummary.id)
+           .in('sov_line_id', sovIds)
+
+        if (dbErr) throw dbErr;
+        
         await fetchData(activeDraw.id)
       } else {
-        alert("Cannot attach document: No billable SOV lines found for this trade.")
+        alert("Cannot attach document: No SOV lines found for this trade.")
       }
     } catch (error: any) { 
       alert(`Upload failed: ${error.message}`) 
     }
+    
+    // Clear input so it triggers onChange again if needed
+    if (e.target) e.target.value = ''
     setUploadingDoc(null)
   }
 
