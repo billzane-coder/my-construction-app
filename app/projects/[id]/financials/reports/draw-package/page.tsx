@@ -34,6 +34,7 @@ export default function BankPackageGenerator() {
   
   const [tradeBackupLinks, setTradeBackupLinks] = useState<string[]>([])
   const [softCostsData, setSoftCostsData] = useState<any[]>([])
+  const [foundAttachmentsList, setFoundAttachmentsList] = useState<string[]>([]) 
   
   const [companyName, setCompanyName] = useState("")
   const [projectName, setProjectName] = useState("")
@@ -60,6 +61,7 @@ export default function BankPackageGenerator() {
 
     const prevDrawIds = previousDraws?.map(d => d.id) || []
     let prevBilledTotal = 0
+    let allPrevLines: any[] = []
 
     if (prevDrawIds.length > 0) {
       const { data: prevSummaries } = await supabase
@@ -68,6 +70,10 @@ export default function BankPackageGenerator() {
         .in('draw_id', prevDrawIds)
       
       prevBilledTotal = prevSummaries?.reduce((sum, s) => sum + Number(s.gross_hard_costs) + Number(s.gross_soft_costs), 0) || 0
+
+      // Fetch previous lines so we can accurately map previous soft cost amounts to the API
+      const { data: pLines } = await supabase.from('draw_line_items').select('*').in('draw_id', prevDrawIds)
+      allPrevLines = pLines || []
     }
 
     const { data: summary } = await supabase
@@ -79,18 +85,45 @@ export default function BankPackageGenerator() {
     if (summary) {
       const { data: lines } = await supabase
         .from('draw_line_items')
-        .select('*')
+        .select(`
+          *,
+          sov_line_items( project_contracts( project_contacts( company ) ) )
+        `)
         .eq('draw_id', summary.id)
 
       const combinedBackups: string[] = []
       const softList: any[] = []
+      const foundNames: string[] = [] 
       
-      lines?.forEach(l => {
-        if (l.invoice_link) combinedBackups.push(l.invoice_link)
-        if (l.trade_sov_link) combinedBackups.push(l.trade_sov_link)
-        if (l.is_soft_cost) softList.push(l)
+      lines?.forEach((l: any) => {
+        const contactInfo = l.sov_line_items?.project_contracts?.project_contacts
+        const companyName = Array.isArray(contactInfo) ? contactInfo[0]?.company : contactInfo?.company || l.description
+
+        if (l.invoice_link) {
+          combinedBackups.push(l.invoice_link)
+          foundNames.push(`${companyName} (Invoice)`)
+        }
+        if (l.trade_sov_link) {
+          combinedBackups.push(l.trade_sov_link)
+          foundNames.push(`${companyName} (SOV)`)
+        }
+        
+        // Proper Soft Cost Mapping to pass `previous` down to the API
+        if (l.is_soft_cost) {
+           const prevVer = allPrevLines
+             .filter(p => p.is_soft_cost && p.description === l.description)
+             .reduce((sum, p) => sum + Number(p.current_gross_billed || 0), 0);
+           
+           softList.push({
+             desc: l.description,
+             scheduled: Number(l.original_budget || 0) + Number(l.approved_changes || 0),
+             previous: prevVer,
+             verified: Number(l.current_gross_billed || 0)
+           });
+        }
       })
       
+      setFoundAttachmentsList(Array.from(new Set(foundNames)))
       setTradeBackupLinks(combinedBackups)
       setSoftCostsData(softList)
       
@@ -111,6 +144,7 @@ export default function BankPackageGenerator() {
       setStats({ currentClaimed: 0, previousBilled: 0, totalCompleted: 0, hardCosts: 0, softCosts: 0, holdback: 0, ownerEquity: 0, netPayment: 0, backupCount: 0 })
       setTradeBackupLinks([])
       setSoftCostsData([])
+      setFoundAttachmentsList([])
     }
   }
 
@@ -211,7 +245,7 @@ export default function BankPackageGenerator() {
           holdback: stats.holdback, 
           ownerEquity: stats.ownerEquity, 
           net: stats.netPayment,
-          softCostList: softCostsData // NEW: API backend can now loop over this list to render soft costs
+          softCostList: softCostsData 
         },
         attachments: {
           statDec: finalStatDecLink || null,
@@ -397,9 +431,20 @@ export default function BankPackageGenerator() {
             {statDecFile || activeDraw?.stat_dec_link ? <CheckCircle2 size={20} className="text-emerald-500" /> : <AlertCircle size={20} className="text-amber-500" />}
             <span className={`font-bold text-sm ${statDecFile || activeDraw?.stat_dec_link ? 'text-white' : 'text-amber-500'}`}>CCDC-9A Statutory Declaration</span>
           </li>
-          <li className="flex items-center gap-3">
-            {stats.backupCount > 0 ? <CheckCircle2 size={20} className="text-emerald-500" /> : <AlertCircle size={20} className="text-amber-500" />}
-            <span className="font-bold text-white text-sm">{stats.backupCount} Trade Backups (Invoices & SOVs) Stitched</span>
+          <li className="flex flex-col gap-2">
+            <div className="flex items-center gap-3">
+              {stats.backupCount > 0 ? <CheckCircle2 size={20} className="text-emerald-500" /> : <AlertCircle size={20} className="text-amber-500" />}
+              <span className="font-bold text-white text-sm">{stats.backupCount} Trade Backups Stitched</span>
+            </div>
+            {foundAttachmentsList.length > 0 && (
+              <div className="ml-8 mt-2 flex flex-wrap gap-2">
+                {foundAttachmentsList.map((name, i) => (
+                  <span key={i} className="bg-slate-950 border border-slate-800 text-slate-400 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest">
+                    {name}
+                  </span>
+                ))}
+              </div>
+            )}
           </li>
           <li className="flex items-center gap-3">
             {extraDocs.length > 0 ? <CheckCircle2 size={20} className="text-emerald-500" /> : <AlertCircle size={20} className="text-slate-600" />}

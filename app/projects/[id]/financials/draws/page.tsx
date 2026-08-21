@@ -12,7 +12,7 @@ import {
   CheckCircle2, Clock, Loader2, FileText, 
   UploadCloud, Save, Plus, ChevronLeft, ChevronRight, 
   AlertCircle, Printer, Landmark, ShieldCheck, ChevronDown, ChevronUp,
-  Receipt, FileSpreadsheet, Trash2
+  Receipt, FileSpreadsheet, Trash2, ExternalLink
 } from 'lucide-react'
 
 export default function DrawsManager() {
@@ -21,6 +21,7 @@ export default function DrawsManager() {
   
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [uploadingDoc, setUploadingDoc] = useState<'invoice' | 'sov' | null>(null)
   
   const [allDraws, setAllDraws] = useState<any[]>([])
   const [activeDraw, setActiveDraw] = useState<any>(null)
@@ -95,7 +96,8 @@ export default function DrawsManager() {
       const currentBilled = allBilledLines?.filter(b => b.draw_id === summaryData.id) || []
       
       const missingTrades = lines?.filter(l => !currentBilled.some((b: any) => b.sov_line_id === l.id && !b.is_soft_cost)) || []
-      
+
+      // FIXED: Safely roll over Soft Costs by STRICTLY matching their Description
       const pastSoftCosts = allBilledLines?.filter(b => b.is_soft_cost && b.draw_id !== summaryData.id) || [];
       const uniqueSoftCostMap = new Map();
       pastSoftCosts.forEach(sc => {
@@ -109,7 +111,7 @@ export default function DrawsManager() {
       );
 
       const fullSeed = [];
-      
+
       if (missingTrades.length > 0) {
         fullSeed.push(...missingTrades.map(l => ({ 
           draw_id: summaryData.id, 
@@ -138,7 +140,7 @@ export default function DrawsManager() {
           is_soft_cost: true
         })));
       }
-
+      
       if (fullSeed.length > 0) {
         await supabase.from('draw_line_items').insert(fullSeed)
         const r = await supabase.from('draw_line_items').select('*')
@@ -206,7 +208,7 @@ export default function DrawsManager() {
   }
 
   const handleDeleteSoftCost = async (dbId: string) => {
-    if (!window.confirm("Remove this soft cost?")) return;
+    if (!window.confirm("Remove this soft cost permanently from this draw?")) return;
     setSaving(true);
     await supabase.from('draw_line_items').delete().eq('id', dbId);
     await fetchData(activeDraw.id);
@@ -377,7 +379,8 @@ export default function DrawsManager() {
   const handleUploadDocument = async (e: React.ChangeEvent<HTMLInputElement>, type: 'invoice' | 'sov') => {
     const file = e.target.files?.[0]
     if (!file || !reviewingTrade) return
-    setSaving(true)
+    
+    setUploadingDoc(type)
     try {
       const fileExt = file.name.split('.').pop()
       const fileName = `${type}_${reviewingTrade.id}_${Date.now()}.${fileExt}`
@@ -394,9 +397,11 @@ export default function DrawsManager() {
         await supabase.from('draw_line_items').update(updateField).eq('id', firstLineDbId)
       }
       
-      fetchData(activeDraw.id)
-    } catch (error: any) { alert(`Upload failed: ${error.message}`) }
-    setSaving(false)
+      await fetchData(activeDraw.id)
+    } catch (error: any) { 
+      alert(`Upload failed: ${error.message}`) 
+    }
+    setUploadingDoc(null)
   }
 
   const formatMoney = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0)
@@ -539,7 +544,6 @@ export default function DrawsManager() {
                 <div>
                   <h4 className={`text-lg font-black uppercase italic leading-none mb-1 ${reviewingContractId === trade.id ? 'text-amber-400' : 'text-white'}`}>{trade.company}</h4>
                   
-                  {/* UPDATED VISUAL INDICATORS */}
                   <div className="flex items-center gap-2 mt-2">
                     {trade.status === 'No Claim' && <span className="px-2 py-0.5 bg-slate-800 text-slate-500 text-[8px] font-black uppercase rounded">No Claim</span>}
                     {trade.status === 'Pending Review' && <span className="px-2 py-0.5 bg-amber-950 text-amber-500 border border-amber-900/50 text-[8px] font-black uppercase rounded animate-pulse">Pending Review</span>}
@@ -633,7 +637,6 @@ export default function DrawsManager() {
                             <div>
                               <div className="flex items-center gap-2">
                                 <p className="font-bold text-white text-sm">{trade.company}</p>
-                                {/* UPDATED VISUAL INDICATORS FOR MASTER TABLE */}
                                 {trade.invoiceUrl && <span title="Invoice Attached"><Receipt size={14} className="text-blue-400" /></span>}
                                 {trade.tradeSovUrl && <span title="SOV Attached"><FileSpreadsheet size={14} className="text-indigo-400" /></span>}
                               </div>
@@ -749,19 +752,43 @@ export default function DrawsManager() {
 
                 <div className="flex flex-col gap-2 w-full md:w-auto">
                   <div className="flex gap-2 w-full">
-                    <div className="relative w-1/2">
+                    
+                    <div className="relative w-1/2 flex">
                       <input type="file" accept=".pdf,.jpg" onChange={(e) => handleUploadDocument(e, 'invoice')} ref={invoiceInputRef} className="hidden" />
-                      <button onClick={() => invoiceInputRef.current?.click()} className={`w-full flex items-center justify-center gap-1 text-[9px] font-black uppercase px-3 py-2 rounded-xl transition-colors border shadow-inner ${reviewingTrade.invoiceUrl ? 'bg-blue-950/30 text-blue-400 border-blue-900/50 hover:bg-blue-900/50' : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'}`}>
-                        {reviewingTrade.invoiceUrl ? <Receipt size={14}/> : <UploadCloud size={14}/>} 
-                        {reviewingTrade.invoiceUrl ? 'Invoice Uploaded' : 'Attach Invoice'}
-                      </button>
+                      {reviewingTrade.invoiceUrl ? (
+                        <div className="flex w-full gap-1">
+                          <a href={reviewingTrade.invoiceUrl} target="_blank" rel="noreferrer" className="w-3/4 flex items-center justify-center gap-1 text-[9px] font-black uppercase px-2 py-2 rounded-xl transition-colors border shadow-inner bg-blue-950/30 text-blue-400 border-blue-900/50 hover:bg-blue-900/50">
+                            <ExternalLink size={14}/> View Invoice
+                          </a>
+                          <button onClick={() => invoiceInputRef.current?.click()} disabled={uploadingDoc === 'invoice'} className="w-1/4 flex items-center justify-center rounded-xl border bg-slate-800 text-slate-400 hover:text-white border-slate-700">
+                            {uploadingDoc === 'invoice' ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14}/>}
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => invoiceInputRef.current?.click()} disabled={uploadingDoc === 'invoice'} className="w-full flex items-center justify-center gap-1 text-[9px] font-black uppercase px-3 py-2 rounded-xl transition-colors border shadow-inner bg-slate-800 text-slate-400 border-slate-700 hover:text-white">
+                          {uploadingDoc === 'invoice' ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14}/>} 
+                          {uploadingDoc === 'invoice' ? 'Uploading...' : 'Attach Invoice'}
+                        </button>
+                      )}
                     </div>
-                    <div className="relative w-1/2">
+
+                    <div className="relative w-1/2 flex">
                       <input type="file" accept=".pdf,.xls,.xlsx" onChange={(e) => handleUploadDocument(e, 'sov')} ref={sovInputRef} className="hidden" />
-                      <button onClick={() => sovInputRef.current?.click()} className={`w-full flex items-center justify-center gap-1 text-[9px] font-black uppercase px-3 py-2 rounded-xl transition-colors border shadow-inner ${reviewingTrade.tradeSovUrl ? 'bg-indigo-950/30 text-indigo-400 border-indigo-900/50 hover:bg-indigo-900/50' : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'}`}>
-                        {reviewingTrade.tradeSovUrl ? <FileSpreadsheet size={14}/> : <UploadCloud size={14}/>} 
-                        {reviewingTrade.tradeSovUrl ? 'SOV Uploaded' : 'Attach Trade SOV'}
-                      </button>
+                      {reviewingTrade.tradeSovUrl ? (
+                        <div className="flex w-full gap-1">
+                          <a href={reviewingTrade.tradeSovUrl} target="_blank" rel="noreferrer" className="w-3/4 flex items-center justify-center gap-1 text-[9px] font-black uppercase px-2 py-2 rounded-xl transition-colors border shadow-inner bg-indigo-950/30 text-indigo-400 border-indigo-900/50 hover:bg-indigo-900/50">
+                            <ExternalLink size={14}/> View SOV
+                          </a>
+                          <button onClick={() => sovInputRef.current?.click()} disabled={uploadingDoc === 'sov'} className="w-1/4 flex items-center justify-center rounded-xl border bg-slate-800 text-slate-400 hover:text-white border-slate-700">
+                            {uploadingDoc === 'sov' ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14}/>}
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => sovInputRef.current?.click()} disabled={uploadingDoc === 'sov'} className="w-full flex items-center justify-center gap-1 text-[9px] font-black uppercase px-3 py-2 rounded-xl transition-colors border shadow-inner bg-slate-800 text-slate-400 border-slate-700 hover:text-white">
+                          {uploadingDoc === 'sov' ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14}/>} 
+                          {uploadingDoc === 'sov' ? 'Uploading...' : 'Attach SOV'}
+                        </button>
+                      )}
                     </div>
                   </div>
 
