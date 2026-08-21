@@ -26,7 +26,6 @@ export default function DrawsManager() {
   const [allDraws, setAllDraws] = useState<any[]>([])
   const [activeDraw, setActiveDraw] = useState<any>(null)
   const [drawSummary, setDrawSummary] = useState<any>(null) 
-  const [ownerEquityInput, setOwnerEquityInput] = useState<string>('0')
   
   const [project, setProject] = useState<any>(null)
   const [settings, setSettings] = useState<any>(null)
@@ -73,7 +72,6 @@ export default function DrawsManager() {
         summaryData = newSummary
       }
       setDrawSummary(summaryData)
-      setOwnerEquityInput((summaryData.owner_equity_applied || 0).toString())
 
       const { data: activeContracts } = await supabase
         .from('project_contracts')
@@ -199,7 +197,7 @@ export default function DrawsManager() {
   }
 
   const handleDeleteSoftCost = async (dbId: string) => {
-    if (!window.confirm("Permanently delete this soft cost?")) return;
+    if (!window.confirm("Permanently delete this item?")) return;
     setSaving(true);
     const { error } = await supabase.from('draw_line_items').delete().eq('id', dbId);
     if (error) alert(`Failed to delete: ${error.message}`);
@@ -232,7 +230,7 @@ export default function DrawsManager() {
         
         const claim = Number(currentLine?.claimed_amount || 0)
         const verif = Number(currentLine?.current_gross_billed || 0)
-        const holdbackRate = Number(currentLine?.holdback_rate || 0.10)
+        const holdbackRate = currentLine?.holdback_rate !== undefined ? Number(currentLine.holdback_rate) : 0.10
         
         const lineHoldback = verif * holdbackRate
         const lineNet = verif - lineHoldback
@@ -251,7 +249,7 @@ export default function DrawsManager() {
         
         return { 
           id: sov.id, desc: sov.description, original, cos, scheduled: sched, previous: prevVer, 
-          claimed: claim, verified: verif, holdback: lineHoldback, net: lineNet, dbId: currentLine?.id,
+          claimed: claim, verified: verif, rate: holdbackRate, holdback: lineHoldback, net: lineNet, dbId: currentLine?.id,
           isCO: !!sov.change_order_id
         }
       })
@@ -273,7 +271,7 @@ export default function DrawsManager() {
       
       const scheduled = Number(sc.original_budget || 0) + Number(sc.approved_changes || 0)
       const verif = Number(sc.current_gross_billed || 0)
-      const rate = Number(sc.holdback_rate || 0)
+      const rate = Number(sc.holdback_rate !== undefined ? sc.holdback_rate : 0)
       const lineHoldback = verif * rate 
       
       return {
@@ -319,7 +317,7 @@ export default function DrawsManager() {
   }
 
   const handleAddSoftCost = async () => {
-    const desc = prompt("Enter description for Soft Cost (e.g. GC Fee, Permits, Winter Heat):")
+    const desc = prompt("Enter description (e.g. GC Fee, General Conditions, Bond):")
     if (!desc) return
     const budget = prompt("Enter total budget for this item:")
     
@@ -335,7 +333,7 @@ export default function DrawsManager() {
     }])
     
     if (error) {
-       alert(`Database Error: Failed to add Soft Cost. ${error.message}`)
+       alert(`Database Error: Failed to add item. ${error.message}`)
     } else {
        await fetchData(activeDraw.id)
     }
@@ -349,7 +347,8 @@ export default function DrawsManager() {
         const promises = reviewingTrade.lines.filter((l:any) => l.dbId).map(async (l: any) => {
           const { error } = await supabase.from('draw_line_items').update({
             claimed_amount: l.claimed, 
-            current_gross_billed: l.verified 
+            current_gross_billed: l.verified,
+            holdback_rate: l.rate 
           }).eq('id', l.dbId);
           if (error) throw error;
         });
@@ -357,10 +356,6 @@ export default function DrawsManager() {
       }
 
       if (reviewingContractId === 'summary') {
-        const equityVal = parseFloat(ownerEquityInput) || 0;
-        const { error: sumErr } = await supabase.from('draw_summaries').update({ owner_equity_applied: equityVal }).eq('id', drawSummary.id)
-        if (sumErr) throw sumErr;
-
         const promises = tradeBills.softCosts.map(async sc => {
           const { error } = await supabase.from('draw_line_items').update({
             current_gross_billed: sc.verified,
@@ -430,7 +425,7 @@ export default function DrawsManager() {
 
     doc.setFontSize(16)
     doc.setTextColor(15, 23, 42)
-    doc.text(`Internal Master Draw Report - Draw #${activeDraw?.draw_number}`, 14, 30)
+    doc.text(`Master Internal Draw - #${activeDraw?.draw_number}`, 14, 30)
 
     doc.setFontSize(10)
     doc.setTextColor(100, 116, 139)
@@ -451,7 +446,7 @@ export default function DrawsManager() {
 
     tradeBills.softCosts.forEach(sc => {
       tableData.push([
-        sc.desc + " (Soft Cost)",
+        sc.desc + " (GC / General)",
         formatMoney(sc.scheduled),
         formatMoney(sc.previous),
         formatMoney(sc.verified),
@@ -543,8 +538,8 @@ export default function DrawsManager() {
             className={`w-full p-6 rounded-[32px] border text-left transition-all shadow-xl flex items-center justify-between group ${reviewingContractId === 'summary' ? 'bg-blue-600 border-blue-500' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}
           >
             <div>
-              <h3 className={`text-xl font-black uppercase italic tracking-tight ${reviewingContractId === 'summary' ? 'text-white' : 'text-slate-300'}`}>Owner Master Draw</h3>
-              <p className={`text-[10px] font-black uppercase tracking-widest mt-1 ${reviewingContractId === 'summary' ? 'text-blue-200' : 'text-slate-500'}`}>Rolled up Summary & Soft Costs</p>
+              <h3 className={`text-xl font-black uppercase italic tracking-tight ${reviewingContractId === 'summary' ? 'text-white' : 'text-slate-300'}`}>Contractor Master Draw</h3>
+              <p className={`text-[10px] font-black uppercase tracking-widest mt-1 ${reviewingContractId === 'summary' ? 'text-blue-200' : 'text-slate-500'}`}>Rolled up Trades & GC Costs</p>
             </div>
             <Landmark size={24} className={reviewingContractId === 'summary' ? 'text-white' : 'text-slate-600'} />
           </button>
@@ -580,14 +575,14 @@ export default function DrawsManager() {
               <div className="p-8 border-b border-slate-800 bg-blue-950/20 flex justify-between items-start md:items-center">
                 <div>
                   <h2 className="text-3xl font-black text-white uppercase italic tracking-tighter mb-2">Master Draw Certificate</h2>
-                  <p className="text-xs font-bold text-blue-400 uppercase tracking-widest">Lender Summary for Draw #{activeDraw?.draw_number}</p>
+                  <p className="text-xs font-bold text-blue-400 uppercase tracking-widest">Internal Summary for Draw #{activeDraw?.draw_number}</p>
                 </div>
                 <div className="flex gap-3">
                   <button onClick={handleExportPDF} className="bg-slate-800 text-white px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-700 transition-all flex items-center gap-2 border border-slate-700">
                     <Printer size={16}/> Export PDF
                   </button>
                   <button onClick={handleAddSoftCost} className="bg-slate-800 text-white px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-700 transition-all flex items-center gap-2 border border-slate-700">
-                    <Plus size={16}/> Add Soft Cost
+                    <Plus size={16}/> Add GC Cost
                   </button>
                   <button onClick={handleSave} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 transition-all flex items-center gap-2 shadow-lg border border-blue-500">
                     {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16}/>} Save Master
@@ -597,7 +592,7 @@ export default function DrawsManager() {
 
               {drawSummary && (
                 <div className="p-8 border-b border-slate-800 bg-slate-950/50">
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-inner">
                       <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Gross Billed to Date</p>
                       <p className="text-2xl font-black text-white">{formatMoney(projectTotals.verified)}</p>
@@ -606,21 +601,8 @@ export default function DrawsManager() {
                       <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1">Statutory Holdback</p>
                       <p className="text-2xl font-black text-amber-500">{formatMoney(projectTotals.holdback)}</p>
                     </div>
-                    <div className="bg-amber-950/20 border border-amber-900/30 rounded-2xl p-4 shadow-inner relative">
-                      <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1">Less: Owner Equity</p>
-                      <div className="relative mt-2">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-amber-500/50 font-bold">$</span>
-                        <input 
-                          type="number" 
-                          value={ownerEquityInput === '0' ? '' : ownerEquityInput} 
-                          placeholder="0.00"
-                          onChange={(e) => setOwnerEquityInput(e.target.value)} 
-                          className="w-full bg-slate-950 border border-amber-900/50 py-2 pl-7 pr-3 rounded-lg font-black text-amber-400 outline-none focus:border-amber-500 transition-all text-xl" 
-                        />
-                      </div>
-                    </div>
                     <div className="bg-blue-950/20 border border-blue-900/30 rounded-2xl p-5 shadow-inner">
-                      <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Net Lender Advance</p>
+                      <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Net Payment Due</p>
                       <p className="text-2xl font-black text-blue-400">{formatMoney(drawSummary.net_lender_advance)}</p>
                     </div>
                   </div>
@@ -635,7 +617,6 @@ export default function DrawsManager() {
                       <th className="p-5 text-right">Revised Contract</th>
                       <th className="p-5 text-right">Prev Billed</th>
                       <th className="p-5 text-right text-white">Current Gross</th>
-                      {/* NEW % COMP COLUMN */}
                       <th className="p-5 text-right text-emerald-400">% Comp</th>
                       <th className="p-5 text-right text-amber-500/70 border-l border-slate-800/50">Holdback %</th>
                       <th className="p-5 text-right text-blue-400/70 border-l border-slate-800/50">Net Payable</th>
@@ -662,7 +643,6 @@ export default function DrawsManager() {
                           <td className="p-5 text-right font-bold text-slate-500">{formatMoney(trade.previousVerified)}</td>
                           <td className="p-5 text-right font-black text-white">{formatMoney(trade.totalVerified)}</td>
                           
-                          {/* NEW % COMP CELL */}
                           <td className="p-5 text-right font-bold text-emerald-400">
                             {trade.totalScheduled > 0 ? Math.round(((trade.previousVerified + trade.totalVerified) / trade.totalScheduled) * 100) : 0}%
                           </td>
@@ -683,8 +663,9 @@ export default function DrawsManager() {
                                       <th className="pb-3 text-right">Rev. Budget</th>
                                       <th className="pb-3 text-right">Previously Billed</th>
                                       <th className="pb-3 text-right text-slate-400">Current Work</th>
-                                      {/* NEW INNER % COMP COLUMN */}
                                       <th className="pb-3 text-right text-emerald-400">% Comp</th>
+                                      <th className="pb-3 text-right text-amber-500">Holdback %</th>
+                                      <th className="pb-3 text-right text-amber-500">Holdback ($)</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -700,6 +681,16 @@ export default function DrawsManager() {
                                         <td className="py-3 text-right font-bold text-emerald-400">
                                           {line.scheduled > 0 ? Math.round(((line.previous + line.verified) / line.scheduled) * 100) : 0}%
                                         </td>
+                                        <td className="py-3 align-middle">
+                                          <div className="flex items-center justify-end gap-1">
+                                            <input type="number" value={line.rate * 100} placeholder="10"
+                                              onChange={(e) => handleUpdateLine(line.dbId, 'holdback_rate', (parseFloat(e.target.value) || 0) / 100)} 
+                                              className="w-16 bg-slate-950 border border-slate-700 p-2 rounded-lg font-black text-center text-amber-500 outline-none focus:border-amber-500" 
+                                            />
+                                            <span className="text-slate-500 font-bold text-xs">%</span>
+                                          </div>
+                                        </td>
+                                        <td className="py-3 text-right font-bold text-amber-500/80">{formatMoney(line.holdback)}</td>
                                       </tr>
                                     ))}
                                   </tbody>
@@ -711,12 +702,12 @@ export default function DrawsManager() {
                       </Fragment>
                     ))}
 
-                    {/* SOFT COSTS */}
+                    {/* SOFT COSTS / GC FEES */}
                     {tradeBills.softCosts.map(sc => (
                       <tr key={sc.id} className="bg-slate-900/50 border-t-2 border-slate-800 hover:bg-slate-800/30">
                         <td className="p-5">
                           <p className="font-bold text-emerald-400 text-sm">{sc.desc}</p>
-                          <p className="text-[10px] font-black text-slate-500 uppercase mt-1">Soft Cost / Owner Level</p>
+                          <p className="text-[10px] font-black text-slate-500 uppercase mt-1">GC General Conditions</p>
                         </td>
                         <td className="p-5 text-right font-bold text-slate-400">{formatMoney(sc.scheduled)}</td>
                         <td className="p-5 text-right font-bold text-slate-500">{formatMoney(sc.previous)}</td>
@@ -729,7 +720,6 @@ export default function DrawsManager() {
                           </div>
                         </td>
                         
-                        {/* NEW % COMP CELL */}
                         <td className="p-5 text-right font-bold text-emerald-400 align-middle">
                           {sc.scheduled > 0 ? Math.round(((sc.previous + sc.verified) / sc.scheduled) * 100) : 0}%
                         </td>
@@ -760,7 +750,6 @@ export default function DrawsManager() {
                       <td className="p-6 text-right text-sm font-black text-slate-400">{formatMoney(projectTotals.previous)}</td>
                       <td className="p-6 text-right text-lg font-black text-white">{formatMoney(projectTotals.verified)}</td>
                       
-                      {/* NEW % COMP CELL */}
                       <td className="p-6 text-right text-sm font-black text-emerald-400">
                         {projectTotals.scheduled > 0 ? Math.round(((projectTotals.previous + projectTotals.verified) / projectTotals.scheduled) * 100) : 0}%
                       </td>

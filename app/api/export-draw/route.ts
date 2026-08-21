@@ -32,7 +32,7 @@ export async function POST(request: Request) {
 
     const prevDrawIds = allDraws?.filter(d => d.draw_number < drawRec.draw_number).map(d => d.id) || [];
 
-    const { data: projectContracts } = await supabase.from('project_contracts').select('id').eq('project_id', projectId);
+    const { data: projectContracts } = await supabase.from('project_contracts').select('id, cost_code_id').eq('project_id', projectId);
     const safeContractIds = projectContracts?.length ? projectContracts.map(c => c.id) : ['00000000-0000-0000-0000-000000000000'];
 
     const { data: costCodes } = await supabase.from('project_cost_codes').select('*').eq('project_id', projectId).order('code');
@@ -68,7 +68,6 @@ export async function POST(request: Request) {
     const totalCompleted = drawData.totalCompleted || 0;
     const holdback = drawData.holdback || 0; 
     const previousBilling = drawData.previous || 0; 
-    const ownerEquity = drawData.ownerEquity || 0; 
     const netDue = drawData.net || 0; 
 
     const formatMoney = (num: number) => '$ ' + (num || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -79,7 +78,7 @@ export async function POST(request: Request) {
     const displayLenderAddress = lenderAddress || 'Lender Address TBD';
 
     // ==========================================
-    // PHASE 1: COVER SHEET (G702)
+    // PHASE 1: COVER SHEET
     // ==========================================
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
     
@@ -87,11 +86,11 @@ export async function POST(request: Request) {
     doc.rect(0, 0, 216, 35, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold').setFontSize(22).text(displayCompany, 108, 18, { align: 'center' });
-    doc.setFontSize(10).setFont('helvetica', 'normal').text('LENDER DRAW APPLICATION', 108, 26, { align: 'center', charSpace: 2 });
+    doc.setFontSize(10).setFont('helvetica', 'normal').text('CONTRACTOR DRAW APPLICATION', 108, 26, { align: 'center', charSpace: 2 });
     
     doc.setTextColor(0, 0, 0);
 
-    doc.setFontSize(10).setFont('helvetica', 'bold').text('TO (LENDER):', 15, 48);
+    doc.setFontSize(10).setFont('helvetica', 'bold').text('BILLED TO:', 15, 48);
     doc.setFont('helvetica', 'normal');
     doc.text(displayLenderName, 15, 55);
     doc.text(displayLenderAddress, 15, 61);
@@ -102,10 +101,9 @@ export async function POST(request: Request) {
     doc.text(`Draw Period: ${drawDate}`, 110, 61);
     doc.text(`Draw Number: ${drawRec.draw_number}`, 110, 67);
 
-    // Box Height increased to accommodate the HST breakdown
-    doc.setDrawColor(15, 23, 42).setLineWidth(0.5).rect(15, 78, 185, 140); 
+    doc.setDrawColor(15, 23, 42).setLineWidth(0.5).rect(15, 78, 185, 120); 
     doc.setFillColor(240, 244, 248).rect(15, 78, 185, 12, 'F');
-    doc.setFont('helvetica', 'bold').setFontSize(11).text('FINANCIAL SUMMARY', 20, 86);
+    doc.setFont('helvetica', 'bold').setFontSize(11).text('CONTRACT FINANCIAL SUMMARY', 20, 86);
     
     let y = 100;
     const addLine = (label: string, value: number, isBold = false) => {
@@ -116,46 +114,40 @@ export async function POST(request: Request) {
         y += 10;
     };
 
-    addLine('1. Original Contract Sum (Inc. Soft Costs)', originalSum);
-    addLine('2. Net Change Orders', approvedChanges);
+    addLine('1. Original Contract Sum', originalSum);
+    addLine('2. Net Approved Change Orders', approvedChanges);
     addLine('3. Contract Sum to Date', revisedSum, true);
     doc.setDrawColor(200, 200, 200).line(20, y - 7, 190, y - 7);
     
     addLine('4. Total Completed to Date', totalCompleted);
-    addLine('5. Less Retainage / Holdback', holdback);
-    addLine('6. Total Earned Less Retainage', totalCompleted - holdback, true);
+    addLine('5. Less Statutory Holdback', holdback);
+    addLine('6. Total Earned Less Holdback', totalCompleted - holdback, true);
     addLine('7. Less Previous Certificates', previousBilling);
-    addLine('8. Less Owner Equity Applied', ownerEquity);
     doc.setDrawColor(200, 200, 200).line(20, y - 7, 190, y - 7);
     
-    addLine('9. NET PROGRESS PAYMENT (PRE-TAX)', netDue, true);
-    addLine('10. Applicable 13% HST', netDue * 0.13);
-    addLine('11. TOTAL AMOUNT DUE TO GC (INCL. HST)', netDue * 1.13, true);
+    addLine('8. NET PROGRESS PAYMENT (PRE-TAX)', netDue, true);
+    addLine('9. 13% HST', netDue * 0.13);
     
     doc.setFillColor(15, 23, 42).rect(15, y - 6, 185, 12, 'F');
     doc.setTextColor(255, 255, 255);
-    addLine('12. NET LENDER ADVANCE REQUESTED', netDue, true);
-
-    doc.setTextColor(100, 116, 139);
-    doc.setFontSize(8).setFont('helvetica', 'italic');
-    doc.text(`* Note: The 13% HST amount of $${(netDue * 0.13).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} is excluded from the lender request and will be funded by the Owner.`, 15, y + 6);
+    addLine('10. TOTAL AMOUNT DUE (INCL. HST)', netDue * 1.13, true);
 
     // ==========================================
-    // PHASE 2: CONTINUATION SHEET (G703)
+    // PHASE 2: CONTINUATION SHEET (MASTER SOV)
     // ==========================================
     doc.addPage();
     doc.setTextColor(0, 0, 0);
-    doc.setFontSize(16).setFont('helvetica', 'bold').text('CONTINUATION SHEET (MASTER SOV)', 15, 20);
+    doc.setFontSize(16).setFont('helvetica', 'bold').text('CONTINUATION SHEET (MASTER SCHEDULE OF VALUES)', 15, 20);
     
-    let sumBase = 0, sumCOs = 0, sumRevised = 0, sumPrevClaim = 0, sumCurrentClaim = 0, sumTotalClaim = 0, sumBalance = 0;
+    let sumBase = 0, sumCOs = 0, sumRevised = 0, sumPrevClaim = 0, sumCurrentClaim = 0, sumTotalClaim = 0, sumHoldback = 0, sumBalance = 0;
     const tableBody: any[] = [];
 
-    // 1. ADD SOFT COSTS FIRST (At the top of the table)
     softCosts.forEach((sc: any) => {
         const revisedContract = Number(sc.scheduled || 0);
         const prevClaim = Number(sc.previous || 0);
         const currentClaim = Number(sc.verified || 0);
         const totalClaim = prevClaim + currentClaim;
+        const lineHoldback = Number(sc.holdback || 0);
         const balance = revisedContract - totalClaim;
 
         sumBase += revisedContract; 
@@ -163,10 +155,11 @@ export async function POST(request: Request) {
         sumPrevClaim += prevClaim;
         sumCurrentClaim += currentClaim;
         sumTotalClaim += totalClaim;
+        sumHoldback += lineHoldback;
         sumBalance += balance;
 
         tableBody.push([
-            'SOFT',
+            'GC',
             sc.desc,
             formatMoney(revisedContract),
             formatMoney(0),
@@ -175,18 +168,20 @@ export async function POST(request: Request) {
             formatMoney(currentClaim),
             formatMoney(totalClaim), 
             revisedContract > 0 ? Math.round((totalClaim / revisedContract) * 100) + '%' : '0%',
+            formatMoney(lineHoldback),
             formatMoney(balance)
         ]);
     });
 
-    // 2. ADD TRADE CONTRACTS SECOND (Below Soft Costs)
     (costCodes || []).forEach(code => {
-        const matchingSovs = (sovLines || []).filter(s => s.cost_code_id === code.id);
+        const contractsForCode = (projectContracts || []).filter(c => c.cost_code_id === code.id).map(c => c.id);
+        const matchingSovs = (sovLines || []).filter(s => contractsForCode.includes(s.contract_id));
         
         let baseCommitted = 0;
         let approvedCOs = 0;
         let prevClaim = 0;
         let currentClaim = 0;
+        let lineHoldback = 0;
 
         matchingSovs.forEach(sov => {
             const isBaseLine = !sov.change_order_id;
@@ -195,8 +190,18 @@ export async function POST(request: Request) {
             if (isBaseLine) baseCommitted += Number(sov.scheduled_value || 0);
             if (isApprovedCO) approvedCOs += Number(sov.scheduled_value || 0);
 
-            (prevDrawLines || []).filter(d => d.sov_line_id === sov.id).forEach(b => prevClaim += Number(b.verified_amount || b.current_gross_billed || 0));
-            (currentDrawLines || []).filter(d => d.sov_line_id === sov.id).forEach(b => currentClaim += Number(b.verified_amount || b.current_gross_billed || 0));
+            (prevDrawLines || []).filter(d => d.sov_line_id === sov.id).forEach(b => {
+                const amt = Number(b.verified_amount || b.current_gross_billed || 0);
+                const hbRate = Number(b.holdback_rate !== undefined ? b.holdback_rate : 0.10);
+                prevClaim += amt;
+                lineHoldback += amt * hbRate;
+            });
+            (currentDrawLines || []).filter(d => d.sov_line_id === sov.id).forEach(b => {
+                const amt = Number(b.verified_amount || b.current_gross_billed || 0);
+                const hbRate = Number(b.holdback_rate !== undefined ? b.holdback_rate : 0.10);
+                currentClaim += amt;
+                lineHoldback += amt * hbRate;
+            });
         });
         
         const revisedContract = baseCommitted + approvedCOs;
@@ -211,6 +216,7 @@ export async function POST(request: Request) {
         sumPrevClaim += prevClaim;
         sumCurrentClaim += currentClaim;
         sumTotalClaim += totalClaim;
+        sumHoldback += lineHoldback;
         sumBalance += balance;
 
         tableBody.push([
@@ -223,6 +229,7 @@ export async function POST(request: Request) {
             formatMoney(currentClaim),
             formatMoney(totalClaim), 
             revisedContract > 0 ? Math.round((totalClaim / revisedContract) * 100) + '%' : '0%',
+            formatMoney(lineHoldback),
             formatMoney(balance)
         ]);
     });
@@ -231,20 +238,25 @@ export async function POST(request: Request) {
 
     autoTable(doc, {
         startY: 28,
-        head: [['Code', 'Description', 'Committed', 'C.O.s', 'Revised', 'Prev Claim', 'Current Claim', 'Total Claim', '%', 'Balance']],
-        body: tableBody.length > 0 ? tableBody : [['-', 'No active contracts', '-', '-', '-', '-', '-', '-', '-', '-']],
-        foot: [['', 'TOTALS', formatMoney(sumBase), formatMoney(sumCOs), formatMoney(sumRevised), formatMoney(sumPrevClaim), formatMoney(sumCurrentClaim), formatMoney(sumTotalClaim), totalPct, formatMoney(sumBalance)]],
+        head: [['Code', 'Description', 'Committed', 'C.O.s', 'Revised', 'Prev Claim', 'Current Claim', 'Total Claim', '%', 'Holdback', 'Balance']],
+        body: tableBody.length > 0 ? tableBody : [['-', 'No active contracts', '-', '-', '-', '-', '-', '-', '-', '-', '-']],
+        foot: [['', 'TOTALS', formatMoney(sumBase), formatMoney(sumCOs), formatMoney(sumRevised), formatMoney(sumPrevClaim), formatMoney(sumCurrentClaim), formatMoney(sumTotalClaim), totalPct, formatMoney(sumHoldback), formatMoney(sumBalance)]],
         theme: 'grid',
         headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 6.5 },
         footStyles: { fillColor: [240, 244, 248], textColor: 0, fontStyle: 'bold', fontSize: 6.5 },
         alternateRowStyles: { fillColor: [245, 247, 250] },
-        styles: { fontSize: 6.5, cellPadding: 2 } 
+        styles: { fontSize: 6.5, cellPadding: 1.5 },
+        columnStyles: {
+            2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' },
+            5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' },
+            8: { halign: 'right' }, 9: { halign: 'right', textColor: [217, 119, 6] }, 10: { halign: 'right' }
+        }
     });
 
     const coverSheetBuffer = doc.output('arraybuffer');
 
     // ==========================================
-    // PHASE 3: ROBUST STITCHING ENGINE
+    // PHASE 3: STITCHING ENGINE
     // ==========================================
     const finalPdf = await PDFDocument.create();
     const coverDoc = await PDFDocument.load(coverSheetBuffer);
@@ -303,7 +315,7 @@ export async function POST(request: Request) {
         status: 200,
         headers: { 
             'Content-Type': 'application/pdf', 
-            'Content-Disposition': `attachment; filename="Lender_Draw_Package_${drawRec.draw_number}.pdf"` 
+            'Content-Disposition': `attachment; filename="GC_Draw_Package_${drawRec.draw_number}.pdf"` 
         }
     });
 

@@ -27,7 +27,6 @@ export default function BankPackageGenerator() {
     hardCosts: 0,
     softCosts: 0,
     holdback: 0, 
-    ownerEquity: 0,
     netPayment: 0, 
     backupCount: 0 
   })
@@ -119,16 +118,22 @@ export default function BankPackageGenerator() {
                  desc: l.description,
                  scheduled: Number(l.original_budget || 0) + Number(l.approved_changes || 0),
                  previous: 0,
-                 verified: 0
+                 verified: 0,
+                 holdback: 0
              })
          }
          const item = uniqueSoftMap.get(l.description)
          item.scheduled = Math.max(item.scheduled, Number(l.original_budget || 0) + Number(l.approved_changes || 0))
          
+         const rate = Number(l.holdback_rate !== undefined ? l.holdback_rate : 0)
+         const amt = Number(l.current_gross_billed || 0)
+
          if (l.draw_id === targetDraw.id) {
-             item.verified = Number(l.current_gross_billed || 0)
+             item.verified = amt
+             item.holdback += amt * rate
          } else {
-             item.previous += Number(l.current_gross_billed || 0)
+             item.previous += amt
+             item.holdback += amt * rate
          }
       })
       
@@ -145,12 +150,11 @@ export default function BankPackageGenerator() {
         hardCosts: Number(summary.gross_hard_costs),
         softCosts: Number(summary.gross_soft_costs),
         holdback: Number(summary.hard_cost_holdback) + Number(summary.soft_cost_holdback), 
-        ownerEquity: Number(summary.owner_equity_applied || 0), 
         netPayment: Number(summary.net_lender_advance), 
         backupCount: combinedBackups.length 
       })
     } else {
-      setStats({ currentClaimed: 0, previousBilled: 0, totalCompleted: 0, hardCosts: 0, softCosts: 0, holdback: 0, ownerEquity: 0, netPayment: 0, backupCount: 0 })
+      setStats({ currentClaimed: 0, previousBilled: 0, totalCompleted: 0, hardCosts: 0, softCosts: 0, holdback: 0, netPayment: 0, backupCount: 0 })
       setTradeBackupLinks([])
       setSoftCostsData([])
       setFoundAttachmentsList([])
@@ -252,7 +256,6 @@ export default function BankPackageGenerator() {
           current: stats.currentClaimed, 
           previous: stats.previousBilled, 
           holdback: stats.holdback, 
-          ownerEquity: stats.ownerEquity, 
           net: stats.netPayment,
           softCostList: softCostsData 
         },
@@ -276,7 +279,7 @@ export default function BankPackageGenerator() {
       const a = document.createElement('a')
       a.href = url
       const safeProjectName = projectName ? projectName.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'project'
-      a.download = `Draw_Package_${safeProjectName}_#${activeDraw.draw_number}.pdf`
+      a.download = `GC_Draw_Package_${safeProjectName}_#${activeDraw.draw_number}.pdf`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -298,7 +301,7 @@ export default function BankPackageGenerator() {
         <div className="w-24 h-24 bg-blue-900/30 border-4 border-blue-600 rounded-[32px] flex items-center justify-center text-blue-500 mb-6 shadow-2xl shadow-blue-900/40">
           <FileStack size={48} />
         </div>
-        <h1 className="text-5xl font-black uppercase italic tracking-tighter mb-6">CMHC Bank <span className="text-blue-500">Package</span></h1>
+        <h1 className="text-5xl font-black uppercase italic tracking-tighter mb-6">GC Draw <span className="text-blue-500">Package</span></h1>
         
         <div className="flex items-center justify-center gap-6 bg-slate-900 border border-slate-800 p-3 rounded-2xl shadow-xl min-w-[300px]">
           <button onClick={goPrev} disabled={!hasPrev} className={`p-2 rounded-xl transition-all ${hasPrev ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-slate-950 text-slate-700 cursor-not-allowed'}`}><ChevronLeft size={20} /></button>
@@ -334,11 +337,11 @@ export default function BankPackageGenerator() {
                 <input type="text" value={projectName} onChange={e => setProjectName(e.target.value)} placeholder="e.g. 123 Main St Build" className="w-full bg-slate-950 border border-slate-700 p-3 rounded-xl font-bold text-white outline-none focus:border-blue-500" />
               </div>
               <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Lender Name</label>
+                <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">QS / Lender Name</label>
                 <input type="text" value={lenderName} onChange={e => setLenderName(e.target.value)} placeholder="e.g. First National Bank" className="w-full bg-slate-950 border border-slate-700 p-3 rounded-xl font-bold text-white outline-none focus:border-blue-500" />
               </div>
               <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Lender Address</label>
+                <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">QS / Lender Address</label>
                 <input type="text" value={lenderAddress} onChange={e => setLenderAddress(e.target.value)} placeholder="e.g. 100 Bay St, Toronto" className="w-full bg-slate-950 border border-slate-700 p-3 rounded-xl font-bold text-white outline-none focus:border-blue-500" />
               </div>
             </div>
@@ -397,7 +400,7 @@ export default function BankPackageGenerator() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-10">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
         <div className="bg-slate-900 border border-slate-800 p-6 rounded-[32px] flex flex-col justify-center text-center sm:text-left">
           <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1"><Wallet size={12} className="inline mr-1"/> Prev. Billed</p>
           <p className="text-xl lg:text-2xl font-black text-slate-400">{formatMoney(stats.previousBilled)}</p>
@@ -407,20 +410,16 @@ export default function BankPackageGenerator() {
           <p className="text-2xl lg:text-3xl font-black text-white">{formatMoney(stats.currentClaimed)}</p>
           <div className="flex gap-4 mt-2 justify-center sm:justify-start">
             <p className="text-[9px] font-bold text-slate-500">Hard: <span className="text-slate-300">{formatMoney(stats.hardCosts)}</span></p>
-            <p className="text-[9px] font-bold text-slate-500">Soft: <span className="text-emerald-400">{formatMoney(stats.softCosts)}</span></p>
+            <p className="text-[9px] font-bold text-slate-500">GC: <span className="text-emerald-400">{formatMoney(stats.softCosts)}</span></p>
           </div>
         </div>
         <div className="bg-slate-900 border border-slate-800 p-6 rounded-[32px] flex flex-col justify-center text-center sm:text-left">
           <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1"><ShieldCheck size={12} className="inline mr-1"/> Holdback</p>
           <p className="text-xl lg:text-2xl font-black text-amber-500">-{formatMoney(stats.holdback)}</p>
         </div>
-        <div className="bg-slate-900 border border-amber-900/30 p-6 rounded-[32px] flex flex-col justify-center text-center sm:text-left">
-          <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-1"><Landmark size={12} className="inline mr-1"/> Owner Equity</p>
-          <p className="text-xl lg:text-2xl font-black text-amber-600">-{formatMoney(stats.ownerEquity)}</p>
-        </div>
-        <div className="bg-blue-950/20 border border-blue-900/50 p-6 rounded-[32px] flex flex-col justify-center relative overflow-hidden shadow-lg shadow-blue-900/20 text-center sm:text-left sm:col-span-2 lg:col-span-1">
+        <div className="bg-blue-950/20 border border-blue-900/50 p-6 rounded-[32px] flex flex-col justify-center relative overflow-hidden shadow-lg shadow-blue-900/20 text-center sm:text-left">
           <div className="absolute inset-0 bg-blue-900/10 pointer-events-none" />
-          <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Net Transfer Due</p>
+          <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Total Progress Payment</p>
           <p className="text-2xl lg:text-3xl font-black text-white relative z-10">{formatMoney(stats.netPayment)}</p>
         </div>
       </div>
@@ -468,7 +467,7 @@ export default function BankPackageGenerator() {
         className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black uppercase tracking-widest py-6 rounded-3xl text-sm flex items-center justify-center gap-3 transition-all shadow-2xl shadow-blue-900/50 disabled:opacity-50"
       >
         {generating ? <Loader2 size={24} className="animate-spin" /> : <Download size={24} />}
-        {generating ? 'Stitching Bank Package...' : 'Generate & Download Master PDF'}
+        {generating ? 'Stitching Draw Package...' : 'Generate & Download GC Draw PDF'}
       </button>
     </div>
   )
