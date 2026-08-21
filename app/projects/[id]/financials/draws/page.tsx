@@ -97,23 +97,10 @@ export default function DrawsManager() {
       
       const missingTrades = lines?.filter(l => !currentBilled.some((b: any) => b.sov_line_id === l.id && !b.is_soft_cost)) || []
 
-      // FIXED: Safely roll over Soft Costs by STRICTLY matching their Description
-      const pastSoftCosts = allBilledLines?.filter(b => b.is_soft_cost && b.draw_id !== summaryData.id) || [];
-      const uniqueSoftCostMap = new Map();
-      pastSoftCosts.forEach(sc => {
-        if (!uniqueSoftCostMap.has(sc.description)) {
-          uniqueSoftCostMap.set(sc.description, sc);
-        }
-      });
+      // AUTO-SEEDING FOR SOFT COSTS REMOVED TO PREVENT GHOST DATA.
       
-      const missingSoftCosts = Array.from(uniqueSoftCostMap.values()).filter(
-        (psc: any) => !currentBilled.some((b: any) => b.is_soft_cost && b.description === psc.description)
-      );
-
-      const fullSeed = [];
-
       if (missingTrades.length > 0) {
-        fullSeed.push(...missingTrades.map(l => ({ 
+        const fullSeed = missingTrades.map(l => ({ 
           draw_id: summaryData.id, 
           sov_line_id: l.id, 
           sov_code: l.cost_code || '00-000',
@@ -124,24 +111,7 @@ export default function DrawsManager() {
           current_gross_billed: 0,
           holdback_rate: 0.10,
           is_soft_cost: false
-        })));
-      }
-
-      if (missingSoftCosts.length > 0) {
-        fullSeed.push(...missingSoftCosts.map((sc: any) => ({
-          draw_id: summaryData.id,
-          sov_code: sc.sov_code || 'SOFT',
-          description: sc.description,
-          original_budget: sc.original_budget || 0,
-          approved_changes: sc.approved_changes || 0,
-          claimed_amount: 0,
-          current_gross_billed: 0,
-          holdback_rate: sc.holdback_rate || 0,
-          is_soft_cost: true
-        })));
-      }
-      
-      if (fullSeed.length > 0) {
+        }));
         await supabase.from('draw_line_items').insert(fullSeed)
         const r = await supabase.from('draw_line_items').select('*')
         allBilledLines = r.data || []
@@ -208,7 +178,7 @@ export default function DrawsManager() {
   }
 
   const handleDeleteSoftCost = async (dbId: string) => {
-    if (!window.confirm("Remove this soft cost permanently from this draw?")) return;
+    if (!window.confirm("Permanently delete this soft cost?")) return;
     setSaving(true);
     await supabase.from('draw_line_items').delete().eq('id', dbId);
     await fetchData(activeDraw.id);
@@ -386,18 +356,22 @@ export default function DrawsManager() {
       const fileName = `${type}_${reviewingTrade.id}_${Date.now()}.${fileExt}`
       const filePath = `${id}/${fileName}`
       
-      const { error: uploadError } = await supabase.storage.from('project_documents').upload(filePath, file)
+      // FIXED: Upsert override forces the file to save securely
+      const { error: uploadError } = await supabase.storage.from('project_documents').upload(filePath, file, { upsert: true })
       if (uploadError) throw uploadError
       
       const { data: { publicUrl } } = supabase.storage.from('project_documents').getPublicUrl(filePath)
       
-      const firstLineDbId = reviewingTrade.lines[0]?.dbId
-      if (firstLineDbId) {
-        const updateField = type === 'invoice' ? { invoice_link: publicUrl } : { trade_sov_link: publicUrl }
-        await supabase.from('draw_line_items').update(updateField).eq('id', firstLineDbId)
-      }
+      // FIXED: Force update ALL SOV lines for this trade to ensure it sticks
+      const lineIdsToUpdate = reviewingTrade.lines.map((l: any) => l.dbId).filter(Boolean)
       
-      await fetchData(activeDraw.id)
+      if (lineIdsToUpdate.length > 0) {
+        const updateField = type === 'invoice' ? { invoice_link: publicUrl } : { trade_sov_link: publicUrl }
+        await supabase.from('draw_line_items').update(updateField).in('id', lineIdsToUpdate)
+        await fetchData(activeDraw.id)
+      } else {
+        alert("Cannot attach document: No billable SOV lines found for this trade.")
+      }
     } catch (error: any) { 
       alert(`Upload failed: ${error.message}`) 
     }
@@ -685,7 +659,6 @@ export default function DrawsManager() {
                       </Fragment>
                     ))}
 
-                    {/* SOFT COSTS */}
                     {tradeBills.softCosts.map(sc => (
                       <tr key={sc.id} className="bg-slate-900/50 border-t-2 border-slate-800 hover:bg-slate-800/30">
                         <td className="p-5">

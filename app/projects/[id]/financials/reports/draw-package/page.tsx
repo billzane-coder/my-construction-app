@@ -61,7 +61,7 @@ export default function BankPackageGenerator() {
 
     const prevDrawIds = previousDraws?.map(d => d.id) || []
     let prevBilledTotal = 0
-    let allPrevLines: any[] = []
+    let prevDrawLines: any[] = []
 
     if (prevDrawIds.length > 0) {
       const { data: prevSummaries } = await supabase
@@ -71,9 +71,8 @@ export default function BankPackageGenerator() {
       
       prevBilledTotal = prevSummaries?.reduce((sum, s) => sum + Number(s.gross_hard_costs) + Number(s.gross_soft_costs), 0) || 0
 
-      // Fetch previous lines so we can accurately map previous soft cost amounts to the API
       const { data: pLines } = await supabase.from('draw_line_items').select('*').in('draw_id', prevDrawIds)
-      allPrevLines = pLines || []
+      prevDrawLines = pLines || []
     }
 
     const { data: summary } = await supabase
@@ -91,11 +90,11 @@ export default function BankPackageGenerator() {
         `)
         .eq('draw_id', summary.id)
 
+      const currentDrawLines = lines || []
       const combinedBackups: string[] = []
-      const softList: any[] = []
       const foundNames: string[] = [] 
       
-      lines?.forEach((l: any) => {
+      currentDrawLines.forEach((l: any) => {
         const contactInfo = l.sov_line_items?.project_contracts?.project_contacts
         const companyName = Array.isArray(contactInfo) ? contactInfo[0]?.company : contactInfo?.company || l.description
 
@@ -107,25 +106,34 @@ export default function BankPackageGenerator() {
           combinedBackups.push(l.trade_sov_link)
           foundNames.push(`${companyName} (SOV)`)
         }
-        
-        // Proper Soft Cost Mapping to pass `previous` down to the API
-        if (l.is_soft_cost) {
-           const prevVer = allPrevLines
-             .filter(p => p.is_soft_cost && p.description === l.description)
-             .reduce((sum, p) => sum + Number(p.current_gross_billed || 0), 0);
-           
-           softList.push({
-             desc: l.description,
-             scheduled: Number(l.original_budget || 0) + Number(l.approved_changes || 0),
-             previous: prevVer,
-             verified: Number(l.current_gross_billed || 0)
-           });
-        }
+      })
+      
+      // FIX: Grab ALL soft costs over the entire project so they stay permanently on the G703
+      const allSoftLines = [...prevDrawLines, ...currentDrawLines].filter(l => l.is_soft_cost)
+      const uniqueSoftMap = new Map()
+      
+      allSoftLines.forEach(l => {
+         if (!uniqueSoftMap.has(l.description)) {
+             uniqueSoftMap.set(l.description, {
+                 desc: l.description,
+                 scheduled: Number(l.original_budget || 0) + Number(l.approved_changes || 0),
+                 previous: 0,
+                 verified: 0
+             })
+         }
+         const item = uniqueSoftMap.get(l.description)
+         item.scheduled = Math.max(item.scheduled, Number(l.original_budget || 0) + Number(l.approved_changes || 0))
+         
+         if (l.draw_id === targetDraw.id) {
+             item.verified = Number(l.current_gross_billed || 0)
+         } else {
+             item.previous += Number(l.current_gross_billed || 0)
+         }
       })
       
       setFoundAttachmentsList(Array.from(new Set(foundNames)))
       setTradeBackupLinks(combinedBackups)
-      setSoftCostsData(softList)
+      setSoftCostsData(Array.from(uniqueSoftMap.values()))
       
       const currentGross = Number(summary.gross_hard_costs) + Number(summary.gross_soft_costs)
 
