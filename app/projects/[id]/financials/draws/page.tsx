@@ -383,7 +383,6 @@ export default function DrawsManager() {
       const fileName = `${type}_${reviewingTrade.id}_${Date.now()}.${fileExt}`
       const filePath = `${id}/${fileName}`
       
-      // FIXED BUCKET NAME TO PROJECT_DOCUMENTS SO IT MATCHES YOUR BACKEND PDF ROUTE
       const { error: uploadError } = await supabase.storage.from('project_documents').upload(filePath, file)
       if (uploadError) throw uploadError
       
@@ -540,14 +539,14 @@ export default function DrawsManager() {
                 <div>
                   <h4 className={`text-lg font-black uppercase italic leading-none mb-1 ${reviewingContractId === trade.id ? 'text-amber-400' : 'text-white'}`}>{trade.company}</h4>
                   
-                  {/* NEW VISUAL INDICATORS FOR ATTACHED DOCUMENTS */}
+                  {/* UPDATED VISUAL INDICATORS */}
                   <div className="flex items-center gap-2 mt-2">
                     {trade.status === 'No Claim' && <span className="px-2 py-0.5 bg-slate-800 text-slate-500 text-[8px] font-black uppercase rounded">No Claim</span>}
                     {trade.status === 'Pending Review' && <span className="px-2 py-0.5 bg-amber-950 text-amber-500 border border-amber-900/50 text-[8px] font-black uppercase rounded animate-pulse">Pending Review</span>}
                     {trade.status.includes('Verified') && <span className="px-2 py-0.5 bg-emerald-950/50 text-emerald-500 border border-emerald-900/50 text-[8px] font-black uppercase rounded">Verified</span>}
                     
-                    {trade.invoiceUrl && <Receipt size={14} className="text-blue-400 ml-2" title="Invoice Attached"/>}
-                    {trade.tradeSovUrl && <FileSpreadsheet size={14} className="text-indigo-400" title="SOV Attached"/>}
+                    {trade.invoiceUrl && <span title="Invoice Attached"><Receipt size={14} className="text-blue-400 ml-2" /></span>}
+                    {trade.tradeSovUrl && <span title="SOV Attached"><FileSpreadsheet size={14} className="text-indigo-400" /></span>}
                   </div>
                 </div>
                 {trade.status === 'Pending Review' ? <Clock size={20} className="text-amber-500" /> : <CheckCircle2 size={20} className="text-emerald-500" />}
@@ -634,9 +633,9 @@ export default function DrawsManager() {
                             <div>
                               <div className="flex items-center gap-2">
                                 <p className="font-bold text-white text-sm">{trade.company}</p>
-                                {/* NEW VISUAL INDICATORS FOR MASTER TABLE */}
-                                {trade.invoiceUrl && <Receipt size={14} className="text-blue-400" title="Invoice Attached"/>}
-                                {trade.tradeSovUrl && <FileSpreadsheet size={14} className="text-indigo-400" title="SOV Attached"/>}
+                                {/* UPDATED VISUAL INDICATORS FOR MASTER TABLE */}
+                                {trade.invoiceUrl && <span title="Invoice Attached"><Receipt size={14} className="text-blue-400" /></span>}
+                                {trade.tradeSovUrl && <span title="SOV Attached"><FileSpreadsheet size={14} className="text-indigo-400" /></span>}
                               </div>
                               <p className="text-[10px] font-black text-slate-500 uppercase mt-1">Hard Cost</p>
                             </div>
@@ -683,6 +682,7 @@ export default function DrawsManager() {
                       </Fragment>
                     ))}
 
+                    {/* SOFT COSTS */}
                     {tradeBills.softCosts.map(sc => (
                       <tr key={sc.id} className="bg-slate-900/50 border-t-2 border-slate-800 hover:bg-slate-800/30">
                         <td className="p-5">
