@@ -94,7 +94,8 @@ export default function DrawsManager() {
       let { data: allBilledLines } = await supabase.from('draw_line_items').select('*')
       
       const currentBilled = allBilledLines?.filter(b => b.draw_id === summaryData.id) || []
-      const missingTrades = lines?.filter(l => !currentBilled.some((b: any) => b.sov_line_id === l.id && !b.is_soft_cost)) || []
+      
+      const missingTrades = lines?.filter(l => !currentBilled.some((b: any) => b.sov_line_id === l.id && b.sov_code !== 'SOFT')) || []
 
       if (missingTrades.length > 0) {
         const fullSeed = missingTrades.map(l => ({ 
@@ -317,7 +318,6 @@ export default function DrawsManager() {
     setDrawLines(prev => prev.map(dl => dl.id === dbId ? { ...dl, [field]: safeVal } : dl))
   }
 
-  // FIXED: ADDED ERROR CATCHING SO SOFT COSTS NEVER FAIL SILENTLY AGAIN
   const handleAddSoftCost = async () => {
     const desc = prompt("Enter description for Soft Cost (e.g. GC Fee, Permits, Winter Heat):")
     if (!desc) return
@@ -444,6 +444,7 @@ export default function DrawsManager() {
       formatMoney(trade.totalScheduled),
       formatMoney(trade.previousVerified),
       formatMoney(trade.totalVerified),
+      trade.totalScheduled > 0 ? `${Math.round(((trade.previousVerified + trade.totalVerified) / trade.totalScheduled) * 100)}%` : '0%',
       formatMoney(trade.totalHoldback),
       formatMoney(trade.netPayable)
     ])
@@ -454,23 +455,26 @@ export default function DrawsManager() {
         formatMoney(sc.scheduled),
         formatMoney(sc.previous),
         formatMoney(sc.verified),
+        sc.scheduled > 0 ? `${Math.round(((sc.previous + sc.verified) / sc.scheduled) * 100)}%` : '0%',
         formatMoney(sc.holdback),
         formatMoney(sc.net)
       ])
     })
 
+    const totalPct = projectTotals.scheduled > 0 ? `${Math.round(((projectTotals.previous + projectTotals.verified) / projectTotals.scheduled) * 100)}%` : '0%';
     const footerData = [[
       'PROJECT TOTALS',
       formatMoney(projectTotals.scheduled),
       formatMoney(projectTotals.previous),
       formatMoney(projectTotals.verified),
+      totalPct,
       formatMoney(projectTotals.holdback),
       formatMoney(projectTotals.net)
     ]]
 
     autoTable(doc, {
       startY: 60,
-      head: [['Trade / Cost Item', 'Revised Budget', 'Prev Billed', 'Current Gross', 'Holdback', 'Net Payable']],
+      head: [['Trade / Cost Item', 'Revised Budget', 'Prev Billed', 'Current Gross', '% Comp', 'Holdback', 'Net Payable']],
       body: tableData,
       foot: footerData,
       theme: 'grid',
@@ -482,8 +486,9 @@ export default function DrawsManager() {
         1: { halign: 'right' },
         2: { halign: 'right' },
         3: { halign: 'right', textColor: brandRgb, fontStyle: 'bold' }, 
-        4: { halign: 'right', textColor: [217, 119, 6] }, 
-        5: { halign: 'right', fontStyle: 'bold', textColor: [16, 185, 129] }
+        4: { halign: 'right', fontStyle: 'bold' }, 
+        5: { halign: 'right', textColor: [217, 119, 6] }, 
+        6: { halign: 'right', fontStyle: 'bold', textColor: [16, 185, 129] }
       }
     })
 
@@ -630,6 +635,8 @@ export default function DrawsManager() {
                       <th className="p-5 text-right">Revised Contract</th>
                       <th className="p-5 text-right">Prev Billed</th>
                       <th className="p-5 text-right text-white">Current Gross</th>
+                      {/* NEW % COMP COLUMN */}
+                      <th className="p-5 text-right text-emerald-400">% Comp</th>
                       <th className="p-5 text-right text-amber-500/70 border-l border-slate-800/50">Holdback %</th>
                       <th className="p-5 text-right text-blue-400/70 border-l border-slate-800/50">Net Payable</th>
                       <th className="p-5 w-10"></th>
@@ -654,6 +661,12 @@ export default function DrawsManager() {
                           <td className="p-5 text-right font-bold text-slate-400">{formatMoney(trade.totalScheduled)}</td>
                           <td className="p-5 text-right font-bold text-slate-500">{formatMoney(trade.previousVerified)}</td>
                           <td className="p-5 text-right font-black text-white">{formatMoney(trade.totalVerified)}</td>
+                          
+                          {/* NEW % COMP CELL */}
+                          <td className="p-5 text-right font-bold text-emerald-400">
+                            {trade.totalScheduled > 0 ? Math.round(((trade.previousVerified + trade.totalVerified) / trade.totalScheduled) * 100) : 0}%
+                          </td>
+
                           <td className="p-5 text-right border-l border-slate-800/50 font-black text-amber-500/80">{formatMoney(trade.totalHoldback)}</td>
                           <td className="p-5 text-right border-l border-slate-800/50 font-black text-blue-400">{formatMoney(trade.netPayable)}</td>
                           <td className="p-5"></td>
@@ -661,7 +674,7 @@ export default function DrawsManager() {
 
                         {expandedTrades[trade.id] && (
                           <tr className="bg-slate-950 border-b-2 border-slate-800 shadow-inner">
-                            <td colSpan={7} className="p-0">
+                            <td colSpan={8} className="p-0">
                               <div className="pl-16 pr-5 py-4 border-l-4 border-blue-500/50 bg-slate-950">
                                 <table className="w-full text-xs">
                                   <thead>
@@ -670,6 +683,8 @@ export default function DrawsManager() {
                                       <th className="pb-3 text-right">Rev. Budget</th>
                                       <th className="pb-3 text-right">Previously Billed</th>
                                       <th className="pb-3 text-right text-slate-400">Current Work</th>
+                                      {/* NEW INNER % COMP COLUMN */}
+                                      <th className="pb-3 text-right text-emerald-400">% Comp</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -682,6 +697,9 @@ export default function DrawsManager() {
                                         <td className="py-3 text-right text-slate-500">{formatMoney(line.scheduled)}</td>
                                         <td className="py-3 text-right text-slate-500">{formatMoney(line.previous)}</td>
                                         <td className="py-3 text-right font-bold text-slate-300">{formatMoney(line.verified)}</td>
+                                        <td className="py-3 text-right font-bold text-emerald-400">
+                                          {line.scheduled > 0 ? Math.round(((line.previous + line.verified) / line.scheduled) * 100) : 0}%
+                                        </td>
                                       </tr>
                                     ))}
                                   </tbody>
@@ -710,6 +728,12 @@ export default function DrawsManager() {
                             />
                           </div>
                         </td>
+                        
+                        {/* NEW % COMP CELL */}
+                        <td className="p-5 text-right font-bold text-emerald-400 align-middle">
+                          {sc.scheduled > 0 ? Math.round(((sc.previous + sc.verified) / sc.scheduled) * 100) : 0}%
+                        </td>
+
                         <td className="p-5 border-l border-slate-800/50 align-middle">
                            <div className="flex items-center justify-end gap-1">
                               <input type="number" value={sc.rate * 100} placeholder="0"
@@ -735,6 +759,12 @@ export default function DrawsManager() {
                       <td className="p-6 text-right text-sm font-black text-slate-300">{formatMoney(projectTotals.scheduled)}</td>
                       <td className="p-6 text-right text-sm font-black text-slate-400">{formatMoney(projectTotals.previous)}</td>
                       <td className="p-6 text-right text-lg font-black text-white">{formatMoney(projectTotals.verified)}</td>
+                      
+                      {/* NEW % COMP CELL */}
+                      <td className="p-6 text-right text-sm font-black text-emerald-400">
+                        {projectTotals.scheduled > 0 ? Math.round(((projectTotals.previous + projectTotals.verified) / projectTotals.scheduled) * 100) : 0}%
+                      </td>
+
                       <td className="p-6 text-right text-sm font-black text-amber-500 border-l border-slate-800/50">{formatMoney(projectTotals.holdback)}</td>
                       <td className="p-6 text-right text-lg font-black text-blue-400 border-l border-slate-800/50">{formatMoney(projectTotals.net)}</td>
                       <td></td>
