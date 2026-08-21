@@ -94,8 +94,7 @@ export default function DrawsManager() {
       let { data: allBilledLines } = await supabase.from('draw_line_items').select('*')
       
       const currentBilled = allBilledLines?.filter(b => b.draw_id === summaryData.id) || []
-      
-      const missingTrades = lines?.filter(l => !currentBilled.some((b: any) => b.sov_line_id === l.id && b.sov_code !== 'SOFT')) || []
+      const missingTrades = lines?.filter(l => !currentBilled.some((b: any) => b.sov_line_id === l.id && !b.is_soft_cost)) || []
 
       if (missingTrades.length > 0) {
         const fullSeed = missingTrades.map(l => ({ 
@@ -135,7 +134,6 @@ export default function DrawsManager() {
     setAllDraws(prev => prev.map(d => d.id === activeDraw.id ? { ...d, period: activeDraw.period } : d));
   }
 
-  // FIXED: Carry Forward Engine for Soft Costs
   const handleNewDraw = async () => {
     setLoading(true);
     try {
@@ -151,11 +149,9 @@ export default function DrawsManager() {
 
       if (drawErr) throw drawErr;
 
-      // Create Summary
       const { data: newSum, error: sumErr } = await supabase.from('draw_summaries').insert([{ draw_id: newDraw.id }]).select().single();
       if (sumErr) throw sumErr;
 
-      // Copy Soft Costs from the current draw into the new draw
       if (drawSummary) {
          const { data: prevSofts } = await supabase.from('draw_line_items').select('*').eq('draw_id', drawSummary.id).eq('is_soft_cost', true);
          if (prevSofts && prevSofts.length > 0) {
@@ -165,11 +161,12 @@ export default function DrawsManager() {
                description: s.description,
                original_budget: s.original_budget,
                approved_changes: s.approved_changes,
-               current_gross_billed: 0, // Reset the billed amount for the new month
+               current_gross_billed: 0, 
                holdback_rate: s.holdback_rate,
                is_soft_cost: true
             }));
-            await supabase.from('draw_line_items').insert(softCopy);
+            const { error: copyErr } = await supabase.from('draw_line_items').insert(softCopy);
+            if (copyErr) throw copyErr;
          }
       }
 
@@ -203,7 +200,8 @@ export default function DrawsManager() {
   const handleDeleteSoftCost = async (dbId: string) => {
     if (!window.confirm("Permanently delete this soft cost?")) return;
     setSaving(true);
-    await supabase.from('draw_line_items').delete().eq('id', dbId);
+    const { error } = await supabase.from('draw_line_items').delete().eq('id', dbId);
+    if (error) alert(`Failed to delete: ${error.message}`);
     await fetchData(activeDraw.id);
     setSaving(false);
   }
@@ -319,13 +317,14 @@ export default function DrawsManager() {
     setDrawLines(prev => prev.map(dl => dl.id === dbId ? { ...dl, [field]: safeVal } : dl))
   }
 
+  // FIXED: ADDED ERROR CATCHING SO SOFT COSTS NEVER FAIL SILENTLY AGAIN
   const handleAddSoftCost = async () => {
     const desc = prompt("Enter description for Soft Cost (e.g. GC Fee, Permits, Winter Heat):")
     if (!desc) return
     const budget = prompt("Enter total budget for this item:")
     
     setSaving(true)
-    await supabase.from('draw_line_items').insert([{
+    const { error } = await supabase.from('draw_line_items').insert([{
       draw_id: drawSummary.id,
       sov_code: 'SOFT',
       description: desc,
@@ -334,7 +333,12 @@ export default function DrawsManager() {
       holdback_rate: 0.00, 
       is_soft_cost: true
     }])
-    await fetchData(activeDraw.id)
+    
+    if (error) {
+       alert(`Database Error: Failed to add Soft Cost. ${error.message}`)
+    } else {
+       await fetchData(activeDraw.id)
+    }
     setSaving(false)
   }
   
@@ -342,24 +346,29 @@ export default function DrawsManager() {
     setSaving(true)
     try {
       if (reviewingTrade) {
-        await Promise.all(reviewingTrade.lines.filter((l:any) => l.dbId).map((l: any) => 
-          supabase.from('draw_line_items').update({
+        const promises = reviewingTrade.lines.filter((l:any) => l.dbId).map(async (l: any) => {
+          const { error } = await supabase.from('draw_line_items').update({
             claimed_amount: l.claimed, 
             current_gross_billed: l.verified 
-          }).eq('id', l.dbId)
-        ));
+          }).eq('id', l.dbId);
+          if (error) throw error;
+        });
+        await Promise.all(promises);
       }
 
       if (reviewingContractId === 'summary') {
         const equityVal = parseFloat(ownerEquityInput) || 0;
-        await supabase.from('draw_summaries').update({ owner_equity_applied: equityVal }).eq('id', drawSummary.id)
+        const { error: sumErr } = await supabase.from('draw_summaries').update({ owner_equity_applied: equityVal }).eq('id', drawSummary.id)
+        if (sumErr) throw sumErr;
 
-        await Promise.all(tradeBills.softCosts.map(sc => 
-          supabase.from('draw_line_items').update({
+        const promises = tradeBills.softCosts.map(async sc => {
+          const { error } = await supabase.from('draw_line_items').update({
             current_gross_billed: sc.verified,
             holdback_rate: sc.rate
-          }).eq('id', sc.id)
-        ));
+          }).eq('id', sc.id);
+          if (error) throw error;
+        });
+        await Promise.all(promises);
       }
 
       await fetchData(activeDraw.id)
@@ -369,7 +378,6 @@ export default function DrawsManager() {
     setSaving(false)
   }
 
-  // FIXED: Bulletproof Document Upload Targeting exact SOV IDs
   const handleUploadDocument = async (e: React.ChangeEvent<HTMLInputElement>, type: 'invoice' | 'sov') => {
     const file = e.target.files?.[0]
     if (!file || !reviewingTrade) return
@@ -385,18 +393,11 @@ export default function DrawsManager() {
       
       const { data: { publicUrl } } = supabase.storage.from('project_documents').getPublicUrl(filePath)
       
-      // We grab all sov_line_id's for this specific trade
       const sovIds = reviewingTrade.lines.map((l: any) => l.id).filter(Boolean)
       
       if (sovIds.length > 0) {
         const updateField = type === 'invoice' ? { invoice_link: publicUrl } : { trade_sov_link: publicUrl }
-        
-        // Update all line items in this draw that belong to this trade
-        const { error: dbErr } = await supabase.from('draw_line_items')
-           .update(updateField)
-           .eq('draw_id', drawSummary.id)
-           .in('sov_line_id', sovIds)
-
+        const { error: dbErr } = await supabase.from('draw_line_items').update(updateField).eq('draw_id', drawSummary.id).in('sov_line_id', sovIds)
         if (dbErr) throw dbErr;
         
         await fetchData(activeDraw.id)
@@ -407,7 +408,6 @@ export default function DrawsManager() {
       alert(`Upload failed: ${error.message}`) 
     }
     
-    // Clear input so it triggers onChange again if needed
     if (e.target) e.target.value = ''
     setUploadingDoc(null)
   }
@@ -693,6 +693,7 @@ export default function DrawsManager() {
                       </Fragment>
                     ))}
 
+                    {/* SOFT COSTS */}
                     {tradeBills.softCosts.map(sc => (
                       <tr key={sc.id} className="bg-slate-900/50 border-t-2 border-slate-800 hover:bg-slate-800/30">
                         <td className="p-5">

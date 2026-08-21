@@ -184,13 +184,10 @@ export default function FinancialMaster() {
   const handleDelete = async (rowId: string) => {
     if (isLocked) return alert('Ledger is currently locked. Unlock to make structural changes.')
     
-    // Check if this is a parent with child items
     const childIds = costCodes.filter(c => c.parent_id === rowId).map(c => c.id)
     if (childIds.length > 0) {
       const confirmCascade = confirm(`This category contains ${childIds.length} sub-item(s). Deleting it will remove all sub-items as well. Continue?`)
       if (!confirmCascade) return
-      
-      // Delete children first, then parent
       await supabase.from('project_cost_codes').delete().in('id', childIds)
     }
 
@@ -670,6 +667,8 @@ export function FinancialHeader({ id, active, onExportExcel, onExportPDF }: { id
           <button onClick={() => router.push(`/projects/${id}/financials/change-orders`)} className={`whitespace-nowrap px-4 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${active === 'cos' ? 'bg-amber-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Change Orders</button>
           <button onClick={() => router.push(`/projects/${id}/financials/draws`)} className={`whitespace-nowrap px-4 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${active === 'draws' ? 'bg-violet-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Monthly Draws</button>
           <button onClick={() => router.push(`/projects/${id}/financials/reports/draw-package`)} className={`whitespace-nowrap px-4 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${active === 'bank' ? 'bg-rose-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Bank Draw</button>
+          {/* NEW HOLDBACK LEDGER TAB */}
+          <button onClick={() => router.push(`/projects/${id}/financials/holdbacks`)} className={`whitespace-nowrap px-4 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${active === 'holdbacks' ? 'bg-teal-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Holdback Ledger</button>
         </div>
         
         <div className="flex gap-2">
