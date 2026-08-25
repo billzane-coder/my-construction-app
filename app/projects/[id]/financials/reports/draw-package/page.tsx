@@ -442,7 +442,7 @@ export default function BankPackageGenerator() {
           <li className="flex flex-col gap-2">
             <div className="flex items-center gap-3">
               {stats.backupCount > 0 ? <CheckCircle2 size={20} className="text-emerald-500" /> : <AlertCircle size={20} className="text-amber-500" />}
-              <span className="font-bold text-white text-sm">{stats.backupCount} Trade Backups Stitched</span>
+              <span className="font-bold text-white text-sm">{stats.backupCount} Trade Backups Found & Stitched</span>
             </div>
             {foundAttachmentsList.length > 0 && (
               <div className="ml-8 mt-2 flex flex-wrap gap-2">

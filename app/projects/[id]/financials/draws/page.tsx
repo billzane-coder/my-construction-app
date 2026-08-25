@@ -434,15 +434,31 @@ export default function DrawsManager() {
     doc.text(`Period: ${activeDraw?.period || 'N/A'}`, 14, 44)
     doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 50)
 
-    const tableData = tradeBills.trades.map(trade => [
-      trade.company,
-      formatMoney(trade.totalScheduled),
-      formatMoney(trade.previousVerified),
-      formatMoney(trade.totalVerified),
-      trade.totalScheduled > 0 ? `${Math.round(((trade.previousVerified + trade.totalVerified) / trade.totalScheduled) * 100)}%` : '0%',
-      formatMoney(trade.totalHoldback),
-      formatMoney(trade.netPayable)
-    ])
+    const tableData: any[][] = []
+
+    tradeBills.trades.forEach(trade => {
+      tableData.push([
+        trade.company,
+        formatMoney(trade.totalScheduled),
+        formatMoney(trade.previousVerified),
+        formatMoney(trade.totalVerified),
+        trade.totalScheduled > 0 ? `${Math.round(((trade.previousVerified + trade.totalVerified) / trade.totalScheduled) * 100)}%` : '0%',
+        formatMoney(trade.totalHoldback),
+        formatMoney(trade.netPayable)
+      ])
+
+      trade.lines.forEach((line: any) => {
+        tableData.push([
+          `   - ${line.desc}${line.isCO ? ' (CO)' : ''}`,
+          formatMoney(line.scheduled),
+          formatMoney(line.previous),
+          formatMoney(line.verified),
+          line.scheduled > 0 ? `${Math.round(((line.previous + line.verified) / line.scheduled) * 100)}%` : '0%',
+          formatMoney(line.holdback),
+          formatMoney(line.net)
+        ])
+      })
+    })
 
     tradeBills.softCosts.forEach(sc => {
       tableData.push([
@@ -484,6 +500,18 @@ export default function DrawsManager() {
         4: { halign: 'right', fontStyle: 'bold' }, 
         5: { halign: 'right', textColor: [217, 119, 6] }, 
         6: { halign: 'right', fontStyle: 'bold', textColor: [16, 185, 129] }
+      },
+      didParseCell: (data) => {
+        if (data.section === 'body') {
+          const rawData = data.row.raw as any[];
+          const isChild = rawData[0]?.toString().startsWith('   -');
+          if (!isChild) {
+            data.cell.styles.fontStyle = 'bold';
+            data.cell.styles.textColor = [15, 23, 42];
+          } else {
+            data.cell.styles.textColor = [100, 116, 139];
+          }
+        }
       }
     })
 
@@ -702,7 +730,7 @@ export default function DrawsManager() {
                       </Fragment>
                     ))}
 
-                    {/* SOFT COSTS / GC FEES */}
+                    {/* GC FEES */}
                     {tradeBills.softCosts.map(sc => (
                       <tr key={sc.id} className="bg-slate-900/50 border-t-2 border-slate-800 hover:bg-slate-800/30">
                         <td className="p-5">

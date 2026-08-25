@@ -14,7 +14,6 @@ const supabase = createClient(
 export async function POST(request: Request) {
   try {
     const data = await request.json();
-    
     const { projectId, drawNumber, companyName, projectName, lenderName, lenderAddress, attachments, drawData } = data;
 
     let { data: drawRec } = await supabase.from('project_draws').select('*').eq('project_id', projectId).eq('draw_number', drawNumber).maybeSingle();
@@ -47,28 +46,57 @@ export async function POST(request: Request) {
 
     const drawDate = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
+    // 1. GUARANTEED SOFT COST FETCH: Calculates directly from DB so it never relies on frontend payload
+    const allLines = [...(prevDrawLines || []), ...(currentDrawLines || [])];
+    const dbSoftCosts = allLines.filter(l => l.is_soft_cost || l.sov_code === 'SOFT');
+    const uniqueSoftMap = new Map();
+    
+    dbSoftCosts.forEach(l => {
+        const desc = l.description || 'GC General Conditions';
+        if (!uniqueSoftMap.has(desc)) {
+            uniqueSoftMap.set(desc, {
+                desc,
+                scheduled: 0,
+                previous: 0,
+                verified: 0,
+                holdback: 0
+            });
+        }
+        const item = uniqueSoftMap.get(desc);
+        item.scheduled = Math.max(item.scheduled, Number(l.original_budget || 0) + Number(l.approved_changes || 0));
+        
+        const rate = Number(l.holdback_rate !== undefined ? l.holdback_rate : 0);
+        const amt = Number(l.verified_amount || l.current_gross_billed || 0);
+
+        if (l.draw_id === drawRec.id) {
+            item.verified += amt;
+            item.holdback += amt * rate;
+        } else {
+            item.previous += amt;
+            item.holdback += amt * rate;
+        }
+    });
+    const apiSoftCosts = Array.from(uniqueSoftMap.values());
+
     let originalSum = 0;
     let approvedChanges = 0;
 
     (sovLines || []).forEach(sov => {
         const isBaseLine = !sov.change_order_id;
         const isApprovedCO = sov.change_order_id && sov.change_orders?.status === 'Approved';
-        
         if (isBaseLine) originalSum += Number(sov.scheduled_value || 0);
         if (isApprovedCO) approvedChanges += Number(sov.scheduled_value || 0);
     });
 
-    const softCosts = drawData?.softCostList || [];
-    softCosts.forEach((sc: any) => {
+    apiSoftCosts.forEach((sc: any) => {
         originalSum += Number(sc.scheduled || 0);
     });
 
     const revisedSum = originalSum + approvedChanges;
-
-    const totalCompleted = drawData.totalCompleted || 0;
-    const holdback = drawData.holdback || 0; 
-    const previousBilling = drawData.previous || 0; 
-    const netDue = drawData.net || 0; 
+    const totalCompleted = drawData?.totalCompleted || 0;
+    const holdback = drawData?.holdback || 0; 
+    const previousBilling = drawData?.previous || 0; 
+    const netDue = drawData?.net || 0; 
 
     const formatMoney = (num: number) => '$ ' + (num || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     
@@ -78,7 +106,7 @@ export async function POST(request: Request) {
     const displayLenderAddress = lenderAddress || 'Lender Address TBD';
 
     // ==========================================
-    // PHASE 1: COVER SHEET
+    // PHASE 1: COVER SHEET (GC INVOICE)
     // ==========================================
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
     
@@ -114,19 +142,19 @@ export async function POST(request: Request) {
         y += 10;
     };
 
-    addLine('1. Original Contract Sum', originalSum);
+    addLine('1. Original Contract Sum (Inc. GC Costs)', originalSum);
     addLine('2. Net Approved Change Orders', approvedChanges);
-    addLine('3. Contract Sum to Date', revisedSum, true);
+    addLine('3. Revised Contract Sum', revisedSum, true);
     doc.setDrawColor(200, 200, 200).line(20, y - 7, 190, y - 7);
     
-    addLine('4. Total Completed to Date', totalCompleted);
+    addLine('4. Total Value Completed to Date', totalCompleted);
     addLine('5. Less Statutory Holdback', holdback);
-    addLine('6. Total Earned Less Holdback', totalCompleted - holdback, true);
+    addLine('6. Total Value Less Holdback', totalCompleted - holdback, true);
     addLine('7. Less Previous Certificates', previousBilling);
     doc.setDrawColor(200, 200, 200).line(20, y - 7, 190, y - 7);
     
     addLine('8. NET PROGRESS PAYMENT (PRE-TAX)', netDue, true);
-    addLine('9. 13% HST', netDue * 0.13);
+    addLine('9. Applicable 13% HST', netDue * 0.13);
     
     doc.setFillColor(15, 23, 42).rect(15, y - 6, 185, 12, 'F');
     doc.setTextColor(255, 255, 255);
@@ -142,7 +170,7 @@ export async function POST(request: Request) {
     let sumBase = 0, sumCOs = 0, sumRevised = 0, sumPrevClaim = 0, sumCurrentClaim = 0, sumTotalClaim = 0, sumHoldback = 0, sumBalance = 0;
     const tableBody: any[] = [];
 
-    softCosts.forEach((sc: any) => {
+    apiSoftCosts.forEach((sc: any) => {
         const revisedContract = Number(sc.scheduled || 0);
         const prevClaim = Number(sc.previous || 0);
         const currentClaim = Number(sc.verified || 0);
@@ -256,7 +284,7 @@ export async function POST(request: Request) {
     const coverSheetBuffer = doc.output('arraybuffer');
 
     // ==========================================
-    // PHASE 3: STITCHING ENGINE
+    // PHASE 3: GUARANTEED STITCHING ENGINE
     // ==========================================
     const finalPdf = await PDFDocument.create();
     const coverDoc = await PDFDocument.load(coverSheetBuffer);
@@ -296,16 +324,19 @@ export async function POST(request: Request) {
     };
 
     const statDecLink = attachments?.statDec || drawRec?.stat_dec_link;
-    const invoiceLinks = attachments?.invoices || (currentDrawLines || []).map((d: any) => d.invoice_link);
-    const extraLinks = attachments?.extraDocs || (extraDocs || []).map((d: any) => d.file_link || d.url || d.file_url);
+    
+    // GUARANTEED FETCH: Pull all invoices securely from the database array, ignoring the frontend payload.
+    const dbInvoices = (currentDrawLines || []).map((l: any) => l.invoice_link).filter(Boolean);
+    const dbSovs = (currentDrawLines || []).map((l: any) => l.trade_sov_link).filter(Boolean);
+    const payloadInvoices = attachments?.invoices || [];
+    const extraLinks = attachments?.extraDocs || (extraDocs || []).map((d: any) => d.file_link || d.url || d.file_url).filter(Boolean);
+
+    // Combine everything and deduplicate using Set
+    const allBackupLinksToStitch = [...payloadInvoices, ...dbInvoices, ...dbSovs, ...extraLinks];
 
     await embedFile(statDecLink);
 
-    for (const link of new Set(invoiceLinks.filter(Boolean))) {
-        await embedFile(link as string);
-    }
-
-    for (const link of new Set(extraLinks.filter(Boolean))) {
+    for (const link of new Set(allBackupLinksToStitch)) {
         await embedFile(link as string);
     }
 
